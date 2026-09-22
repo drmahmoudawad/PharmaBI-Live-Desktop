@@ -1,0 +1,2012 @@
+﻿import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { promises as fsPromises } from "node:fs";
+
+import {
+    app
+} from "electron";
+
+
+const CACHE_DIRECTORY_NAME =
+    "persistent-cache";
+
+
+const ENTRIES_DIRECTORY_NAME =
+    "entries";
+
+
+const METADATA_FILE_NAME =
+    "metadata.json";
+
+
+const DEFAULT_TTL_MS =
+    24 *
+    60 *
+    60 *
+    1000;
+
+
+const WRITE_DEBOUNCE_MS =
+    300;
+
+
+const PAYLOAD_MEMORY_MAX_ENTRIES =
+    8;
+
+
+const STORE_VERSION =
+    2;
+
+
+/*
+ * =========================================================
+ * MEMORY STATE
+ * =========================================================
+ */
+
+let metadataStore =
+    null;
+
+
+let metadataLoaded =
+    false;
+
+
+let metadataDirty =
+    false;
+
+
+let metadataWriteTimer =
+    null;
+
+
+let metadataWritePromise =
+    Promise.resolve();
+
+
+let metadataWriteGeneration =
+    0;
+
+
+/*
+ * Loaded payloads are kept in a small LRU cache.
+ *
+ * This avoids keeping the entire historical dataset in RAM.
+ */
+
+const payloadMemoryCache =
+    new Map();
+
+
+/*
+ * Pending disk writes.
+ *
+ * key -> {
+ *     data,
+ *     writeGeneration
+ * }
+ */
+
+const pendingPayloadWrites =
+    new Map();
+
+
+let payloadWritePromise =
+    Promise.resolve();
+
+
+/*
+ * =========================================================
+ * PATHS
+ * =========================================================
+ */
+
+function getBaseDirectory() {
+
+    return path.join(
+
+        app.getPath(
+            "userData"
+        ),
+
+        CACHE_DIRECTORY_NAME
+
+    );
+
+}
+
+
+function getEntriesDirectory() {
+
+    return path.join(
+
+        getBaseDirectory(),
+
+        ENTRIES_DIRECTORY_NAME
+
+    );
+
+}
+
+
+function getMetadataPath() {
+
+    return path.join(
+
+        getBaseDirectory(),
+
+        METADATA_FILE_NAME
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DIRECTORY
+ * =========================================================
+ */
+
+function ensureDirectories() {
+
+    const baseDirectory =
+        getBaseDirectory();
+
+
+    const entriesDirectory =
+        getEntriesDirectory();
+
+
+    if (
+        !fs.existsSync(
+            baseDirectory
+        )
+    ) {
+
+        fs.mkdirSync(
+
+            baseDirectory,
+
+            {
+                recursive:
+                    true
+            }
+
+        );
+
+    }
+
+
+    if (
+        !fs.existsSync(
+            entriesDirectory
+        )
+    ) {
+
+        fs.mkdirSync(
+
+            entriesDirectory,
+
+            {
+                recursive:
+                    true
+            }
+
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * EMPTY STORE
+ * =========================================================
+ */
+
+function createEmptyStore() {
+
+    return {
+
+        version:
+            STORE_VERSION,
+
+        entries:
+            {}
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * LOAD METADATA
+ *
+ * Only metadata is loaded here.
+ *
+ * Large payload files are NOT loaded.
+ * =========================================================
+ */
+
+function loadMetadataFromDisk() {
+
+    if (
+        metadataLoaded &&
+        metadataStore
+    ) {
+
+        return metadataStore;
+
+    }
+
+
+    ensureDirectories();
+
+
+    const metadataPath =
+        getMetadataPath();
+
+
+    if (
+        !fs.existsSync(
+            metadataPath
+        )
+    ) {
+
+        metadataStore =
+            createEmptyStore();
+
+
+        metadataLoaded =
+            true;
+
+
+        return metadataStore;
+
+    }
+
+
+    try {
+
+        const raw =
+            fs.readFileSync(
+
+                metadataPath,
+
+                "utf8"
+
+            );
+
+
+        if (
+            !raw.trim()
+        ) {
+
+            metadataStore =
+                createEmptyStore();
+
+        }
+        else {
+
+            const parsed =
+                JSON.parse(
+                    raw
+                );
+
+
+            if (
+                !parsed ||
+                typeof parsed !==
+                    "object"
+            ) {
+
+                metadataStore =
+                    createEmptyStore();
+
+            }
+            else {
+
+                metadataStore =
+                    {
+
+                        version:
+                            parsed.version ||
+                            STORE_VERSION,
+
+                        entries:
+                            parsed.entries &&
+                            typeof parsed.entries ===
+                                "object"
+
+                                ? parsed.entries
+
+                                : {}
+
+                    };
+
+            }
+
+        }
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[persistentCacheService] Failed to read metadata:",
+
+            error
+
+        );
+
+
+        metadataStore =
+            createEmptyStore();
+
+    }
+
+
+    metadataLoaded =
+        true;
+
+
+    return metadataStore;
+
+}
+
+
+function getStore() {
+
+    return loadMetadataFromDisk();
+
+}
+
+
+/*
+ * =========================================================
+ * HASH KEY
+ * =========================================================
+ */
+
+function buildEntryFileName(
+    cacheKey
+) {
+
+    return crypto
+        .createHash(
+            "sha256"
+        )
+        .update(
+            String(
+                cacheKey
+            ),
+            "utf8"
+        )
+        .digest(
+            "hex"
+        ) +
+        ".json";
+
+}
+
+
+function getEntryFilePath(
+    cacheKey
+) {
+
+    return path.join(
+
+        getEntriesDirectory(),
+
+        buildEntryFileName(
+            cacheKey
+        )
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * BASIC HELPERS
+ * =========================================================
+ */
+
+function normalizeCacheKey(
+    value
+) {
+
+    return String(
+        value
+    );
+
+}
+
+
+function safeRowCount(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    ) &&
+    number >= 0
+
+        ? Math.floor(
+            number
+        )
+
+        : 0;
+
+}
+
+
+function safeTtl(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    ) &&
+    number > 0
+
+        ? number
+
+        : DEFAULT_TTL_MS;
+
+}
+
+
+/*
+ * =========================================================
+ * LRU PAYLOAD CACHE
+ * =========================================================
+ */
+
+function getPayloadFromMemory(
+    cacheKey
+) {
+
+    const entry =
+        payloadMemoryCache.get(
+            cacheKey
+        );
+
+
+    if (
+        !entry
+    ) {
+
+        return null;
+
+    }
+
+
+    payloadMemoryCache.delete(
+        cacheKey
+    );
+
+
+    payloadMemoryCache.set(
+        cacheKey,
+        entry
+    );
+
+
+    return entry.data;
+
+}
+
+
+function setPayloadInMemory(
+    cacheKey,
+    data
+) {
+
+    payloadMemoryCache.delete(
+        cacheKey
+    );
+
+
+    payloadMemoryCache.set(
+
+        cacheKey,
+
+        {
+
+            data,
+
+            loadedAt:
+                Date.now()
+
+        }
+
+    );
+
+
+    while (
+        payloadMemoryCache.size >
+        PAYLOAD_MEMORY_MAX_ENTRIES
+    ) {
+
+        const oldestKey =
+            payloadMemoryCache
+                .keys()
+                .next()
+                .value;
+
+
+        if (
+            oldestKey ===
+            undefined
+        ) {
+
+            break;
+
+        }
+
+
+        payloadMemoryCache.delete(
+            oldestKey
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * REMOVE FROM MEMORY
+ * =========================================================
+ */
+
+function removePayloadFromMemory(
+    cacheKey
+) {
+
+    payloadMemoryCache.delete(
+        cacheKey
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * QUEUE METADATA WRITE
+ * =========================================================
+ */
+
+function queueMetadataWrite() {
+
+    metadataDirty =
+        true;
+
+
+    metadataWriteGeneration +=
+        1;
+
+
+    if (
+        metadataWriteTimer
+    ) {
+
+        clearTimeout(
+            metadataWriteTimer
+        );
+
+    }
+
+
+    metadataWriteTimer =
+        setTimeout(
+
+            () => {
+
+                metadataWriteTimer =
+                    null;
+
+
+                flushMetadata()
+                    .catch(
+                        error => {
+
+                            console.error(
+
+                                "[persistentCacheService] Deferred metadata write failed:",
+
+                                error
+
+                            );
+
+                        }
+                    );
+
+            },
+
+            WRITE_DEBOUNCE_MS
+
+        );
+
+}
+
+
+/*
+ * =========================================================
+ * FLUSH METADATA
+ * =========================================================
+ */
+
+async function flushMetadata() {
+
+    if (
+        metadataWriteTimer
+    ) {
+
+        clearTimeout(
+            metadataWriteTimer
+        );
+
+
+        metadataWriteTimer =
+            null;
+
+    }
+
+
+    if (
+        !metadataDirty
+    ) {
+
+        return;
+
+    }
+
+
+    const store =
+        getStore();
+
+
+    const generationAtStart =
+        metadataWriteGeneration;
+
+
+    /*
+     * Metadata is always tiny compared with payload data,
+     * so stringify here is safe.
+     */
+
+    const snapshot =
+        JSON.stringify(
+
+            store,
+
+            null,
+
+            2
+
+        );
+
+
+    const metadataPath =
+        getMetadataPath();
+
+
+    const temporaryPath =
+        `${metadataPath}.tmp`;
+
+
+    metadataWritePromise =
+        metadataWritePromise.then(
+
+            async () => {
+
+                ensureDirectories();
+
+
+                await fsPromises.writeFile(
+
+                    temporaryPath,
+
+                    snapshot,
+
+                    "utf8"
+
+                );
+
+
+                await fsPromises.rename(
+
+                    temporaryPath,
+
+                    metadataPath
+
+                );
+
+            }
+
+        );
+
+
+    await metadataWritePromise;
+
+
+    if (
+        metadataWriteGeneration ===
+        generationAtStart
+    ) {
+
+        metadataDirty =
+            false;
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * QUEUE PAYLOAD WRITE
+ * =========================================================
+ */
+
+function queuePayloadWrite(
+    cacheKey,
+    data
+) {
+
+    const normalizedKey =
+        normalizeCacheKey(
+            cacheKey
+        );
+
+
+    pendingPayloadWrites.set(
+
+        normalizedKey,
+
+        {
+
+            data
+
+        }
+
+    );
+
+
+    payloadWritePromise =
+        payloadWritePromise.then(
+
+            async () => {
+
+                const pending =
+                    pendingPayloadWrites.get(
+                        normalizedKey
+                    );
+
+
+                if (
+                    !pending
+                ) {
+
+                    return;
+
+                }
+
+
+                pendingPayloadWrites.delete(
+                    normalizedKey
+                );
+
+
+                ensureDirectories();
+
+
+                const filePath =
+                    getEntryFilePath(
+                        normalizedKey
+                    );
+
+
+                const temporaryPath =
+                    `${filePath}.tmp`;
+
+
+                const json =
+                    JSON.stringify(
+
+                        pending.data
+
+                    );
+
+
+                await fsPromises.writeFile(
+
+                    temporaryPath,
+
+                    json,
+
+                    "utf8"
+
+                );
+
+
+                await fsPromises.rename(
+
+                    temporaryPath,
+
+                    filePath
+
+                );
+
+            }
+
+        );
+
+
+    payloadWritePromise.catch(
+
+        error => {
+
+            console.error(
+
+                `[persistentCacheService] Payload write failed ${normalizedKey}:`,
+
+                error
+
+            );
+
+        }
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * READ PAYLOAD FILE
+ * =========================================================
+ */
+
+function readPayloadFile(
+    cacheKey
+) {
+
+    const filePath =
+        getEntryFilePath(
+            cacheKey
+        );
+
+
+    if (
+        !fs.existsSync(
+            filePath
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    try {
+
+        const raw =
+            fs.readFileSync(
+
+                filePath,
+
+                "utf8"
+
+            );
+
+
+        if (
+            !raw.trim()
+        ) {
+
+            return null;
+
+        }
+
+
+        return JSON.parse(
+            raw
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[persistentCacheService] Failed to read payload ${cacheKey}:`,
+
+            error
+
+        );
+
+
+        return null;
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * SET
+ * =========================================================
+ */
+
+export function setPersistentCache(
+    {
+        cacheKey,
+        cacheGroup,
+        data,
+        rowCount = 0,
+        ttlMs = DEFAULT_TTL_MS,
+        firstDate = null,
+        latestDate = null
+    }
+) {
+
+    const store =
+        getStore();
+
+
+    const normalizedKey =
+        normalizeCacheKey(
+            cacheKey
+        );
+
+
+    const group =
+        String(
+            cacheGroup ||
+            "default"
+        );
+
+
+    const ttl =
+        safeTtl(
+            ttlMs
+        );
+
+
+    const now =
+        new Date();
+
+
+    const expiresAt =
+        new Date(
+
+            now.getTime() +
+            ttl
+
+        );
+
+
+    const existing =
+        store.entries[
+            normalizedKey
+        ];
+
+
+    store.entries[
+        normalizedKey
+    ] = {
+
+        cacheKey:
+            normalizedKey,
+
+        cacheGroup:
+            group,
+
+        fileName:
+            buildEntryFileName(
+                normalizedKey
+            ),
+
+        rowCount:
+            safeRowCount(
+                rowCount
+            ),
+
+        firstDate:
+            firstDate ||
+            null,
+
+        latestDate:
+            latestDate ||
+            null,
+
+        createdAt:
+            existing?.createdAt ||
+            now.toISOString(),
+
+        updatedAt:
+            now.toISOString(),
+
+        expiresAt:
+            expiresAt.toISOString()
+
+    };
+
+
+    /*
+     * Keep the newest payload in RAM so an immediate GET
+     * does not need disk access.
+     */
+
+    setPayloadInMemory(
+
+        normalizedKey,
+
+        data
+
+    );
+
+
+    /*
+     * Payload and metadata are persisted independently.
+     */
+
+    queuePayloadWrite(
+
+        normalizedKey,
+
+        data
+
+    );
+
+
+    queueMetadataWrite();
+
+
+    return {
+
+        success:
+            true,
+
+        cacheKey:
+            normalizedKey,
+
+        cacheGroup:
+            group,
+
+        rowCount:
+            safeRowCount(
+                rowCount
+            ),
+
+        expiresAt:
+            expiresAt.toISOString()
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * GET
+ * =========================================================
+ */
+
+export function getPersistentCache(
+    {
+        cacheKey,
+        allowExpired = false,
+        includeData = true
+    }
+) {
+
+    const store =
+        getStore();
+
+
+    const normalizedKey =
+        normalizeCacheKey(
+            cacheKey
+        );
+
+
+    const entry =
+        store.entries[
+            normalizedKey
+        ];
+
+
+    if (
+        !entry
+    ) {
+
+        return null;
+
+    }
+
+
+    const expiresAtMs =
+        new Date(
+            entry.expiresAt
+        ).getTime();
+
+
+    const expired =
+        Number.isFinite(
+            expiresAtMs
+        ) &&
+        expiresAtMs <
+        Date.now();
+
+
+    if (
+        expired &&
+        !allowExpired
+    ) {
+
+        return null;
+
+    }
+    if (!includeData) {
+
+        return {
+
+            cacheKey:
+                entry.cacheKey,
+
+            cacheGroup:
+                entry.cacheGroup,
+
+            rowCount:
+                safeRowCount(
+                    entry.rowCount
+                ),
+
+            firstDate:
+                entry.firstDate ||
+                null,
+
+            latestDate:
+                entry.latestDate ||
+                null,
+
+            createdAt:
+                entry.createdAt,
+
+            updatedAt:
+                entry.updatedAt,
+
+            expiresAt:
+                entry.expiresAt,
+
+            expired
+
+        };
+
+    }
+
+
+    let payload =
+        getPayloadFromMemory(
+            normalizedKey
+        );
+
+
+    if (
+        payload === null ||
+        payload === undefined
+    ) {
+
+        payload =
+            readPayloadFile(
+                normalizedKey
+            );
+
+
+        if (
+            payload !== null &&
+            payload !== undefined
+        ) {
+
+            setPayloadInMemory(
+
+                normalizedKey,
+
+                payload
+
+            );
+
+        }
+
+    }
+
+
+    if (
+        payload === null ||
+        payload === undefined
+    ) {
+
+        return null;
+
+    }
+
+
+    return {
+
+        cacheKey:
+            entry.cacheKey,
+
+        cacheGroup:
+            entry.cacheGroup,
+
+        data:
+            payload,
+
+        rowCount:
+            safeRowCount(
+                entry.rowCount
+            ),
+
+        firstDate:
+                entry.firstDate ||
+                null,
+
+            latestDate:
+                entry.latestDate ||
+                null,
+
+            createdAt:
+            entry.createdAt,
+
+        updatedAt:
+            entry.updatedAt,
+
+        expiresAt:
+            entry.expiresAt,
+
+        expired
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * HAS
+ * =========================================================
+ */
+
+export function hasPersistentCache(
+    {
+        cacheKey
+    }
+) {
+
+    return Boolean(
+
+        getPersistentCache({
+
+            cacheKey,
+
+            allowExpired:
+                false
+
+        })
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DELETE ONE
+ * =========================================================
+ */
+
+export function deletePersistentCache(
+    {
+        cacheKey
+    }
+) {
+
+    const store =
+        getStore();
+
+
+    const normalizedKey =
+        normalizeCacheKey(
+            cacheKey
+        );
+
+
+    if (
+        Object.prototype.hasOwnProperty.call(
+            store.entries,
+            normalizedKey
+        )
+    ) {
+
+        delete store.entries[
+            normalizedKey
+        ];
+
+
+        removePayloadFromMemory(
+            normalizedKey
+        );
+
+
+        pendingPayloadWrites.delete(
+            normalizedKey
+        );
+
+
+        queueMetadataWrite();
+
+
+        /*
+         * Disk deletion is asynchronous.
+         */
+
+        const filePath =
+            getEntryFilePath(
+                normalizedKey
+            );
+
+
+        fsPromises.unlink(
+            filePath
+        )
+        .catch(
+            error => {
+
+                if (
+                    error?.code !==
+                    "ENOENT"
+                ) {
+
+                    console.error(
+
+                        `[persistentCacheService] Failed to delete payload ${normalizedKey}:`,
+
+                        error
+
+                    );
+
+                }
+
+            }
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * CLEAR GROUP / ALL
+ * =========================================================
+ */
+
+export function clearPersistentCache(
+    {
+        cacheGroup = null
+    } = {}
+) {
+
+    const store =
+        getStore();
+
+
+    const keysToDelete =
+        [];
+
+
+    if (
+        cacheGroup === null
+    ) {
+
+        keysToDelete.push(
+
+            ...Object.keys(
+                store.entries
+            )
+
+        );
+
+
+        store.entries =
+            {};
+
+    }
+    else {
+
+        const normalizedGroup =
+            String(
+                cacheGroup
+            );
+
+
+        for (
+            const [
+                key,
+                entry
+            ]
+            of Object.entries(
+                store.entries
+            )
+        ) {
+
+            if (
+                String(
+                    entry?.cacheGroup ||
+                    ""
+                ) ===
+                normalizedGroup
+            ) {
+
+                keysToDelete.push(
+                    key
+                );
+
+
+                delete store.entries[
+                    key
+                ];
+
+            }
+
+        }
+
+    }
+
+
+    for (
+        const key
+        of keysToDelete
+    ) {
+
+        removePayloadFromMemory(
+            key
+        );
+
+
+        pendingPayloadWrites.delete(
+            key
+        );
+
+
+        const filePath =
+            getEntryFilePath(
+                key
+            );
+
+
+        fsPromises.unlink(
+            filePath
+        )
+        .catch(
+            error => {
+
+                if (
+                    error?.code !==
+                    "ENOENT"
+                ) {
+
+                    console.error(
+
+                        `[persistentCacheService] Failed to delete cache entry ${key}:`,
+
+                        error
+
+                    );
+
+                }
+
+            }
+        );
+
+    }
+
+
+    if (
+        keysToDelete.length > 0
+    ) {
+
+        queueMetadataWrite();
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * CLEAN EXPIRED
+ * =========================================================
+ */
+
+export function clearExpiredPersistentCache() {
+
+    const store =
+        getStore();
+
+
+    const now =
+        Date.now();
+
+
+    let removed =
+        0;
+
+
+    for (
+        const [
+            key,
+            entry
+        ]
+        of Object.entries(
+            store.entries
+        )
+    ) {
+
+        const expiresAt =
+            new Date(
+                entry?.expiresAt
+            ).getTime();
+
+
+        if (
+            Number.isFinite(
+                expiresAt
+            ) &&
+            expiresAt <
+            now
+        ) {
+
+            delete store.entries[
+                key
+            ];
+
+
+            removePayloadFromMemory(
+                key
+            );
+
+
+            pendingPayloadWrites.delete(
+                key
+            );
+
+
+            removed +=
+                1;
+
+
+            const filePath =
+                getEntryFilePath(
+                    key
+                );
+
+
+            fsPromises.unlink(
+                filePath
+            )
+            .catch(
+                error => {
+
+                    if (
+                        error?.code !==
+                        "ENOENT"
+                    ) {
+
+                        console.error(
+
+                            `[persistentCacheService] Failed to remove expired entry ${key}:`,
+
+                            error
+
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+
+    }
+
+
+    if (
+        removed > 0
+    ) {
+
+        queueMetadataWrite();
+
+    }
+
+
+    return {
+
+        removed
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * STATS
+ * =========================================================
+ */
+
+export function getPersistentCacheStats() {
+
+    const store =
+        getStore();
+
+
+    const entries =
+        Object.values(
+            store.entries ||
+            {}
+        );
+
+
+    let rows =
+        0;
+
+
+    const groupsMap =
+        new Map();
+
+
+    const now =
+        Date.now();
+
+
+    for (
+        const entry
+        of entries
+    ) {
+
+        rows +=
+            safeRowCount(
+                entry.rowCount
+            );
+
+
+        const group =
+            String(
+                entry.cacheGroup ||
+                "default"
+            );
+
+
+        if (
+            !groupsMap.has(
+                group
+            )
+        ) {
+
+            groupsMap.set(
+
+                group,
+
+                {
+
+                    cache_group:
+                        group,
+
+                    entries:
+                        0,
+
+                    rows:
+                        0,
+
+                    expired:
+                        0
+
+                }
+
+            );
+
+        }
+
+
+        const groupStats =
+            groupsMap.get(
+                group
+            );
+
+
+        groupStats.entries +=
+            1;
+
+
+        groupStats.rows +=
+            safeRowCount(
+                entry.rowCount
+            );
+
+
+        const expiresAt =
+            new Date(
+                entry.expiresAt
+            ).getTime();
+
+
+        if (
+            Number.isFinite(
+                expiresAt
+            ) &&
+            expiresAt <
+            now
+        ) {
+
+            groupStats.expired +=
+                1;
+
+        }
+
+    }
+
+
+    return {
+
+        entries:
+            entries.length,
+
+        rows,
+
+        filePath:
+            getBaseDirectory(),
+
+        metadataPath:
+            getMetadataPath(),
+
+        entriesDirectory:
+            getEntriesDirectory(),
+
+        memoryPayloadEntries:
+            payloadMemoryCache.size,
+
+        pendingPayloadWrites:
+            pendingPayloadWrites.size,
+
+        dirty:
+            metadataDirty,
+
+        groups:
+            Array.from(
+                groupsMap.values()
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * PRELOAD
+ *
+ * Only metadata is loaded.
+ *
+ * No historical payloads are loaded here.
+ * =========================================================
+ */
+
+export function preloadPersistentCache() {
+
+    const store =
+        getStore();
+
+
+    return {
+
+        loaded:
+            true,
+
+        entries:
+            Object.keys(
+                store.entries
+            ).length,
+
+        payloadsLoadedIntoMemory:
+            payloadMemoryCache.size
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * FLUSH ALL
+ * =========================================================
+ */
+
+export async function flushPersistentCache() {
+
+    if (
+        metadataWriteTimer
+    ) {
+
+        clearTimeout(
+            metadataWriteTimer
+        );
+
+
+        metadataWriteTimer =
+            null;
+
+    }
+
+
+    /*
+     * Flush every pending payload first.
+     */
+
+    const payloadEntries =
+        Array.from(
+            pendingPayloadWrites.entries()
+        );
+
+
+    if (
+        payloadEntries.length > 0
+    ) {
+
+        /*
+         * Build the current write chain.
+         */
+
+        for (
+            const [
+                cacheKey,
+                pending
+            ]
+            of payloadEntries
+        ) {
+
+            await writePayloadImmediately(
+
+                cacheKey,
+
+                pending.data
+
+            );
+
+
+            pendingPayloadWrites.delete(
+                cacheKey
+            );
+
+        }
+
+    }
+
+
+    await payloadWritePromise;
+
+
+    /*
+     * Finally persist metadata.
+     */
+
+    await flushMetadata();
+
+}
+
+
+/*
+ * =========================================================
+ * IMMEDIATE PAYLOAD WRITE
+ * =========================================================
+ */
+
+async function writePayloadImmediately(
+    cacheKey,
+    data
+) {
+
+    ensureDirectories();
+
+
+    const filePath =
+        getEntryFilePath(
+            cacheKey
+        );
+
+
+    const temporaryPath =
+        `${filePath}.tmp`;
+
+
+    const json =
+        JSON.stringify(
+            data
+        );
+
+
+    await fsPromises.writeFile(
+
+        temporaryPath,
+
+        json,
+
+        "utf8"
+
+    );
+
+
+    await fsPromises.rename(
+
+        temporaryPath,
+
+        filePath
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DEFAULT
+ * =========================================================
+ */
+
+export default {
+
+    setPersistentCache,
+
+    getPersistentCache,
+
+    hasPersistentCache,
+
+    deletePersistentCache,
+
+    clearPersistentCache,
+
+    clearExpiredPersistentCache,
+
+    getPersistentCacheStats,
+
+    preloadPersistentCache,
+
+    flushPersistentCache
+
+};
+

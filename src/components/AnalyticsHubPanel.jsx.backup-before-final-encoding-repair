@@ -1,0 +1,3972 @@
+﻿import React, { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
+import BranchPerformancePanel from './BranchPerformancePanel.jsx';
+
+function n(v) {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+}
+
+function money(v) {
+    return n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 2
+    });
+}
+
+function num(v) {
+    return n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 2
+    });
+}
+
+function pct(v) {
+    return `${n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 1
+    })}%`;
+}
+
+function fmtDate(v) {
+    if (!v) return '-';
+
+    const text = String(v);
+
+    if (text.length >= 16) {
+        return text
+            .slice(0, 16)
+            .replace('T', ' ');
+    }
+
+    if (text.length >= 10) {
+        return text.slice(0, 10);
+    }
+
+    return text;
+}
+
+function dayCount(fromDate, toDate) {
+    const start =
+        new Date(`${fromDate}T00:00:00Z`);
+
+    const end =
+        new Date(`${toDate}T00:00:00Z`);
+
+    if (
+        !Number.isFinite(start.getTime()) ||
+        !Number.isFinite(end.getTime()) ||
+        start > end
+    ) {
+        return 1;
+    }
+
+    return (
+        Math.floor(
+            (end.getTime() - start.getTime()) /
+            86400000
+        ) + 1
+    );
+}
+
+const TITLES = {
+    overview: 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ†ط´ط§ط·',
+    'branch-health': 'طµط­ط© ط§ظ„ظپط±ظˆط¹',
+    alerts: 'ط§ظ„طھظ†ط¨ظٹظ‡ط§طھ ظˆط§ظ„ظپط±طµ',
+
+    'sales-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+    'sales-trend': 'ط§طھط¬ط§ظ‡ ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+    'sales-day-hour': 'ط§ظ„ظٹظˆظ… / ط§ظ„ط³ط§ط¹ط©',
+    'sales-sellers': 'ط§ظ„ط¨ط§ط¦ط¹ظˆظ†',
+    'sales-returns': 'ط§ظ„ظ…ط±طھط¬ط¹ط§طھ',
+
+    'customer-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ط¹ظ…ظ„ط§ط،',
+    'customer-rfm': 'طھط­ظ„ظٹظ„ RFM',
+    'customer-retention': 'ط§ظ„ط§ط­طھظپط§ط¸ ط¨ط§ظ„ط¹ظ…ظ„ط§ط،',
+    'customer-churn': 'ط§ظ„طھظˆظ‚ظپ / ط¹ط¯ظ… ط§ظ„ظ†ط´ط§ط·',
+    'customer-clv': 'ط§ظ„ظ‚ظٹظ…ط© ط§ظ„ط¹ظ…ط±ظٹط© ظ„ظ„ط¹ظ…ظٹظ„',
+    'customer-cohort': 'طھط­ظ„ظٹظ„ ظ…ط¬ظ…ظˆط¹ط§طھ ط§ظ„ط¹ظ…ظ„ط§ط،',
+
+    'product-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ظ†طھط¬ط§طھ',
+    'product-top': 'ط£ظپط¶ظ„ ط§ظ„ظ…ظ†طھط¬ط§طھ',
+    'product-profitability': 'ط§ظ„ط±ط¨ط­ظٹط©',
+    'product-abc': 'طھط­ظ„ظٹظ„ ABC',
+    'product-stock': 'ظ…ط®ط§ط·ط± ط§ظ„ظ…ط®ط²ظˆظ†',
+
+    'inventory-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ط®ط²ظˆظ†',
+    'inventory-risk': 'ظ…ط®ط§ط·ط± ط§ظ„ظ…ط®ط²ظˆظ†',
+    'inventory-reorder': 'طھط­ظ„ظٹظ„ ط¥ط¹ط§ط¯ط© ط§ظ„ط·ظ„ط¨',
+
+    'purchase-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ط´طھط±ظٹط§طھ',
+    'supplier-performance': 'ط£ط¯ط§ط، ط§ظ„ظ…ظˆط±ط¯ظٹظ†',
+    'purchase-opportunities': 'ظپط±طµ ط§ظ„ط´ط±ط§ط،',
+
+    'profit-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ط±ط¨ط­ظٹط©',
+    'profit-branch': 'ط§ظ„ط±ط¨ط­ظٹط© ط­ط³ط¨ ط§ظ„ظپط±ط¹',
+    'profit-product': 'ط§ظ„ط±ط¨ط­ظٹط© ط­ط³ط¨ ط§ظ„ظ…ظ†طھط¬',
+    'profit-anomalies': 'ط´ط°ظˆط° ط§ظ„طھظƒظ„ظپط©',
+
+    'branch-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظپط±ظˆط¹',
+    'branch-comparison': 'ظ…ظ‚ط§ط±ظ†ط© ط§ظ„ظپط±ظˆط¹',
+    'branch-ranking': 'طھط±طھظٹط¨ ط§ظ„ظپط±ظˆط¹',
+
+    'staff-overview': 'ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ظˆط¸ظپظٹظ†',
+    'staff-sales': 'ط§ظ„ظ…ط¨ظٹط¹ط§طھ ط­ط³ط¨ ط§ظ„ط¨ط§ط¦ط¹',
+    'staff-productivity': 'ط§ظ„ط¥ظ†طھط§ط¬ظٹط©',
+
+    'forecast-sales': 'طھظˆظ‚ط¹ ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+    'forecast-demand': 'طھظˆظ‚ط¹ ط§ظ„ط·ظ„ط¨',
+    'forecast-inventory': 'طھظˆظ‚ط¹ ط§ظ„ظ…ط®ط²ظˆظ†',
+
+    'quality-overview': 'ط¬ظˆط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ',
+    'quality-cost': 'ط¬ظˆط¯ط© ط§ظ„طھظƒظ„ظپط©',
+    'quality-reconciliation': 'ظ…ط·ط§ط¨ظ‚ط© ط§ظ„ظ…ط¨ظٹط¹ط§طھ'
+};
+
+function Cards({ items = [] }) {
+    return (
+        <div className="kpi-grid">
+            {items.map((item, index) => (
+                <div
+                    className="kpi-card"
+                    key={index}
+                >
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+
+                    {item.note && (
+                        <small>{item.note}</small>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function Table({
+    columns,
+    rows = []
+}) {
+    return (
+        <div className="table-card">
+            <div className="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {columns.map(column => (
+                                <th key={column.key}>
+                                    {column.label}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {rows.length ? (
+                            rows.map((row, index) => (
+                                <tr
+                                    key={
+                                        row.id ??
+                                        row.ticketId ??
+                                        row.employeeId ??
+                                        row.customerId ??
+                                        index
+                                    }
+                                >
+                                    {columns.map(column => (
+                                        <td key={column.key}>
+                                            {column.render
+                                                ? column.render(
+                                                    row,
+                                                    index
+                                                )
+                                                : (
+                                                    row[
+                                                        column.key
+                                                    ] ?? '-'
+                                                )}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))
+                        ) : (
+                            <tr>
+                                <td
+                                    colSpan={
+                                        columns.length
+                                    }
+                                    style={{
+                                        textAlign: 'center'
+                                    }}
+                                >
+                                    ظ„ط§ طھظˆط¬ط¯ ط¨ظٹط§ظ†ط§طھ
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+function PercentValue({
+    value,
+    percent,
+    formatter = num,
+    title
+}) {
+    return (
+        <span title={title || ''}>
+            {formatter(value)}
+
+            <span
+                style={{
+                    marginRight: 6,
+                    color: '#64748b',
+                    fontSize: '.82em',
+                    whiteSpace: 'nowrap'
+                }}
+            >
+                ({pct(percent)})
+            </span>
+        </span>
+    );
+}
+
+function sellerShare(value, total) {
+    if (!n(total)) return 0;
+
+    return (
+        n(value) /
+        n(total)
+    ) * 100;
+}
+
+const buttonStyle = {
+    padding: '8px 14px',
+    borderRadius: 10,
+    border:
+        '1px solid rgba(127,127,127,.25)',
+    background: 'transparent',
+    cursor: 'pointer',
+    fontWeight: 800,
+    fontFamily: 'inherit'
+};
+
+function exportSellersToExcel({
+    rows,
+    fromDate,
+    toDate,
+    branchLabel
+}) {
+    const totals = {
+        sales:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.sales),
+                0
+            ),
+
+        invoices:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.invoices),
+                0
+            ),
+
+        customers:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.customers),
+                0
+            ),
+
+        units:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.units),
+                0
+            )
+    };
+
+    totals.averageInvoice =
+        totals.invoices
+            ? totals.sales /
+              totals.invoices
+            : 0;
+
+    const rowsForExcel = [
+        [
+            'PharmaBI - ط§ظ„ط¨ط§ط¦ط¹ظˆظ†'
+        ],
+
+        [
+            'ط§ظ„ظپط±ط¹',
+            branchLabel
+        ],
+
+        [
+            'ظ…ظ†',
+            fromDate
+        ],
+
+        [
+            'ط¥ظ„ظ‰',
+            toDate
+        ],
+
+        [],
+
+        [
+            'ط§ظ„ط¨ط§ط¦ط¹',
+            'ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ / ظٹظˆظ…',
+            'ظ†ط³ط¨ط© ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+            'ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± / ظٹظˆظ…',
+            'ظ†ط³ط¨ط© ط§ظ„ظپظˆط§طھظٹط±',
+            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+            'ظ†ط³ط¨ط© ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+            'ظ…طھظˆط³ط· ط§ظ„ط¹ظ…ظ„ط§ط، / ظٹظˆظ…',
+            'ظ†ط³ط¨ط© ط§ظ„ط¹ظ…ظ„ط§ط،',
+            'ظ…طھظˆط³ط· ط§ظ„ظˆط­ط¯ط§طھ / ظٹظˆظ…',
+            'ظ†ط³ط¨ط© ط§ظ„ظˆط­ط¯ط§طھ'
+        ]
+    ];
+
+    for (const row of rows) {
+        rowsForExcel.push([
+            row.employeeName ||
+                row.employeeId ||
+                '-',
+
+            n(row.sales),
+            sellerShare(
+                row.sales,
+                totals.sales
+            ),
+
+            n(row.invoices),
+            sellerShare(
+                row.invoices,
+                totals.invoices
+            ),
+
+            n(row.averageInvoice),
+            sellerShare(
+                row.averageInvoice,
+                totals.averageInvoice
+            ),
+
+            n(row.customers),
+            sellerShare(
+                row.customers,
+                totals.customers
+            ),
+
+            n(row.units),
+            sellerShare(
+                row.units,
+                totals.units
+            )
+        ]);
+    }
+
+    const worksheet =
+        XLSX.utils.aoa_to_sheet(
+            rowsForExcel
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'ط§ظ„ط¨ط§ط¦ط¹ظˆظ†'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-ط§ظ„ط¨ط§ط¦ط¹ظˆظ†-${String(
+            branchLabel || 'ظƒظ„ ط§ظ„ظپط±ظˆط¹'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${fromDate}-${toDate}.xlsx`
+    );
+}
+
+function exportSellerHistory(
+    rows,
+    sellerName,
+    branchName
+) {
+    const data =
+        (rows || []).map(row => ({
+            'ط§ظ„ط´ظ‡ط±':
+                row.month,
+
+            'ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ / ظٹظˆظ…':
+                row.averageDailySales,
+
+            'ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± / ظٹظˆظ…':
+                row.averageDailyInvoices,
+
+            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©':
+                row.averageInvoice,
+
+            'ط§ظ„طھظ‚ظٹظٹظ…':
+                row.score,
+
+            'ط§ظ„طھظ‚ظٹظٹظ… ط§ظ„ظ„ظپط¸ظٹ':
+                row.scoreLabel
+        }));
+
+    const worksheet =
+        XLSX.utils.json_to_sheet(
+            data
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'ط£ط¯ط§ط، ط§ظ„ط¨ط§ط¦ط¹'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-طھظ‚ظٹظٹظ…-${String(
+            branchName || 'ظپط±ط¹'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${String(
+            sellerName || 'ط¨ط§ط¦ط¹'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}.xlsx`
+    );
+}
+
+function exportCustomerInvoices(
+    rows,
+    customerName,
+    branchName
+) {
+    const data =
+        (rows || []).map(row => ({
+            'ط±ظ‚ظ… ط§ظ„ظپط§طھظˆط±ط©':
+                row.invoiceCode ||
+                row.invoiceNumber ||
+                row.ticketId ||
+                '',
+
+            'ط§ظ„طھط§ط±ظٹط®':
+                row.invoiceDate ||
+                row.date ||
+                row.ztime ||
+                '',
+
+            'ط§ظ„ظ†ظˆط¹':
+                row.transactionType ||
+                row.type ||
+                '',
+
+            'ط§ظ„ط¥ط¬ظ…ط§ظ„ظٹ':
+                n(
+                    row.total ??
+                    row.invoiceTotal
+                ),
+
+            'ط§ظ„ط®طµظ…':
+                n(row.discount),
+
+            'ط§ظ„ط¶ط±ظٹط¨ط©':
+                n(row.salesTaxValue),
+
+            'ط§ظ„ط¨ط§ط¦ط¹':
+                row.sellerName ||
+                row.employeeName ||
+                '',
+
+            'ط§ظ„ظ…ط®ط²ظ†':
+                row.storeName ||
+                ''
+        }));
+
+    const worksheet =
+        XLSX.utils.json_to_sheet(
+            data
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'ظپظˆط§طھظٹط± ط§ظ„ط¹ظ…ظٹظ„'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-ظپظˆط§طھظٹط±-ط§ظ„ط¹ظ…ظٹظ„-${String(
+            branchName || 'ظپط±ط¹'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${String(
+            customerName || 'ط¹ظ…ظٹظ„'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}.xlsx`
+    );
+}
+
+function Chart({
+    title,
+    rows = [],
+    field
+}) {
+    const values =
+        rows.map(
+            row => n(row[field])
+        );
+
+    if (!values.length) {
+        return (
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>{title}</strong>
+                        <span>
+                            ظ„ط§ طھظˆط¬ط¯ ط¨ظٹط§ظ†ط§طھ طھط§ط±ظٹط®ظٹط©
+                        </span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const width = 720;
+    const height = 220;
+
+    const max =
+        Math.max(
+            ...values,
+            1
+        );
+
+    const min =
+        Math.min(
+            ...values,
+            0
+        );
+
+    const span =
+        Math.max(
+            max - min,
+            1
+        );
+
+    const points =
+        values
+            .map(
+                (value, index) => {
+
+                    const x =
+                        values.length === 1
+                            ? width / 2
+                            : (
+                                index *
+                                width
+                            ) /
+                            (
+                                values.length -
+                                1
+                            );
+
+                    const y =
+                        height -
+                        28 -
+                        (
+                            (
+                                value -
+                                min
+                            ) /
+                            span
+                        ) *
+                        (
+                            height -
+                            52
+                        );
+
+                    return `${x},${y}`;
+                }
+            )
+            .join(' ');
+
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>{title}</strong>
+                    <span>
+                        طھط·ظˆط± ط§ظ„ظ…ط¤ط´ط± ط´ظ‡ط±ظٹط§ظ‹
+                    </span>
+                </div>
+            </div>
+
+            <div
+                style={{
+                    padding:
+                        '12px 18px'
+                }}
+            >
+                <svg
+                    viewBox={`0 0 ${width} ${height}`}
+                    width="100%"
+                    height="220"
+                >
+                    <line
+                        x1="0"
+                        y1="188"
+                        x2="720"
+                        y2="188"
+                        stroke="currentColor"
+                        opacity=".12"
+                    />
+
+                    <polyline
+                        points={points}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+
+                    {rows.map(
+                        (row, index) => {
+                            const x =
+                                rows.length === 1
+                                    ? width / 2
+                                    : (
+                                        index *
+                                        width
+                                    ) /
+                                    (
+                                        rows.length -
+                                        1
+                                    );
+
+                            return (
+                                <text
+                                    key={index}
+                                    x={x}
+                                    y="210"
+                                    textAnchor="middle"
+                                    fontSize="11"
+                                    opacity=".7"
+                                >
+                                    {
+                                        String(
+                                            row.month ||
+                                            row.date ||
+                                            ''
+                                        ).slice(5)
+                                    }
+                                </text>
+                            );
+                        }
+                    )}
+                </svg>
+            </div>
+        </div>
+    );
+}
+
+function Modal({
+    title,
+    subtitle,
+    name,
+    onClose,
+    children,
+    zIndex = 9999
+}) {
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                background:
+                    'rgba(0,0,0,.38)',
+                zIndex,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 20
+            }}
+        >
+            <div
+                style={{
+                    background:
+                        'var(--page-card,#fff)',
+                    color: 'inherit',
+                    width:
+                        'min(1250px,96vw)',
+                    maxHeight: '92vh',
+                    overflowY: 'auto',
+                    borderRadius: 18,
+                    boxShadow:
+                        '0 20px 60px rgba(0,0,0,.28)'
+                }}
+            >
+                <div
+                    style={{
+                        padding:
+                            '18px 22px',
+                        display: 'flex',
+                        justifyContent:
+                            'space-between',
+                        alignItems:
+                            'center',
+                        gap: 15,
+                        borderBottom:
+                            '1px solid rgba(127,127,127,.15)'
+                    }}
+                >
+                    <div>
+                        <div className="page-eyebrow">
+                            {title}
+                        </div>
+
+                        <h2
+                            style={{
+                                margin:
+                                    '4px 0 0'
+                            }}
+                        >
+                            {name}
+                        </h2>
+
+                        <div
+                            style={{
+                                opacity: .72,
+                                fontSize: 13
+                            }}
+                        >
+                            {subtitle}
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={buttonStyle}
+                    >
+                        ط¥ط؛ظ„ط§ظ‚
+                    </button>
+                </div>
+
+                <div
+                    style={{
+                        padding: 22
+                    }}
+                >
+                    {children}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Overlay({
+    text,
+    zIndex = 9998
+}) {
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                background:
+                    'rgba(0,0,0,.18)',
+                zIndex,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            }}
+        >
+            <div className="page-card">
+                <strong>{text}</strong>
+            </div>
+        </div>
+    );
+}
+
+function sellerScoreLabel(score) {
+    if (n(score) >= 90) return 'ظ…ظ…طھط§ط²';
+    if (n(score) >= 75) return 'ط¬ظٹط¯ ط¬ط¯ط§ظ‹';
+    if (n(score) >= 60) return 'ط¬ظٹط¯';
+
+    return 'ظٹط­طھط§ط¬ ظ…طھط§ط¨ط¹ط©';
+}
+
+function SellerProfile({
+    profile,
+    onClose
+}) {
+    const rows =
+        profile?.monthly || [];
+
+    const latest =
+        profile?.latest;
+
+    return (
+        <Modal
+            title="طھظ‚ظٹظٹظ… ط§ظ„ط¨ط§ط¦ط¹"
+            subtitle={`${profile?.branchName || '-'} آ· ط¢ط®ط± ${profile?.historyMonths || 12} ط´ظ‡ط±`}
+            name={
+                profile?.employeeName ||
+                '-'
+            }
+            onClose={onClose}
+        >
+            <Cards
+                items={[
+                    {
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ / ظٹظˆظ…',
+                        value:
+                            money(
+                                latest?.averageDailySales
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± / ظٹظˆظ…',
+                        value:
+                            num(
+                                latest?.averageDailyInvoices
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                        value:
+                            money(
+                                latest?.averageInvoice
+                            )
+                    },
+
+                    {
+                        label:
+                            'طھظ‚ظٹظٹظ… ط¢ط®ط± ط´ظ‡ط±',
+                        value:
+                            `${num(
+                                latest?.score
+                            )} / 100`,
+                        note:
+                            sellerScoreLabel(
+                                latest?.score
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„طھظ‚ظٹظٹظ…',
+                        value:
+                            `${num(
+                                profile?.averageScore
+                            )} / 100`,
+                        note:
+                            '40% ظ…ط¨ظٹط¹ط§طھ آ· 30% ظپظˆط§طھظٹط± آ· 30% ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©'
+                    }
+                ]}
+            />
+
+            <div
+                style={{
+                    display: 'flex',
+                    justifyContent:
+                        'flex-end',
+                    marginTop: 16
+                }}
+            >
+                <button
+                    type="button"
+                    onClick={() =>
+                        exportSellerHistory(
+                            rows,
+                            profile?.employeeName,
+                            profile?.branchName
+                        )
+                    }
+                    style={buttonStyle}
+                >
+                    â†“ طھطµط¯ظٹط± Excel
+                </button>
+            </div>
+
+            <Chart
+                title="ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ ط§ظ„ظٹظˆظ…ظٹط©"
+                rows={rows}
+                field="averageDailySales"
+            />
+
+            <Chart
+                title="ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± ط§ظ„ظٹظˆظ…ظٹط©"
+                rows={rows}
+                field="averageDailyInvoices"
+            />
+
+            <Chart
+                title="ظ…طھظˆط³ط· ظ‚ظٹظ…ط© ط§ظ„ظپط§طھظˆط±ط©"
+                rows={rows}
+                field="averageInvoice"
+            />
+
+            <Table
+                columns={[
+                    {
+                        key: 'month',
+                        label: 'ط§ظ„ط´ظ‡ط±'
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ / ظٹظˆظ…',
+                        render:
+                            row =>
+                                money(
+                                    row.averageDailySales
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± / ظٹظˆظ…',
+                        render:
+                            row =>
+                                num(
+                                    row.averageDailyInvoices
+                                )
+                    },
+
+                    {
+                        key: 'averageInvoice',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                        render:
+                            row =>
+                                money(
+                                    row.averageInvoice
+                                )
+                    },
+
+                    {
+                        key: 'score',
+                        label:
+                            'ط§ظ„طھظ‚ظٹظٹظ…',
+                        render:
+                            row =>
+                                <strong>
+                                    {num(
+                                        row.score
+                                    )}{' '}
+                                    / 100
+                                </strong>
+                    },
+
+                    {
+                        key: 'scoreLabel',
+                        label:
+                            'ط§ظ„ظˆطµظپ',
+                        render:
+                            row =>
+                                row.scoreLabel ||
+                                sellerScoreLabel(
+                                    row.score
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+        </Modal>
+    );
+}
+
+function CustomerInvoiceDetails({
+    details,
+    onClose
+}) {
+    const header =
+        details?.header ||
+        {};
+
+    const lines =
+        details?.lines ||
+        [];
+
+    const totals =
+        details?.totals ||
+        {};
+
+    return (
+        <Modal
+            title="طھظپط§طµظٹظ„ ط§ظ„ظپط§طھظˆط±ط©"
+            subtitle={`${header?.branchName || details?.branchName || '-'} آ· ${fmtDate(
+                header?.invoiceDate ||
+                header?.date ||
+                header?.ztime
+            )}`}
+            name={
+                header?.invoiceCode ||
+                header?.invoiceNumber ||
+                header?.ticketId ||
+                '-'
+            }
+            onClose={onClose}
+            zIndex={10001}
+        >
+            <Cards
+                items={[
+                    {
+                        label: 'ط§ظ„ط¹ظ…ظٹظ„',
+                        value:
+                            header?.customerName ||
+                            '-'
+                    },
+
+                    {
+                        label: 'ط§ظ„ط¨ط§ط¦ط¹',
+                        value:
+                            header?.sellerName ||
+                            '-'
+                    },
+
+                    {
+                        label: 'ط§ظ„ظ†ظˆط¹',
+                        value:
+                            header?.transactionType ||
+                            '-'
+                    },
+
+                    {
+                        label: 'طھط§ط±ظٹط® ط§ظ„ظپط§طھظˆط±ط©',
+                        value:
+                            fmtDate(
+                                header?.invoiceDate ||
+                                header?.date ||
+                                header?.ztime
+                            )
+                    },
+
+                    {
+                        label: 'ط§ظ„ط¥ط¬ظ…ط§ظ„ظٹ',
+                        value:
+                            money(
+                                header?.total ??
+                                header?.invoiceTotal ??
+                                totals?.total
+                            )
+                    },
+
+                    {
+                        label: 'ط§ظ„ط®طµظ…',
+                        value:
+                            money(
+                                header?.discount
+                            )
+                    },
+
+                    {
+                        label: 'ط¶ط±ظٹط¨ط© ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                        value:
+                            money(
+                                header?.salesTaxValue
+                            )
+                    },
+
+                    {
+                        label: 'ط§ظ„ظ…ط¯ظپظˆط¹',
+                        value:
+                            money(
+                                header?.paidByCustomer
+                            )
+                    }
+                ]}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            ط¨ظ†ظˆط¯ ط§ظ„ظپط§طھظˆط±ط©
+                        </strong>
+
+                        <span>
+                            ط§ظ„ط¹ط¨ظˆط§طھ ظˆط§ظ„ط£ط¬ط²ط§ط، ظƒظ…ط§ ظ‡ظٹ ظ…ط³ط¬ظ„ط© ظپظٹ PharmaFly
+                        </span>
+                    </div>
+                </div>
+
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ط§ظ„ظ…ظ†طھط¬</th>
+                                <th>ط§ظ„ط¹ط¨ظˆط§طھ</th>
+                                <th>ط§ظ„ط£ط¬ط²ط§ط،</th>
+                                <th>ط£ط¬ط²ط§ط، ط§ظ„ط¹ط¨ظˆط©</th>
+                                <th>ط³ط¹ط± ط§ظ„ط¨ظٹط¹</th>
+                                <th>ط§ظ„ط®طµظ…</th>
+                                <th>ط§ظ„ط®طµظ… ط§ظ„ط¥ط¶ط§ظپظٹ</th>
+                                <th>ط§ظ„ظ‚ظٹظ…ط© ط§ظ„طµط§ظپظٹط©</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {lines.length ? (
+                                lines.map(
+                                    (row, index) => (
+                                        <tr
+                                            key={
+                                                row.lineId ||
+                                                row.id ||
+                                                index
+                                            }
+                                        >
+                                            <td>
+                                                {
+                                                    row.itemName ||
+                                                    row.productName ||
+                                                    row.itemId ||
+                                                    '-'
+                                                }
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.packs
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.units
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.iParts ??
+                                                    row.itemParts ??
+                                                    row.parts
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.salesPrice
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.discount
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.extraDiscount
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                <strong>
+                                                    {money(
+                                                        row.netValue
+                                                    )}
+                                                </strong>
+                                            </td>
+                                        </tr>
+                                    )
+                                )
+                            ) : (
+                                <tr>
+                                    <td
+                                        colSpan="8"
+                                        style={{
+                                            textAlign:
+                                                'center'
+                                        }}
+                                    >
+                                        ظ„ط§ طھظˆط¬ط¯ ط¨ظ†ظˆط¯
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            ط¥ط¬ظ…ط§ظ„ظٹط§طھ ط§ظ„ظپط§طھظˆط±ط©
+                        </strong>
+
+                        <span>
+                            ط£ط±ظ‚ط§ظ… ط§ظ„ظپط§طھظˆط±ط© ط§ظ„ط£طµظ„ظٹط© ظˆط§ظ„ط­ط³ط§ط¨ ط§ظ„ط®ط·ظٹ
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                            'repeat(4,minmax(0,1fr))',
+                        gap: 14,
+                        padding: 18
+                    }}
+                >
+                    <div>
+                        <small>
+                            ط§ظ„ط¥ط¬ظ…ط§ظ„ظٹ
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.total ??
+                                totals?.total
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ط§ظ„ط®طµظ…
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.discount
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ط¶ط±ظٹط¨ط© ط§ظ„ظ…ط¨ظٹط¹ط§طھ
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.salesTaxValue
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            طµط§ظپظٹ ط§ظ„ط¨ظ†ظˆط¯
+                        </small>
+
+                        <strong>
+                            {money(
+                                totals?.netValue
+                            )}
+                        </strong>
+                    </div>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function CustomerProfile({
+    profile,
+    onClose,
+    onInvoice,
+    onExport
+}) {
+    const metrics =
+        profile?.metrics ||
+        {};
+
+    const score =
+        n(
+            profile?.score ??
+            profile?.healthScore ??
+            profile?.customerScore ??
+            metrics?.score
+        );
+
+    const label =
+        profile?.scoreLabel ||
+        profile?.label ||
+        profile?.healthLabel ||
+        'ظ…ظپظ‚ظˆط¯';
+
+    const rows =
+        profile?.monthly ||
+        [];
+
+    const invoices =
+        profile?.invoices ||
+        profile?.invoiceRows ||
+        [];
+
+    const totalSales =
+        metrics?.totalSales ??
+        metrics?.monetary ??
+        0;
+
+    const totalInvoices =
+        metrics?.invoices ??
+        metrics?.invoiceCount ??
+        0;
+
+    const averageInvoice =
+        metrics?.averageInvoice ??
+        metrics?.avgInvoice ??
+        0;
+
+    const activeMonths =
+        metrics?.activeMonths ??
+        0;
+
+    const daysSince =
+        metrics?.daysSinceLastPurchase ??
+        metrics?.recencyDays ??
+        0;
+
+    return (
+        <Modal
+            title="طھظ‚ظٹظٹظ… ط§ظ„ط¹ظ…ظٹظ„"
+            subtitle={`${profile?.branchName || '-'} آ· ط¢ط®ط± ${profile?.historyMonths || 12} ط´ظ‡ط±`}
+            name={
+                profile?.customerName ||
+                profile?.name ||
+                profile?.customerId ||
+                '-'
+            }
+            onClose={onClose}
+        >
+            <Cards
+                items={[
+                    {
+                        label:
+                            'Health Score',
+                        value:
+                            `${num(
+                                score
+                            )} / 100`,
+                        note:
+                            label
+                    },
+
+                    {
+                        label:
+                            'ط¥ط¬ظ…ط§ظ„ظٹ ط§ظ„ظ…ط´طھط±ظٹط§طھ',
+                        value:
+                            money(
+                                totalSales
+                            )
+                    },
+
+                    {
+                        label:
+                            'ط¹ط¯ط¯ ط§ظ„ظپظˆط§طھظٹط±',
+                        value:
+                            num(
+                                totalInvoices
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                        value:
+                            money(
+                                averageInvoice
+                            )
+                    },
+
+                    {
+                        label:
+                            'ط§ظ„ط£ط´ظ‡ط± ط§ظ„ظ†ط´ط·ط©',
+                        value:
+                            num(
+                                activeMonths
+                            )
+                    },
+
+                    {
+                        label:
+                            'ط£ظٹط§ظ… ظ…ظ†ط° ط¢ط®ط± ط´ط±ط§ط،',
+                        value:
+                            num(
+                                daysSince
+                            )
+                    }
+                ]}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            ط¨ظٹط§ظ†ط§طھ ط§ظ„ط¹ظ…ظٹظ„
+                        </strong>
+
+                        <span>
+                            ط£ظˆظ„ ظˆط¢ط®ط± ط¹ظ…ظ„ظٹط© ط´ط±ط§ط،
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                            'repeat(4,minmax(0,1fr))',
+                        gap: 14,
+                        padding: 18
+                    }}
+                >
+                    <div>
+                        <small>
+                            Customer ID
+                        </small>
+
+                        <strong>
+                            {profile?.customerId ||
+                                '-'}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ط£ظˆظ„ ط´ط±ط§ط،
+                        </small>
+
+                        <strong>
+                            {fmtDate(
+                                metrics?.firstPurchase
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ط¢ط®ط± ط´ط±ط§ط،
+                        </small>
+
+                        <strong>
+                            {fmtDate(
+                                metrics?.lastPurchase
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ط§ظ„طھطµظ†ظٹظپ
+                        </small>
+
+                        <strong>
+                            {label}
+                        </strong>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            ط§ظ„طھظˆطµظٹط© ط§ظ„طھط´ط؛ظٹظ„ظٹط©
+                        </strong>
+
+                        <span>
+                            ظ…ط¨ظ†ظٹط© ط¹ظ„ظ‰ طھظ‚ظٹظٹظ… ط§ظ„ط¹ظ…ظٹظ„
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        padding: 20,
+                        fontSize: 16
+                    }}
+                >
+                    <div
+                        style={{
+                            fontWeight: 800,
+                            marginBottom: 8
+                        }}
+                    >
+                        {profile?.reason ||
+                            '-'}
+                    </div>
+
+                    <div>
+                        <strong>
+                            ط§ظ„ط¥ط¬ط±ط§ط، ط§ظ„ظ…ظ‚طھط±ط­:
+                        </strong>{' '}
+                        {profile?.recommendedAction ||
+                            profile?.action ||
+                            '-'}
+                    </div>
+                </div>
+            </div>
+
+            <Chart
+                title="ظ…ط´طھط±ظٹط§طھ ط§ظ„ط¹ظ…ظٹظ„ ط´ظ‡ط±ظٹط§ظ‹"
+                rows={rows}
+                field="sales"
+            />
+
+            <Chart
+                title="ط¹ط¯ط¯ ط§ظ„ظپظˆط§طھظٹط± ط´ظ‡ط±ظٹط§ظ‹"
+                rows={rows}
+                field="invoices"
+            />
+
+            <Chart
+                title="ظ…طھظˆط³ط· ظ‚ظٹظ…ط© ط§ظ„ظپط§طھظˆط±ط© ط´ظ‡ط±ظٹط§ظ‹"
+                rows={rows}
+                field="averageInvoice"
+            />
+
+            <Table
+                columns={[
+                    {
+                        key: 'month',
+                        label: 'ط§ظ„ط´ظ‡ط±'
+                    },
+
+                    {
+                        key: 'sales',
+                        label: 'ط§ظ„ظ…ط´طھط±ظٹط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label: 'ط§ظ„ظپظˆط§طھظٹط±',
+                        render:
+                            row =>
+                                num(
+                                    row.invoices
+                                )
+                    },
+
+                    {
+                        key:
+                            'averageInvoice',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                        render:
+                            row =>
+                                money(
+                                    row.averageInvoice
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            ظپظˆط§طھظٹط± ط§ظ„ط¹ظ…ظٹظ„
+                        </strong>
+
+                        <span>
+                            ط§ط¶ط؛ط· ط¹ظ„ظ‰ ط±ظ‚ظ… ط§ظ„ظپط§طھظˆط±ط© ظ„ط¹ط±ط¶ ط§ظ„طھظپط§طµظٹظ„
+                        </span>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() =>
+                            onExport(
+                                invoices,
+                                profile?.customerName,
+                                profile?.branchName
+                            )
+                        }
+                        style={buttonStyle}
+                    >
+                        â†“ طھطµط¯ظٹط± Excel
+                    </button>
+                </div>
+
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>
+                                    ط±ظ‚ظ… ط§ظ„ظپط§طھظˆط±ط©
+                                </th>
+
+                                <th>
+                                    ط§ظ„طھط§ط±ظٹط®
+                                </th>
+
+                                <th>
+                                    ط§ظ„ظ†ظˆط¹
+                                </th>
+
+                                <th>
+                                    ط§ظ„ط¥ط¬ظ…ط§ظ„ظٹ
+                                </th>
+
+                                <th>
+                                    ط§ظ„ط®طµظ…
+                                </th>
+
+                                <th>
+                                    ط§ظ„ط¶ط±ظٹط¨ط©
+                                </th>
+
+                                <th>
+                                    ط§ظ„ط¨ط§ط¦ط¹
+                                </th>
+
+                                <th>
+                                    ط§ظ„ظپط±ط¹ / ط§ظ„ظ…ط®ط²ظ†
+                                </th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {invoices.length ? (
+                                invoices.map(
+                                    (row, index) => {
+
+                                        const ticketId =
+                                            row.ticketId ??
+                                            row.ticket_id ??
+                                            row.id;
+
+                                        const invoiceNumber =
+                                            row.invoiceCode ||
+                                            row.invoiceNumber ||
+                                            ticketId ||
+                                            '-';
+
+                                        return (
+                                            <tr
+                                                key={
+                                                    ticketId ||
+                                                    index
+                                                }
+                                            >
+                                                <td>
+                                                    {ticketId ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() =>
+                                                                onInvoice(
+                                                                    row
+                                                                )
+                                                            }
+                                                            style={{
+                                                                ...buttonStyle,
+                                                                padding: 0,
+                                                                border: 0,
+                                                                textDecoration:
+                                                                    'underline'
+                                                            }}
+                                                        >
+                                                            {
+                                                                invoiceNumber
+                                                            }
+                                                        </button>
+                                                    ) : (
+                                                        invoiceNumber
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {fmtDate(
+                                                        row.invoiceDate ||
+                                                        row.date ||
+                                                        row.ztime
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.transactionType ||
+                                                        row.type ||
+                                                        '-'
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.total ??
+                                                        row.invoiceTotal
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.discount
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.salesTaxValue
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.sellerName ||
+                                                        '-'
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.storeName ||
+                                                        '-'
+                                                    }
+                                                </td>
+                                            </tr>
+                                        );
+                                    }
+                                )
+                            ) : (
+                                <tr>
+                                    <td
+                                        colSpan="8"
+                                        style={{
+                                            textAlign:
+                                                'center'
+                                        }}
+                                    >
+                                        ظ„ط§ طھظˆط¬ط¯ ظپظˆط§طھظٹط±
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function SellersTable({
+    rows,
+    fromDate,
+    toDate,
+    branchLabel,
+    onSellerClick
+}) {
+    const totals =
+        useMemo(
+            () => {
+
+                const sales =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.sales),
+                        0
+                    );
+
+                const invoices =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.invoices),
+                        0
+                    );
+
+                const customers =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum +
+                            n(row.customers),
+                        0
+                    );
+
+                const units =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.units),
+                        0
+                    );
+
+                return {
+                    sales,
+                    invoices,
+                    customers,
+                    units,
+                    averageInvoice:
+                        invoices
+                            ? sales /
+                              invoices
+                            : 0
+                };
+            },
+            [rows]
+        );
+
+    return (
+        <>
+            <div
+                style={{
+                    display: 'flex',
+                    justifyContent:
+                        'flex-start',
+                    marginBottom: 12
+                }}
+            >
+                <button
+                    type="button"
+                    onClick={() =>
+                        exportSellersToExcel({
+                            rows,
+                            fromDate,
+                            toDate,
+                            branchLabel
+                        })
+                    }
+                    style={buttonStyle}
+                >
+                    â†“ طھطµط¯ظٹط± Excel
+                </button>
+            </div>
+
+            <Table
+                columns={[
+                    {
+                        key:
+                            'employeeName',
+                        label:
+                            'ط§ظ„ط¨ط§ط¦ط¹',
+                        render:
+                            row => {
+
+                                const name =
+                                    row.employeeName ||
+                                    row.employeeId ||
+                                    '-';
+
+                                if (
+                                    !row.employeeId ||
+                                    row.employeeId ===
+                                        'UNASSIGNED'
+                                ) {
+                                    return name;
+                                }
+
+                                return (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            onSellerClick(
+                                                row
+                                            )
+                                        }
+                                        style={{
+                                            ...buttonStyle,
+                                            padding: 0,
+                                            border: 0,
+                                            textDecoration:
+                                                'underline'
+                                        }}
+                                    >
+                                        {name}
+                                    </button>
+                                );
+                            }
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظ…ط¨ظٹط¹ط§طھ / ظٹظˆظ…',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.sales
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.sales,
+                                            totals.sales
+                                        )
+                                    }
+                                    formatter={
+                                        money
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپظˆط§طھظٹط± / ظٹظˆظ…',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.invoices
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.invoices,
+                                            totals.invoices
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key:
+                            'averageInvoice',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.averageInvoice
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.averageInvoice,
+                                            totals.averageInvoice
+                                        )
+                                    }
+                                    formatter={
+                                        money
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'customers',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ط¹ظ…ظ„ط§ط، / ظٹظˆظ…',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.customers
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.customers,
+                                            totals.customers
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'units',
+                        label:
+                            'ظ…طھظˆط³ط· ط§ظ„ظˆط­ط¯ط§طھ / ظٹظˆظ…',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.units
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.units,
+                                            totals.units
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    }
+                ]}
+                rows={rows}
+            />
+        </>
+    );
+}
+
+function Diagnosis({
+    data,
+    moduleId
+}) {
+    let text =
+        'ط§ظ„طھط­ظ„ظٹظ„ ط§ظ„طھط´ط®ظٹطµظٹ ط³ظٹظ‚ط§ط±ظ† ط§ظ„ط¹ظˆط§ظ…ظ„ ط§ظ„ط±ط¦ظٹط³ظٹط© ظˆظٹط­ط¯ط¯ ظ…طµط¯ط± ط§ظ„طھط؛ظٹط± ط¹ظ†ط¯ظ…ط§ طھطھظˆظپط± ط¨ظٹط§ظ†ط§طھ ظƒط§ظپظٹط©.';
+
+    if (
+        data?.performance?.flags?.length
+    ) {
+        text =
+            data.performance.flags
+                .slice(0, 2)
+                .map(
+                    item =>
+                        item.message ||
+                        item.label
+                )
+                .join(' + ');
+    }
+
+    if (
+        data?.primary?.message
+    ) {
+        text =
+            data.primary.message;
+    }
+
+    if (
+        moduleId === 'quality-cost' &&
+        data?.quality
+    ) {
+        text =
+            `ط¬ظˆط¯ط© ط§ظ„طھظƒظ„ظپط©: ${data.quality.zeroCostRate}% ظ…ظ† ط§ظ„ط³ط·ظˆط± ط¨طھظƒظ„ظپط© طµظپط± ظˆ${data.quality.missingCostRate}% ط¨ط¯ظˆظ† طھظƒظ„ظپط© ظ…ط±ط¬ط¹ظٹط©.`;
+    }
+
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        ظ„ظ…ط§ط°ط§ طھط؛ظٹط± ط§ظ„ط£ط¯ط§ط،طں
+                    </strong>
+
+                    <span>
+                        طھط´ط®ظٹطµ ظ…ط®طھطµط± ظ…ط¨ظ†ظٹ ط¹ظ„ظ‰ ط§ظ„ط¨ظٹط§ظ†ط§طھ ط§ظ„ط­ط§ظ„ظٹط©
+                    </span>
+                </div>
+            </div>
+
+            <div
+                style={{
+                    padding: 20,
+                    fontSize: 16,
+                    fontWeight: 700
+                }}
+            >
+                {text}
+            </div>
+        </div>
+    );
+}
+
+function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
+    const [
+        data,
+        setData
+    ] = useState(null);
+
+    const [
+        loading,
+        setLoading
+    ] = useState(true);
+
+    const [
+        error,
+        setError
+    ] = useState('');
+
+    const [
+        sellerProfile,
+        setSellerProfile
+    ] = useState(null);
+
+    const [
+        sellerLoading,
+        setSellerLoading
+    ] = useState(false);
+
+    const [
+        customerProfile,
+        setCustomerProfile
+    ] = useState(null);
+
+    const [
+        customerLoading,
+        setCustomerLoading
+    ] = useState(false);
+
+    const [
+        invoiceDetails,
+        setInvoiceDetails
+    ] = useState(null);
+
+    const [
+        invoiceLoading,
+        setInvoiceLoading
+    ] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        (
+            async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    const result =
+                        moduleId ===
+                        'sales-sellers'
+                            ? await window.pharmaBI.dashboard.overview({
+                                branchId,
+                                connection,
+                                fromDate,
+                                toDate
+                            })
+                            : await window.pharmaBI.analytics.module({
+                                moduleId,
+                                branchId,
+                                connection,
+                                fromDate,
+                                toDate
+                            });
+
+                    if (!cancelled) {
+                        setData(
+                            moduleId ===
+                            'sales-sellers'
+                                ? {
+                                    ...result,
+                                    sellers:
+                                        result?.employees ||
+                                        []
+                                }
+                                : result
+                        );
+                    }
+                } catch (e) {
+                    if (!cancelled) {
+                        setError(
+                            e?.message ||
+                            'طھط¹ط°ط± طھط­ظ…ظٹظ„ ط§ظ„طھط­ظ„ظٹظ„.'
+                        );
+                    }
+                } finally {
+                    if (!cancelled) {
+                        setLoading(false);
+                    }
+                }
+            }
+        )();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        moduleId,
+        branchId,
+        connection,
+        fromDate,
+        toDate
+    ]);
+
+    const title =
+        TITLES[moduleId] ||
+        'طھط­ظ„ظٹظ„';
+
+    const cards =
+        useMemo(
+            () => {
+
+                if (!data) {
+                    return [];
+                }
+
+                if (
+                    moduleId ===
+                        'sales-overview' ||
+                    moduleId ===
+                        'overview'
+                ) {
+                    return [
+                        {
+                            label:
+                                'ط¥ط¬ظ…ط§ظ„ظٹ ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                            value:
+                                money(
+                                    data?.summary?.netSales
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط¹ط¯ط¯ ط§ظ„ظپظˆط§طھظٹط±',
+                            value:
+                                num(
+                                    data?.summary?.saleTickets
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ…طھظˆط³ط· ط§ظ„ظپط§طھظˆط±ط©',
+                            value:
+                                money(
+                                    data?.summary?.averageTicket
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط§ظ„ط±ط¨ط­ ط§ظ„طµط§ظپظٹ',
+                            value:
+                                money(
+                                    data?.summary?.netProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ‡ط§ظ…ط´ ط§ظ„ط±ط¨ط­',
+                            value:
+                                pct(
+                                    data?.summary?.grossMargin
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ…ط¨ظٹط¹ط§طھ ط§ظ„ط¯ظ„ظٹظپط±ظٹ',
+                            value:
+                                money(
+                                    data?.delivery?.deliverySales
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط·ظ„ط¨ط§طھ ط§ظ„ط¯ظ„ظٹظپط±ظٹ',
+                            value:
+                                num(
+                                    data?.delivery?.deliveryTickets
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    [
+                        'profit-overview',
+                        'profit-branch',
+                        'profit-anomalies'
+                    ].includes(moduleId)
+                ) {
+                    return [
+                        {
+                            label:
+                                'Net Sales',
+                            value:
+                                money(
+                                    data?.summary?.netSales
+                                )
+                        },
+
+                        {
+                            label:
+                                'Cost',
+                            value:
+                                money(
+                                    data?.summary?.netCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Gross Profit',
+                            value:
+                                money(
+                                    data?.summary?.grossProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'Net Profit',
+                            value:
+                                money(
+                                    data?.summary?.netProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'Margin',
+                            value:
+                                pct(
+                                    data?.summary?.grossMargin
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    [
+                        'inventory-overview',
+                        'inventory-risk',
+                        'inventory-reorder'
+                    ].includes(moduleId)
+                ) {
+                    return [
+                        {
+                            label:
+                                'ط§ظ„ط£طµظ†ط§ظپ ط§ظ„ظ…طھط­ط±ظƒط©',
+                            value:
+                                num(
+                                    data?.items?.length
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط§ظ„ط£طµظ†ط§ظپ ط§ظ„ط³ط±ظٹط¹ط©',
+                            value:
+                                num(
+                                    data?.fastMovers?.length
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط§ظ„ط£طµظ†ط§ظپ ط§ظ„ط¨ط·ظٹط¦ط©',
+                            value:
+                                num(
+                                    data?.slowMovers?.length
+                                )
+                        }
+                    ];
+                }
+
+                if (
+  [
+    'purchase-overview',
+    'purchase-opportunities'
+  ].includes(moduleId)
+) {
+  return [
+    {
+      label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u0628\u0644 \u0627\u0644\u062e\u0635\u0645',
+      value: money(data?.netPurchaseBeforeDiscount)
+    },
+    {
+      label: '\u0627\u0644\u062a\u0643\u0644\u0641\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629',
+      value: money(data?.netPurchaseCost)
+    },
+    {
+      label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+      value: money(data?.purchaseProfit)
+    },
+    {
+      label: '\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+      value: pct(data?.purchaseMarginPercent)
+    },
+    {
+      label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: money(data?.salesTotal)
+    },
+    {
+      label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: money(data?.salesProfit)
+    },
+    {
+      label: '\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: pct(data?.salesMarginPercent)
+    },
+    {
+      label: '\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631',
+      value: num(data?.invoices)
+    },
+    {
+      label: '\u0628\u0646\u0648\u062f \u0627\u0644\u0634\u0631\u0627\u0621',
+      value: num(data?.lines)
+    },
+    {
+      label: '\u0627\u0644\u0623\u0635\u0646\u0627\u0641',
+      value: num(data?.items)
+    }
+  ];
+}                if (
+                    moduleId ===
+                    'supplier-performance'
+                ) {
+                    const supplierRows =
+                        Array.isArray(data?.suppliers)
+                            ? data.suppliers
+                            : [];
+
+                    return [
+                        {
+                            label:
+                                '\u0627\u0644\u0645\u0648\u0631\u062f\u0648\u0646',
+                            value:
+                                num(
+                                    supplierRows.length
+                                )
+                        },
+
+                        {
+                            label:
+                                '\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0634\u0631\u0627\u0621',
+                            value:
+                                money(
+                                    supplierRows.reduce(
+                                        (
+                                            sum,
+                                            item
+                                        ) =>
+                                            sum +
+                                            n(
+                                                item?.purchaseValue ??
+                                                item?.netPurchaseCost
+                                            ),
+                                        0
+                                    )
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    moduleId ===
+                        'quality-overview' ||
+                    moduleId ===
+                        'quality-cost'
+                ) {
+                    return [
+                        {
+                            label:
+                                'ط³ط·ظˆط± ط§ظ„ط¨ظٹط¹',
+                            value:
+                                num(
+                                    data?.quality?.lines
+                                )
+                        },
+
+                        {
+                            label:
+                                'Missing Cost',
+                            value:
+                                num(
+                                    data?.quality?.missingCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Zero Cost',
+                            value:
+                                num(
+                                    data?.quality?.zeroCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Suspicious',
+                            value:
+                                num(
+                                    data?.quality?.suspicious
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    moduleId.startsWith(
+                        'customer'
+                    )
+                ) {
+                    return [
+                        {
+                            label:
+                                'ط§ظ„ط¹ظ…ظ„ط§ط،',
+                            value:
+                                num(
+                                    data?.summary?.customers ||
+                                    data?.summary?.totalCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ…طھظˆط³ط· Recency',
+                            value:
+                                num(
+                                    data?.summary?.averageRecencyDays
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ…طھظˆط³ط· Frequency',
+                            value:
+                                num(
+                                    data?.summary?.averageFrequency
+                                )
+                        },
+
+                        {
+                            label:
+                                'ظ…طھظˆط³ط· Monetary',
+                            value:
+                                money(
+                                    data?.summary?.averageMonetary
+                                )
+                        }
+                    ];
+                }
+
+                return [];
+            },
+            [data, moduleId]
+        );
+
+    if (loading) {
+        return (
+            <section className="page-card loading-card">
+                <div className="loading-spinner" />
+
+                <h2>
+                    ط¬ط§ط±ظٹ طھط­ظ…ظٹظ„ {title}...
+                </h2>
+
+                <p>
+                    ظٹطھظ… ط§ط³طھط®ط¯ط§ظ… ط¨ظٹط§ظ†ط§طھ PharmaFly/ط§ظ„ظƒط§ط´ ط§ظ„ظ…طھط§ط­.
+                </p>
+            </section>
+        );
+    }
+
+    if (error) {
+        return (
+            <section className="page-card">
+                <div className="status error">
+                    {error}
+                </div>
+            </section>
+        );
+    }
+
+    if (!data) {
+        return (
+            <section className="page-card empty-state">
+                <h2>{title}</h2>
+                <p>
+                    ظ„ط§ طھظˆط¬ط¯ ظ†طھظٹط¬ط©.
+                </p>
+            </section>
+        );
+    }
+
+    const openSellerProfile =
+        async seller => {
+
+            const selectedBranchId =
+                seller?.branchId ??
+                branchId;
+
+            const selectedEmployeeId =
+                seller?.employeeId;
+
+            if (
+                !selectedEmployeeId ||
+                selectedEmployeeId ===
+                    'UNASSIGNED' ||
+                branchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setSellerLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'seller-performance',
+
+                        branchId:
+                            selectedBranchId,
+
+                        employeeId:
+                            selectedEmployeeId,
+
+                        fromDate,
+                        toDate,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null,
+
+                        historyMonths: 12
+                    });
+
+                setSellerProfile(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'طھط¹ط°ط± طھط­ظ…ظٹظ„ طھظ‚ظٹظٹظ… ط§ظ„ط¨ط§ط¦ط¹.'
+                );
+            } finally {
+                setSellerLoading(false);
+            }
+        };
+
+    const openCustomerProfile =
+        async customer => {
+
+            const selectedBranchId =
+                customer?.branchId ??
+                branchId;
+
+            const selectedCustomerId =
+                customer?.customerId ??
+                customer?.customer_id;
+
+            if (
+                !selectedCustomerId ||
+                selectedBranchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setCustomerLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'customer-performance',
+
+                        branchId:
+                            selectedBranchId,
+
+                        customerId:
+                            selectedCustomerId,
+
+                        toDate,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null,
+
+                        historyMonths: 12,
+
+                        invoiceLimit: 300
+                    });
+
+                setCustomerProfile(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'طھط¹ط°ط± طھط­ظ…ظٹظ„ طھظ‚ظٹظٹظ… ط§ظ„ط¹ظ…ظٹظ„.'
+                );
+            } finally {
+                setCustomerLoading(false);
+            }
+        };
+
+    const openCustomerInvoice =
+        async invoice => {
+
+            const selectedBranchId =
+                customerProfile?.branchId ??
+                branchId;
+
+            const ticketId =
+                invoice?.ticketId ??
+                invoice?.ticket_id ??
+                invoice?.id;
+
+            if (
+                !ticketId ||
+                selectedBranchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setInvoiceLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'customer-invoice-details',
+
+                        branchId:
+                            selectedBranchId,
+
+                        ticketId,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null
+                    });
+
+                setInvoiceDetails(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'طھط¹ط°ط± طھط­ظ…ظٹظ„ طھظپط§طµظٹظ„ ط§ظ„ظپط§طھظˆط±ط©.'
+                );
+            } finally {
+                setInvoiceLoading(false);
+            }
+        };
+
+    const sellerDailyFactor =
+        moduleId ===
+        'sales-sellers'
+            ? 1 /
+              dayCount(
+                  fromDate,
+                  toDate
+              )
+            : 1;
+
+    const sellerSource =
+        Array.isArray(data?.sellers)
+            ? data.sellers
+            : [];
+
+    const sellerRows =
+        moduleId ===
+        'sales-sellers'
+            ? sellerSource.map(row => ({
+                ...row,
+
+                sales:
+                    n(
+                        row.averageDailySales
+                    ),
+
+                invoices:
+                    n(
+                        row.averageDailyInvoices
+                    ),
+
+                customers:
+                    n(row.customers) *
+                    sellerDailyFactor,
+
+                units:
+                    n(row.units) *
+                    sellerDailyFactor,
+
+                averageInvoice:
+                    n(
+                        row.averageInvoice
+                    )
+            }))
+            : sellerSource;
+
+    let body = null;
+
+    if (
+        moduleId ===
+        'sales-trend'
+    ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key: 'date',
+                        label: 'ط§ظ„طھط§ط±ظٹط®'
+                    },
+
+                    {
+                        key: 'sales',
+                        label: 'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'returns',
+                        label:
+                            'ط§ظ„ظ…ط±طھط¬ط¹ط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.returns
+                                )
+                    },
+
+                    {
+                        key: 'netSales',
+                        label: 'طµط§ظپظٹ',
+                        render:
+                            row =>
+                                money(
+                                    row.netSales
+                                )
+                    },
+
+                    {
+                        key: 'tickets',
+                        label:
+                            'ط§ظ„ظپظˆط§طھظٹط±'
+                    }
+                ]}
+                rows={data.rows}
+            />
+        );
+    } else if (
+        moduleId ===
+        'sales-day-hour'
+    ) {
+        body = (
+            <>
+                <Table
+                    columns={[
+                        {
+                            key: 'date',
+                            label: 'ط§ظ„ظٹظˆظ…'
+                        },
+
+                        {
+                            key: 'sales',
+                            label:
+                                'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                            render:
+                                row =>
+                                    money(
+                                        row.sales
+                                    )
+                        },
+
+                        {
+                            key: 'tickets',
+                            label:
+                                'ط§ظ„ظپظˆط§طھظٹط±'
+                        }
+                    ]}
+                    rows={data.days}
+                />
+
+                <div
+                    style={{
+                        height: 18
+                    }}
+                />
+
+                <Table
+                    columns={[
+                        {
+                            key: 'hour',
+                            label: 'ط§ظ„ط³ط§ط¹ط©'
+                        },
+
+                        {
+                            key: 'sales',
+                            label:
+                                'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                            render:
+                                row =>
+                                    money(
+                                        row.sales
+                                    )
+                        },
+
+                        {
+                            key: 'tickets',
+                            label:
+                                'ط§ظ„ظپظˆط§طھظٹط±'
+                        }
+                    ]}
+                    rows={
+                        data.hours?.slice(
+                            0,
+                            24
+                        )
+                    }
+                />
+            </>
+        );
+    } else if (
+        moduleId ===
+        'sales-sellers'
+    ) {
+        body = (
+            <SellersTable
+                rows={sellerRows}
+                fromDate={fromDate}
+                toDate={toDate}
+                branchLabel={
+                    branchId === 'all'
+                        ? 'ظƒظ„ ط§ظ„ظپط±ظˆط¹'
+                        : `ط§ظ„ظپط±ط¹ ${branchId}`
+                }
+                onSellerClick={
+                    openSellerProfile
+                }
+            />
+        );
+    } else if (
+        moduleId ===
+        'sales-returns'
+    ) {
+        body = (
+            <Cards
+                items={[
+                    {
+                        label:
+                            'ط§ظ„ظ…ط±طھط¬ط¹ط§طھ',
+                        value:
+                            money(
+                                data.returns
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظپظˆط§طھظٹط± ط§ظ„ظ…ط±طھط¬ط¹',
+                        value:
+                            num(
+                                data.returnTickets
+                            )
+                    },
+
+                    {
+                        label:
+                            'ط¨ظ†ظˆط¯ ط§ظ„ظ…ط±طھط¬ط¹',
+                        value:
+                            num(
+                                data.returnLines
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظ…ط¹ط¯ظ„ ط§ظ„ظ…ط±طھط¬ط¹',
+                        value:
+                            pct(
+                                data.returnRate
+                            )
+                    }
+                ]}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'product'
+        )
+    ) {
+        const rows =
+            data.products ||
+            data.topProducts ||
+            data.current?.topProducts ||
+            data.negativeMarginProducts ||
+            [];
+
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'itemName',
+                        label:
+                            'ط§ظ„ظ…ظ†طھط¬',
+                        render:
+                            row =>
+                                row.itemName ||
+                                row.productName ||
+                                row.name ||
+                                row.item_name ||
+                                '-'
+                    },
+
+                    {
+                        key: 'units',
+                        label:
+                            'ط§ظ„ظƒظ…ظٹط©',
+                        render:
+                            row =>
+                                num(
+                                    row.units ??
+                                    row.quantity
+                                )
+                    },
+
+                    {
+                        key:
+                            'netSales',
+                        label:
+                            'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.netSales ??
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key:
+                            'grossProfit',
+                        label:
+                            'ط§ظ„ط±ط¨ط­',
+                        render:
+                            row =>
+                                money(
+                                    row.grossProfit ??
+                                    row.profit
+                                )
+                    },
+
+                    {
+                        key: 'margin',
+                        label:
+                            'ط§ظ„ظ‡ط§ظ…ط´',
+                        render:
+                            row =>
+                                pct(
+                                    row.margin
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+        );
+    } else if (
+        moduleId.startsWith(
+            'customer'
+        )
+    ) {
+        const rows =
+            data.customers ||
+            data.rows ||
+            data.inactiveCustomers ||
+            data.topCustomers ||
+            [];
+
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'customerName',
+                        label:
+                            'ط§ظ„ط¹ظ…ظٹظ„',
+                        render:
+                            row => {
+
+                                const customerId =
+                                    row.customerId ??
+                                    row.customer_id;
+
+                                const name =
+                                    row.customerName ||
+                                    row.name ||
+                                    row.customer_name ||
+                                    customerId ||
+                                    '-';
+
+                                if (
+                                    customerId &&
+                                    branchId !==
+                                        'all'
+                                ) {
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                openCustomerProfile(
+                                                    {
+                                                        ...row,
+                                                        customerId
+                                                    }
+                                                )
+                                            }
+                                            style={{
+                                                ...buttonStyle,
+                                                padding: 0,
+                                                border: 0,
+                                                textDecoration:
+                                                    'underline'
+                                            }}
+                                        >
+                                            {name}
+                                        </button>
+                                    );
+                                }
+
+                                return name;
+                            }
+                    },
+
+                    {
+                        key:
+                            'score',
+                        label:
+                            'ط§ظ„طھظ‚ظٹظٹظ…',
+                        render:
+                            row => {
+
+                                const score =
+                                    row.customerScore ??
+                                    row.healthScore ??
+                                    row.health_score ??
+                                    row.score;
+
+                                if (
+                                    score ===
+                                        null ||
+                                    score ===
+                                        undefined ||
+                                    score === ''
+                                ) {
+                                    return '-';
+                                }
+
+                                return (
+                                    <strong>
+                                        {num(
+                                            score
+                                        )}{' '}
+                                        / 100
+                                    </strong>
+                                );
+                            }
+                    },
+
+                    {
+                        key:
+                            'segment',
+                        label:
+                            'Segment',
+                        render:
+                            row =>
+                                row.segment ||
+                                '-'
+                    },
+
+                    {
+                        key:
+                            'recencyDays',
+                        label:
+                            'Recency',
+                        render:
+                            row =>
+                                num(
+                                    row.recencyDays
+                                )
+                    },
+
+                    {
+                        key:
+                            'tickets',
+                        label:
+                            'Frequency',
+                        render:
+                            row =>
+                                num(
+                                    row.tickets ??
+                                    row.frequency ??
+                                    row.invoices
+                                )
+                    },
+
+                    {
+                        key:
+                            'monetary',
+                        label:
+                            'Monetary',
+                        render:
+                            row =>
+                                money(
+                                    row.monetary ??
+                                    row.netSales ??
+                                    row.total_sales
+                                )
+                    }
+                ]}
+                rows={
+                    rows.slice(
+                        0,
+                        100
+                    )
+                }
+            />
+        );
+        } else if (
+            moduleId === 'purchase-overview' &&
+            data?.type === 'purchase-group'
+        ) {
+            const branchRows =
+                Array.isArray(data?.branches)
+                    ? data.branches
+                    : [];
+
+            const total =
+                data?.total || {};
+
+            body = (
+                <Table
+                    columns={[
+                        {
+                            key: 'branchName',
+                            label: '\u0627\u0644\u0641\u0631\u0639'
+                        },
+                        {
+                            key: 'salesTotal',
+                            label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+                            render: row =>
+                                money(
+                                    row.salesTotal
+                                )
+                        },
+                        {
+                            key: 'salesProfit',
+                            label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+                            render: row =>
+                                money(
+                                    row.salesProfit
+                                )
+                        },
+                        {
+                            key: 'salesMarginPercent',
+                            label: '\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+                            render: row =>
+                                pct(
+                                    row.salesMarginPercent
+                                )
+                        },
+                        {
+                            key: 'netPurchaseBeforeDiscount',
+                            label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u0628\u0644 \u0627\u0644\u062e\u0635\u0645',
+                            render: row =>
+                                money(
+                                    row.netPurchaseBeforeDiscount
+                                )
+                        },
+                        {
+                            key: 'netPurchaseCost',
+                            label: '\u0627\u0644\u062a\u0643\u0644\u0641\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629',
+                            render: row =>
+                                money(
+                                    row.netPurchaseCost
+                                )
+                        },
+                        {
+                            key: 'purchaseProfit',
+                            label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+                            render: row =>
+                                money(
+                                    row.purchaseProfit
+                                )
+                        },
+                        {
+                            key: 'purchaseMarginPercent',
+                            label: '\u0647\u0627\u0645\u0634 \u0627\u0644\u0631\u0628\u062d\u064a\u0629',
+                            render: row =>
+                                pct(
+                                    row.purchaseMarginPercent
+                                )
+                        }
+                    ]}
+                    rows={[
+                        ...branchRows,
+                        {
+                            branchName:
+                                '\u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a',
+                            netPurchaseBeforeDiscount:
+                                total.netPurchaseBeforeDiscount,
+                            netPurchaseCost:
+                                total.netPurchaseCost,
+                            purchaseProfit:
+                                total.purchaseProfit,
+                            purchaseMarginPercent:
+                                total.purchaseMarginPercent,
+
+                            salesTotal:
+                                total.salesTotal,
+
+                            salesProfit:
+                                total.salesProfit,
+
+                            salesMarginPercent:
+                                total.salesMarginPercent
+                        }
+                    ]}
+                />
+            );        } else if (
+            moduleId ===
+            'supplier-performance'
+        ) {
+            const suppliers =
+                Array.isArray(data?.suppliers)
+                    ? data.suppliers
+                    : [];
+
+            const total =
+                suppliers.reduce(
+                    (acc, row) => ({
+                        invoices:
+                            acc.invoices +
+                            n(row?.invoices),
+
+                        lines:
+                            acc.lines +
+                            n(row?.lines),
+
+                        items:
+                            acc.items +
+                            n(row?.items),
+
+                        netPurchaseBeforeDiscount:
+                            acc.netPurchaseBeforeDiscount +
+                            n(
+                                row?.netPurchaseBeforeDiscount
+                            ),
+
+                        netPurchaseCost:
+                            acc.netPurchaseCost +
+                            n(
+                                row?.netPurchaseCost
+                            ),
+
+                        purchaseProfit:
+                            acc.purchaseProfit +
+                            n(
+                                row?.purchaseProfit
+                            )
+                    }),
+                    {
+                        invoices: 0,
+                        lines: 0,
+                        items: 0,
+                        netPurchaseBeforeDiscount: 0,
+                        netPurchaseCost: 0,
+                        purchaseProfit: 0
+                    }
+                );
+
+            const totalMargin =
+                total.netPurchaseBeforeDiscount > 0
+                    ? (
+                        total.purchaseProfit /
+                        total.netPurchaseBeforeDiscount
+                    ) * 100
+                    : 0;
+
+            body = (
+                <Table
+                    columns={[
+                        {
+                            key:
+                                'supplierName',
+                            label:
+                                '\u0627\u0644\u0645\u0648\u0631\u062f'
+                        },
+                        {
+                            key:
+                                'invoices',
+                            label:
+                                '\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631',
+                            render:
+                                row =>
+                                    num(
+                                        row.invoices
+                                    )
+                        },
+                        {
+                            key:
+                                'lines',
+                            label:
+                                '\u0628\u0646\u0648\u062f \u0627\u0644\u0634\u0631\u0627\u0621',
+                            render:
+                                row =>
+                                    num(
+                                        row.lines
+                                    )
+                        },
+                        {
+                            key:
+                                'items',
+                            label:
+                                '\u0627\u0644\u0623\u0635\u0646\u0627\u0641',
+                            render:
+                                row =>
+                                    num(
+                                        row.items
+                                    )
+                        },
+                        {
+                            key:
+                                'netPurchaseBeforeDiscount',
+                            label:
+                                '\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u0628\u0644 \u0627\u0644\u062e\u0635\u0645',
+                            render:
+                                row =>
+                                    money(
+                                        row.netPurchaseBeforeDiscount
+                                    )
+                        },
+                        {
+                            key:
+                                'netPurchaseCost',
+                            label:
+                                '\u0627\u0644\u062a\u0643\u0644\u0641\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629',
+                            render:
+                                row =>
+                                    money(
+                                        row.netPurchaseCost
+                                    )
+                        },
+                        {
+                            key:
+                                'purchaseProfit',
+                            label:
+                                '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+                            render:
+                                row =>
+                                    money(
+                                        row.purchaseProfit
+                                    )
+                        },
+                        {
+                            key:
+                                'purchaseMarginPercent',
+                            label:
+                                '\u0647\u0627\u0645\u0634 \u0627\u0644\u0631\u0628\u062d\u064a\u0629',
+                            render:
+                                row =>
+                                    pct(
+                                        row.purchaseMarginPercent
+                                    )
+                        }
+                    ]}
+                    rows={[
+                        ...suppliers,
+
+                        {
+                            supplierName:
+                                '\u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a',
+
+                            supplierId:
+                                '__TOTAL__',
+
+                            invoices:
+                                total.invoices,
+
+                            lines:
+                                total.lines,
+
+                            items:
+                                total.items,
+
+                            netPurchaseBeforeDiscount:
+                                total.netPurchaseBeforeDiscount,
+
+                            netPurchaseCost:
+                                total.netPurchaseCost,
+
+                            purchaseProfit:
+                                total.purchaseProfit,
+
+                            purchaseMarginPercent:
+                                totalMargin
+                        }
+                    ]}
+                />
+            );
+
+        } else if (
+            moduleId.includes(
+                'inventory'
+            )
+        ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'itemName',
+                        label:
+                            'ط§ظ„ظ…ظ†طھط¬'
+                    },
+
+                    {
+                        key:
+                            'velocity',
+                        label:
+                            'ط³ط±ط¹ط© ط§ظ„ط­ط±ظƒط©',
+                        render:
+                            row =>
+                                num(
+                                    row.velocity
+                                )
+                    },
+
+                    {
+                        key:
+                            'units',
+                        label:
+                            'ط§ظ„ظˆط­ط¯ط§طھ',
+                        render:
+                            row =>
+                                num(
+                                    row.units
+                                )
+                    },
+
+                    {
+                        key:
+                            'sales',
+                        label:
+                            'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    }
+                ]}
+                rows={data.items}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'forecast'
+        )
+    ) {
+        body = (
+            <>
+                <Cards
+                    items={[
+                        {
+                            label:
+                                'ط§ظ„ط§طھط¬ط§ظ‡',
+                            value:
+                                num(
+                                    data.forecast?.slope
+                                )
+                        },
+
+                        {
+                            label:
+                                'ط£ظٹط§ظ… ط§ظ„طھظ†ط¨ط¤',
+                            value:
+                                num(
+                                    data.forecast?.forecast?.length
+                                )
+                        }
+                    ]}
+                />
+
+                <Table
+                    columns={[
+                        {
+                            key: 'day',
+                            label: 'ط§ظ„ظٹظˆظ…'
+                        },
+
+                        {
+                            key: 'value',
+                            label:
+                                'ط§ظ„طھظˆظ‚ط¹',
+                            render:
+                                row =>
+                                    money(
+                                        row.value
+                                    )
+                        }
+                    ]}
+                    rows={
+                        data.forecast?.forecast ||
+                        []
+                    }
+                />
+            </>
+        );
+    } else if (
+        moduleId.includes(
+            'branch'
+        )
+    ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key: 'rank',
+                        label: 'ط§ظ„طھط±طھظٹط¨'
+                    },
+
+                    {
+                        key:
+                            'branchName',
+                        label:
+                            'ط§ظ„ظپط±ط¹',
+                        render:
+                            row =>
+                                row.branchName ||
+                                row.name ||
+                                row.branchId
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'ط§ظ„ظ…ط¨ظٹط¹ط§طھ',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'profit',
+                        label:
+                            'ط§ظ„ط±ط¨ط­',
+                        render:
+                            row =>
+                                money(
+                                    row.profit
+                                )
+                    },
+
+                    {
+                        key: 'margin',
+                        label:
+                            'ط§ظ„ظ‡ط§ظ…ط´',
+                        render:
+                            row =>
+                                pct(
+                                    row.margin
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'ط§ظ„ظپظˆط§طھظٹط±'
+                    }
+                ]}
+                rows={data.branches}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'reconciliation'
+        )
+    ) {
+        body = (
+            <Cards
+                items={[
+                    {
+                        label:
+                            'ط¹ط¯ط¯ ط§ظ„ظپظˆط§طھظٹط±',
+                        value:
+                            num(
+                                data.reconciliation?.ticketCount
+                            )
+                    },
+
+                    {
+                        label:
+                            'ظپط±ظˆظ‚ط§طھ',
+                        value:
+                            num(
+                                data.reconciliation?.ticketsWithDifference
+                            )
+                    },
+
+                    {
+                        label:
+                            'ط¥ط¬ظ…ط§ظ„ظٹ ط§ظ„ظپط±ظ‚',
+                        value:
+                            money(
+                                data.reconciliation?.absoluteDifference
+                            )
+                    }
+                ]}
+            />
+        );
+    } else {
+        body = null;
+    }
+
+    return (
+        <>
+            <section className="page-card">
+                <div className="page-header">
+                    <div>
+                        <div className="page-eyebrow">
+                            PharmaBI Analytics
+                        </div>
+
+                        <h2>
+                            {title}
+                        </h2>
+
+                        <p>
+                            {fromDate} â†’ {toDate}
+                        </p>
+                    </div>
+
+                    <div className="period-chip">
+                        {
+                            branchId ===
+                            'all'
+                                ? 'ظƒظ„ ط§ظ„ظپط±ظˆط¹'
+                                : `ط§ظ„ظپط±ط¹ ${branchId}`
+                        }
+                    </div>
+                </div>
+
+                {cards.length > 0 && (
+                    <Cards
+                        items={cards}
+                    />
+                )}
+
+                <div
+                    style={{
+                        marginTop: 18
+                    }}
+                >
+                    {body}
+                </div>
+
+                <Diagnosis
+                    data={data}
+                    moduleId={moduleId}
+                />
+            </section>
+
+            {sellerLoading && (
+                <Overlay
+                    text="ط¬ط§ط±ظٹ طھط­ظ…ظٹظ„ طھط§ط±ظٹط® ط§ظ„ط¨ط§ط¦ط¹..."
+                />
+            )}
+
+            {sellerProfile && (
+                <SellerProfile
+                    profile={
+                        sellerProfile
+                    }
+                    onClose={() =>
+                        setSellerProfile(
+                            null
+                        )
+                    }
+                />
+            )}
+
+            {customerLoading && (
+                <Overlay
+                    text="ط¬ط§ط±ظٹ طھط­ظ…ظٹظ„ طھظ‚ظٹظٹظ… ط§ظ„ط¹ظ…ظٹظ„..."
+                    zIndex={10000}
+                />
+            )}
+
+            {customerProfile && (
+                <CustomerProfile
+                    profile={
+                        customerProfile
+                    }
+                    onClose={() => {
+                        setCustomerProfile(
+                            null
+                        );
+
+                        setInvoiceDetails(
+                            null
+                        );
+                    }}
+                    onInvoice={
+                        openCustomerInvoice
+                    }
+                    onExport={
+                        exportCustomerInvoices
+                    }
+                />
+            )}
+
+            {invoiceLoading && (
+                <Overlay
+                    text="ط¬ط§ط±ظٹ طھط­ظ…ظٹظ„ طھظپط§طµظٹظ„ ط§ظ„ظپط§طھظˆط±ط©..."
+                    zIndex={10002}
+                />
+            )}
+
+            {invoiceDetails && (
+                <CustomerInvoiceDetails
+                    details={
+                        invoiceDetails
+                    }
+                    onClose={() =>
+                        setInvoiceDetails(
+                            null
+                        )
+                    }
+                />
+            )}
+        </>
+    );
+}
+
+export default function AnalyticsHubPanel(props){
+
+    const moduleId = props?.moduleId;
+
+    if(
+        moduleId === 'branch-health' ||
+        moduleId === 'branch-overview'
+    ){
+        return (
+            <BranchPerformancePanel
+                mode="overview"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'branch-comparison'){
+        return (
+            <BranchPerformancePanel
+                mode="comparison"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'branch-ranking'){
+        return (
+            <BranchPerformancePanel
+                mode="ranking"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'forecast-sales'){
+        return (
+            <BranchPerformancePanel
+                mode="forecast"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    return (
+        <AnalyticsHubPanelBody
+            moduleId={props?.moduleId}
+            branchId={props?.branchId}
+            connection={props?.connection}
+            fromDate={props?.fromDate}
+            toDate={props?.toDate}
+        />
+    );
+}
+

@@ -1,0 +1,267 @@
+import {
+    ipcMain
+} from "electron";
+
+
+import {
+    getSales,
+    getSalesPreview,
+    getSalesSummary,
+    getTicketReconciliation,
+    getSalesByDay,
+    getSalesByHour,
+    clearSalesCache,
+    getSalesCacheStats
+} from "../pharmfly/sales/salesService.js";
+
+
+import {
+    getSalesPerformance
+} from "../pharmfly/sales/salesPerformanceService.js";
+
+
+import {
+    getDashboardOverview
+} from "../pharmfly/dashboardOverviewService.js";
+
+
+let registered = false;
+
+
+function buildMonthDateRange(
+    year,
+    month
+) {
+    const numericYear = Number(year);
+    const numericMonth = Number(month);
+
+    if (
+        !Number.isInteger(numericYear) ||
+        numericYear < 2000 ||
+        numericYear > 2100
+    ) {
+        throw new Error("Invalid dashboard year.");
+    }
+
+    if (
+        !Number.isInteger(numericMonth) ||
+        numericMonth < 1 ||
+        numericMonth > 12
+    ) {
+        throw new Error("Invalid dashboard month.");
+    }
+
+    const paddedMonth = String(numericMonth).padStart(2, "0");
+
+    const lastDay = new Date(
+        Date.UTC(
+            numericYear,
+            numericMonth,
+            0
+        )
+    ).getUTCDate();
+
+    const paddedLastDay = String(lastDay).padStart(2, "0");
+
+    return {
+        fromDate:
+            `${numericYear}-${paddedMonth}-01`,
+        toDate:
+            `${numericYear}-${paddedMonth}-${paddedLastDay}`
+    };
+}
+
+
+export function registerSalesIpc() {
+
+    if (registered) {
+        return;
+    }
+
+    registered = true;
+
+
+    ipcMain.handle(
+        "sales:get",
+        async (_event, payload) => {
+            return getSales({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null,
+                forceRefresh: Boolean(
+                    payload?.forceRefresh
+                )
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:preview",
+        async (_event, payload) => {
+            return getSalesPreview({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null,
+                limit: payload?.limit
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:summary",
+        async (_event, payload) => {
+            return getSalesSummary({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null
+            });
+        }
+    );
+
+
+    /*
+     * =====================================================
+     * LIGHTWEIGHT DASHBOARD
+     * =====================================================
+     *
+     * The dashboard must NOT call getSalesSummary() because
+     * that path can execute the full sales/cost query.
+     *
+     * It uses the dedicated dashboard service which reads only
+     * the ticket, item, customer and employee data needed by
+     * the dashboard.
+     */
+    ipcMain.handle(
+        "dashboard:get",
+        async (_event, payload) => {
+
+            const branchId =
+                payload?.branchId ??
+                payload?.branch_id;
+
+            let fromDate =
+                payload?.fromDate ||
+                null;
+
+            let toDate =
+                payload?.toDate ||
+                null;
+
+            if (!fromDate || !toDate) {
+
+                const range =
+                    buildMonthDateRange(
+                        payload?.year,
+                        payload?.month
+                    );
+
+                fromDate = range.fromDate;
+                toDate = range.toDate;
+            }
+
+            return getDashboardOverview({
+                branchId,
+                fromDate,
+                toDate
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:reconciliation",
+        async (_event, payload) => {
+            return getTicketReconciliation({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:by-day",
+        async (_event, payload) => {
+            return getSalesByDay({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:by-hour",
+        async (_event, payload) => {
+            return getSalesByHour({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:performance",
+        async (_event, payload) => {
+            return getSalesPerformance({
+                branchId: payload?.branchId,
+                fromDate: payload?.fromDate,
+                toDate: payload?.toDate,
+                connection: payload?.connection || null
+            });
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:cache:clear",
+        async (_event, payload) => {
+
+            clearSalesCache({
+                branchId:
+                    payload?.branchId ?? null,
+                fromDate:
+                    payload?.fromDate ?? null,
+                toDate:
+                    payload?.toDate ?? null
+            });
+
+            return {
+                success: true
+            };
+        }
+    );
+
+
+    ipcMain.handle(
+        "sales:cache:stats",
+        async () => {
+            return {
+                success: true,
+                ...getSalesCacheStats()
+            };
+        }
+    );
+
+
+    console.log(
+        "[Electron] Sales IPC handlers registered."
+    );
+}
+
+
+export default {
+    registerSalesIpc
+};

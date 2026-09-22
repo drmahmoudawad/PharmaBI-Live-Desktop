@@ -1,0 +1,1610 @@
+import {
+    useEffect,
+    useState
+} from "react";
+
+
+function formatNumber(
+    value
+) {
+
+    return Number(
+        value || 0
+    ).toLocaleString(
+        "en-US"
+    );
+
+}
+
+
+function displayBranchName(
+    branchId,
+    branchNames
+) {
+
+    return (
+        branchNames.get(
+            Number(branchId)
+        ) ||
+        `فرع ${branchId}`
+    );
+
+}
+
+
+export default function MasterItemPage() {
+
+    const [
+        activeTab,
+        setActiveTab
+    ] = useState(
+        "review"
+    );
+
+
+    const [
+        query,
+        setQuery
+    ] = useState("");
+
+
+    const [
+        results,
+        setResults
+    ] = useState([]);
+
+
+    const [
+        selectedItem,
+        setSelectedItem
+    ] = useState(null);
+
+
+    const [
+        branchNames,
+        setBranchNames
+    ] = useState(
+        new Map()
+    );
+
+
+    const [
+        reviewItems,
+        setReviewItems
+    ] = useState([]);
+
+
+    const [
+        stats,
+        setStats
+    ] = useState(null);
+
+
+    const [
+        loading,
+        setLoading
+    ] = useState(false);
+
+
+    const [
+        reviewLoading,
+        setReviewLoading
+    ] = useState(false);
+
+
+    const [
+        detailLoading,
+        setDetailLoading
+    ] = useState(false);
+
+
+    const [
+        actionKey,
+        setActionKey
+    ] = useState("");
+
+
+    const [
+        error,
+        setError
+    ] = useState("");
+
+
+    const [
+        searched,
+        setSearched
+    ] = useState(false);
+
+
+    useEffect(
+        () => {
+
+            let cancelled = false;
+
+
+            async function loadBranches() {
+
+                try {
+
+                    const saved =
+                        await window
+                            .pharmaBI
+                            .connection
+                            .getAllSaved();
+
+
+                    if (
+                        cancelled ||
+                        !Array.isArray(
+                            saved
+                        )
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    const map =
+                        new Map();
+
+
+                    for (
+                        const branch
+                        of saved
+                    ) {
+
+                        map.set(
+                            Number(
+                                branch.branchId
+                            ),
+                            branch.branchName ||
+                            `فرع ${branch.branchId}`
+                        );
+
+                    }
+
+
+                    setBranchNames(
+                        map
+                    );
+
+                }
+                catch (
+                    branchError
+                ) {
+
+                    console.error(
+                        "[MasterItemPage] Branch names failed:",
+                        branchError
+                    );
+
+                }
+
+            }
+
+
+            loadBranches();
+
+
+            return () => {
+
+                cancelled = true;
+
+            };
+
+        },
+        []
+    );
+
+
+    async function loadStats() {
+
+        try {
+
+            const response =
+                await window
+                    .pharmaBI
+                    .masterItem
+                    .stats();
+
+
+            if (
+                response
+            ) {
+
+                setStats(
+                    response
+                );
+
+            }
+
+        }
+        catch (
+            statsError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Stats failed:",
+                statsError
+            );
+
+        }
+
+    }
+
+
+    async function loadReviewQueue() {
+
+        setReviewLoading(
+            true
+        );
+
+        setError("");
+
+
+        try {
+
+            const response =
+                await window
+                    .pharmaBI
+                    .masterItem
+                    .reviewQueue({
+                        limit: 25
+                    });
+
+
+            setReviewItems(
+                Array.isArray(
+                    response?.results
+                )
+                    ? response.results
+                    : []
+            );
+
+            await loadStats();
+
+        }
+        catch (
+            reviewError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Review queue failed:",
+                reviewError
+            );
+
+
+            setError(
+                reviewError?.message ||
+                "فشل تحميل قائمة المراجعة."
+            );
+
+        }
+        finally {
+
+            setReviewLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    useEffect(
+        () => {
+
+            loadStats();
+            loadReviewQueue();
+
+        },
+        []
+    );
+
+
+    async function openMasterItem(
+        masterItemId
+    ) {
+
+        setDetailLoading(
+            true
+        );
+
+        setError("");
+
+
+        try {
+
+            const response =
+                await window
+                    .pharmaBI
+                    .masterItem
+                    .get({
+                        masterItemId
+                    });
+
+
+            setSelectedItem(
+                response?.item ||
+                null
+            );
+
+        }
+        catch (
+            detailError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Detail failed:",
+                detailError
+            );
+
+
+            setError(
+                detailError?.message ||
+                "فشل تحميل بيانات الصنف."
+            );
+
+        }
+        finally {
+
+            setDetailLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    async function runSearch(
+        event
+    ) {
+
+        event?.preventDefault();
+
+
+        const value =
+            String(
+                query || ""
+            ).trim();
+
+
+        setSearched(
+            true
+        );
+
+        setSelectedItem(
+            null
+        );
+
+        setError("");
+
+
+        if (
+            !value
+        ) {
+
+            setResults([]);
+
+            return;
+
+        }
+
+
+        setLoading(
+            true
+        );
+
+
+        try {
+
+            const response =
+                await window
+                    .pharmaBI
+                    .masterItem
+                    .search({
+                        query:
+                            value,
+
+                        limit:
+                            100
+                    });
+
+
+            const nextResults =
+                Array.isArray(
+                    response?.results
+                )
+                    ? response.results
+                    : [];
+
+
+            setResults(
+                nextResults
+            );
+
+
+        }
+        catch (
+            searchError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Search failed:",
+                searchError
+            );
+
+
+            setError(
+                searchError?.message ||
+                "فشل البحث عن الصنف."
+            );
+
+
+            setResults([]);
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    async function decideCandidate(
+        review,
+        decision
+    ) {
+
+        if (
+            !review?.candidate?.id
+        ) {
+
+            return;
+
+        }
+
+
+        const key =
+            `${review.branchId}-${review.branchItemId}`;
+
+
+        setActionKey(
+            key
+        );
+
+        setError("");
+
+
+        try {
+
+            await window
+                .pharmaBI
+                .masterItem
+                .decide({
+
+                    branchId:
+                        review.branchId,
+
+                    branchItemId:
+                        review.branchItemId,
+
+                    candidateMasterItemId:
+                        review.candidate.id,
+
+                    decision
+
+                });
+
+
+            await loadReviewQueue();
+
+        }
+        catch (
+            decisionError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Decision failed:",
+                decisionError
+            );
+
+
+            setError(
+                decisionError?.message ||
+                "فشل حفظ القرار."
+            );
+
+        }
+        finally {
+
+            setActionKey(
+                ""
+            );
+
+        }
+
+    }
+
+
+    async function createNewMaster(
+        review
+    ) {
+
+        const key =
+            `${review.branchId}-${review.branchItemId}`;
+
+
+        const confirmed =
+            window.confirm(
+                `إنشاء صنف موحد جديد باسم:\n${review.branchItemName}\n\nسيتم حفظه كصنف مستقل.`
+            );
+
+
+        if (
+            !confirmed
+        ) {
+
+            return;
+
+        }
+
+
+        setActionKey(
+            key
+        );
+
+        setError("");
+
+
+        try {
+
+            await window
+                .pharmaBI
+                .masterItem
+                .createNew({
+
+                    branchId:
+                        review.branchId,
+
+                    branchItemId:
+                        review.branchItemId
+
+                });
+
+
+            await loadReviewQueue();
+
+        }
+        catch (
+            createError
+        ) {
+
+            console.error(
+                "[MasterItemPage] Create master failed:",
+                createError
+            );
+
+
+            setError(
+                createError?.message ||
+                "فشل إنشاء الصنف الموحد."
+            );
+
+        }
+        finally {
+
+            setActionKey(
+                ""
+            );
+
+        }
+
+    }
+
+
+    function clearSearch() {
+
+        setQuery("");
+        setResults([]);
+        setSelectedItem(null);
+        setSearched(false);
+
+    }
+
+
+    const masterCount =
+        new Set(
+            results.map(
+                row =>
+                    row.id
+            )
+        ).size;
+
+
+    return (
+
+        <section className="page-card">
+
+            <div className="page-header">
+
+                <div>
+
+                    <div className="page-eyebrow">
+                        المنتجات
+                    </div>
+
+                    <h2>
+                        إدارة الأصناف
+                    </h2>
+
+                    <p>
+                        توحيد أسماء الأصناف على مستوى المجموعة
+                        مع مراجعة الحالات غير المتطابقة وحفظ كل قرار بشكل دائم.
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div
+                style={{
+                    display:
+                        "flex",
+                    gap:
+                        "8px",
+                    flexWrap:
+                        "wrap",
+                    marginBottom:
+                        "18px"
+                }}
+            >
+
+                <button
+                    type="button"
+                    onClick={() =>
+                        setActiveTab(
+                            "review"
+                        )
+                    }
+                    className={
+                        activeTab === "review"
+                            ? "primary-button"
+                            : "secondary-button"
+                    }
+                >
+                    مراجعة التطابق
+                    {
+                        stats?.reviewCount
+                            ? ` (${formatNumber(stats.reviewCount)})`
+                            : ""
+                    }
+                </button>
+
+
+                <button
+                    type="button"
+                    onClick={() =>
+                        setActiveTab(
+                            "search"
+                        )
+                    }
+                    className={
+                        activeTab === "search"
+                            ? "primary-button"
+                            : "secondary-button"
+                    }
+                >
+                    البحث في الأصناف
+                </button>
+
+            </div>
+
+
+            {
+                stats && (
+
+                    <div
+                        style={{
+                            display:
+                                "grid",
+                            gridTemplateColumns:
+                                "repeat(auto-fit,minmax(170px,1fr))",
+                            gap:
+                                "10px",
+                            marginBottom:
+                                "18px"
+                        }}
+                    >
+
+                        <div className="table-card">
+                            <div style={{ padding: "14px" }}>
+                                <strong>الأصناف الموحدة</strong>
+                                <div>{formatNumber(stats.masterCount)}</div>
+                            </div>
+                        </div>
+
+                        <div className="table-card">
+                            <div style={{ padding: "14px" }}>
+                                <strong>تطابق تلقائي تام</strong>
+                                <div>{formatNumber(stats.exactCount)}</div>
+                            </div>
+                        </div>
+
+                        <div className="table-card">
+                            <div style={{ padding: "14px" }}>
+                                <strong>قرارات المستخدم</strong>
+                                <div>{formatNumber(stats.confirmedCount)}</div>
+                            </div>
+                        </div>
+
+                        <div className="table-card">
+                            <div style={{ padding: "14px" }}>
+                                <strong>مراجعة معلقة</strong>
+                                <div>{formatNumber(stats.reviewCount)}</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                )
+            }
+
+
+            {
+                error && (
+
+                    <div
+                        className="table-card"
+                        style={{
+                            marginBottom:
+                                "16px"
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                padding:
+                                    "14px"
+                            }}
+                        >
+
+                            <strong>
+                                خطأ
+                            </strong>
+
+                            <div>
+                                {error}
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                )
+            }
+
+
+            {
+                activeTab === "review" && (
+
+                    <div>
+
+                        <div
+                            className="table-card"
+                            style={{
+                                marginBottom:
+                                    "16px"
+                            }}
+                        >
+
+                            <div
+                                className="table-card-header"
+                            >
+
+                                <div>
+
+                                    <strong>
+                                        مراجعة حالات عدم التطابق
+                                    </strong>
+
+                                    <span>
+                                        التطابق التام فقط يتم اعتماده تلقائيًا.
+                                        باقي الحالات تحتاج قرارًا منك.
+                                    </span>
+
+                                </div>
+
+
+                                <button
+                                    type="button"
+                                    onClick={
+                                        loadReviewQueue
+                                    }
+                                    className="secondary-button"
+                                    disabled={
+                                        reviewLoading
+                                    }
+                                >
+                                    تحديث
+                                </button>
+
+                            </div>
+
+                        </div>
+
+
+                        {
+                            reviewLoading && (
+
+                                <div className="table-card">
+
+                                    <div
+                                        style={{
+                                            padding:
+                                                "24px",
+                                            textAlign:
+                                                "center"
+                                        }}
+                                    >
+                                        جاري تحميل الحالات...
+                                    </div>
+
+                                </div>
+
+                            )
+                        }
+
+
+                        {
+                            !reviewLoading &&
+                            reviewItems.length === 0 && (
+
+                                <div className="table-card">
+
+                                    <div
+                                        style={{
+                                            padding:
+                                                "30px",
+                                            textAlign:
+                                                "center"
+                                        }}
+                                    >
+
+                                        <strong>
+                                            لا توجد حالات معلقة حاليًا.
+                                        </strong>
+
+                                        <div
+                                            style={{
+                                                marginTop:
+                                                    "8px",
+                                                opacity:
+                                                    0.7
+                                            }}
+                                        >
+                                            أي اسم مطابق تمامًا يتم اعتماده تلقائيًا.
+                                        </div>
+
+                                    </div>
+
+                                </div>
+
+                            )
+                        }
+
+
+                        {
+                            reviewItems.map(
+                                review => {
+
+                                    const key =
+                                        `${review.branchId}-${review.branchItemId}`;
+
+                                    const busy =
+                                        actionKey ===
+                                        key;
+
+
+                                    return (
+
+                                        <div
+                                            key={key}
+                                            className="table-card"
+                                            style={{
+                                                marginBottom:
+                                                    "14px"
+                                            }}
+                                        >
+
+                                            <div
+                                                style={{
+                                                    padding:
+                                                        "18px"
+                                                }}
+                                            >
+
+                                                <div
+                                                    style={{
+                                                        display:
+                                                            "grid",
+                                                        gridTemplateColumns:
+                                                            "repeat(auto-fit,minmax(230px,1fr))",
+                                                        gap:
+                                                            "14px"
+                                                    }}
+                                                >
+
+                                                    <div>
+
+                                                        <div
+                                                            style={{
+                                                                fontSize:
+                                                                    "12px",
+                                                                opacity:
+                                                                    0.65
+                                                            }}
+                                                        >
+                                                            الصنف من الفرع
+                                                        </div>
+
+                                                        <strong>
+                                                            {
+                                                                review.branchItemName ||
+                                                                "بدون اسم"
+                                                            }
+                                                        </strong>
+
+                                                        <div>
+                                                            {
+                                                                displayBranchName(
+                                                                    review.branchId,
+                                                                    branchNames
+                                                                )
+                                                            }
+                                                            {" — "}
+                                                            {
+                                                                review.branchItemCode ||
+                                                                review.branchItemId
+                                                            }
+                                                        </div>
+
+                                                    </div>
+
+
+                                                    <div>
+
+                                                        <div
+                                                            style={{
+                                                                fontSize:
+                                                                    "12px",
+                                                                opacity:
+                                                                    0.65
+                                                            }}
+                                                        >
+                                                            الربط الحالي
+                                                        </div>
+
+                                                        <strong>
+                                                            {
+                                                                review.currentMaster?.unified_code ||
+                                                                "—"
+                                                            }
+                                                        </strong>
+
+                                                        <div>
+                                                            {
+                                                                review.currentMaster?.canonical_name ||
+                                                                "لا يوجد"
+                                                            }
+                                                        </div>
+
+                                                    </div>
+
+
+                                                    <div>
+
+                                                        <div
+                                                            style={{
+                                                                fontSize:
+                                                                    "12px",
+                                                                opacity:
+                                                                    0.65
+                                                            }}
+                                                        >
+                                                            الاقتراح الحالي
+                                                        </div>
+
+                                                        <strong>
+                                                            {
+                                                                review.candidate?.unified_code ||
+                                                                "لا يوجد اقتراح"
+                                                            }
+                                                        </strong>
+
+                                                        <div>
+                                                            {
+                                                                review.candidate?.canonical_name ||
+                                                                "يمكن إنشاء صنف مستقل"
+                                                            }
+                                                        </div>
+
+                                                        {
+                                                            review.candidate && (
+                                                                <div
+                                                                    style={{
+                                                                        marginTop:
+                                                                            "4px",
+                                                                        fontSize:
+                                                                            "12px",
+                                                                        opacity:
+                                                                            0.7
+                                                                    }}
+                                                                >
+                                                                    درجة التشابه:
+                                                                    {" "}
+                                                                    {
+                                                                        formatNumber(
+                                                                            review.candidateScore
+                                                                        )
+                                                                    }%
+                                                                </div>
+                                                            )
+                                                        }
+
+                                                    </div>
+
+                                                </div>
+
+
+                                                <div
+                                                    style={{
+                                                        marginTop:
+                                                            "18px",
+                                                        display:
+                                                            "flex",
+                                                        gap:
+                                                            "8px",
+                                                        flexWrap:
+                                                            "wrap"
+                                                    }}
+                                                >
+
+                                                    {
+                                                        review.candidate && (
+
+                                                            <>
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={busy}
+                                                                    onClick={() =>
+                                                                        decideCandidate(
+                                                                            review,
+                                                                            "SAME"
+                                                                        )
+                                                                    }
+                                                                    className="primary-button"
+                                                                >
+                                                                    نفس الصنف
+                                                                </button>
+
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={busy}
+                                                                    onClick={() =>
+                                                                        decideCandidate(
+                                                                            review,
+                                                                            "DIFFERENT"
+                                                                        )
+                                                                    }
+                                                                    className="secondary-button"
+                                                                >
+                                                                    ليس نفس الصنف
+                                                                </button>
+                                                            </>
+
+                                                        )
+                                                    }
+
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={busy}
+                                                        onClick={() =>
+                                                            createNewMaster(
+                                                                review
+                                                            )
+                                                        }
+                                                        className="secondary-button"
+                                                    >
+                                                        إنشاء صنف مستقل
+                                                    </button>
+
+
+                                                    {
+                                                        busy && (
+                                                            <span
+                                                                style={{
+                                                                    alignSelf:
+                                                                        "center",
+                                                                    opacity:
+                                                                        0.7
+                                                                }}
+                                                            >
+                                                                جاري حفظ القرار...
+                                                            </span>
+                                                        )
+                                                    }
+
+                                                </div>
+
+                                            </div>
+
+                                        </div>
+
+                                    );
+
+                                }
+                            )
+                        }
+
+                    </div>
+
+                )
+            }
+
+
+            {
+                activeTab === "search" && (
+
+                    <div>
+
+                        <form
+                            onSubmit={
+                                runSearch
+                            }
+                            style={{
+                                display:
+                                    "flex",
+                                gap:
+                                    "10px",
+                                alignItems:
+                                    "center",
+                                marginBottom:
+                                    "18px",
+                                flexWrap:
+                                    "wrap"
+                            }}
+                        >
+
+                            <input
+                                value={query}
+                                onChange={
+                                    event =>
+                                        setQuery(
+                                            event.target.value
+                                        )
+                                }
+                                placeholder="الكود الموحد أو كود الصنف أو اسم الصنف"
+                                style={{
+                                    flex:
+                                        "1 1 460px",
+                                    minWidth:
+                                        "320px",
+                                    height:
+                                        "42px",
+                                    padding:
+                                        "0 14px",
+                                    border:
+                                        "1px solid #d8dee8",
+                                    borderRadius:
+                                        "10px",
+                                    fontSize:
+                                        "14px"
+                                }}
+                            />
+
+
+                            <button
+                                type="submit"
+                                disabled={
+                                    loading
+                                }
+                                className="primary-button"
+                            >
+                                {
+                                    loading
+                                        ? "جاري البحث..."
+                                        : "بحث"
+                                }
+                            </button>
+
+
+                            <button
+                                type="button"
+                                onClick={
+                                    clearSearch
+                                }
+                                className="secondary-button"
+                            >
+                                مسح
+                            </button>
+
+                        </form>
+
+
+                        {
+                            searched &&
+                            !loading &&
+                            results.length === 0 &&
+                            !error && (
+
+                                <div className="table-card">
+
+                                    <div
+                                        style={{
+                                            padding:
+                                                "24px",
+                                            textAlign:
+                                                "center"
+                                        }}
+                                    >
+                                        لم يتم العثور على صنف مطابق.
+                                    </div>
+
+                                </div>
+
+                            )
+                        }
+
+
+                        {
+                            results.length > 0 && (
+
+                                <div
+                                    className="table-card"
+                                    style={{
+                                        marginBottom:
+                                            "18px"
+                                    }}
+                                >
+
+                                    <div
+                                        className="table-card-header"
+                                    >
+
+                                        <div>
+
+                                            <strong>
+                                                نتائج البحث
+                                            </strong>
+
+                                            <span>
+                                                {
+                                                    formatNumber(
+                                                        results.length
+                                                    )
+                                                }
+                                                {" سجل — "}
+                                                {
+                                                    formatNumber(
+                                                        masterCount
+                                                    )
+                                                }
+                                                {" صنف موحد"}
+                                            </span>
+
+                                        </div>
+
+                                    </div>
+
+
+                                    <div className="table-wrap">
+
+                                        <table>
+
+                                            <thead>
+
+                                                <tr>
+
+                                                    <th>
+                                                        الكود الموحد
+                                                    </th>
+
+                                                    <th>
+                                                        الاسم الموحد
+                                                    </th>
+
+                                                    <th>
+                                                        الفرع
+                                                    </th>
+
+                                                    <th>
+                                                        كود الصنف
+                                                    </th>
+
+                                                    <th>
+                                                        الاسم الأصلي
+                                                    </th>
+
+                                                    <th>
+                                                        حالة المطابقة
+                                                    </th>
+
+                                                </tr>
+
+                                            </thead>
+
+
+                                            <tbody>
+
+                                                {
+                                                    results.map(
+                                                        (
+                                                            row,
+                                                            index
+                                                        ) => (
+
+                                                            <tr
+                                                                key={
+                                                                    `${row.id}-${row.branch_id}-${row.branch_item_id}-${index}`
+                                                                }
+                                                                onClick={() =>
+                                                                    openMasterItem(
+                                                                        row.id
+                                                                    )
+                                                                }
+                                                                style={{
+                                                                    cursor:
+                                                                        "pointer"
+                                                                }}
+                                                            >
+
+                                                                <td>
+                                                                    <strong>
+                                                                        {
+                                                                            row.unified_code
+                                                                        }
+                                                                    </strong>
+                                                                </td>
+
+                                                                <td>
+                                                                    {
+                                                                        row.canonical_name
+                                                                    }
+                                                                </td>
+
+                                                                <td>
+                                                                    {
+                                                                        displayBranchName(
+                                                                            row.branch_id,
+                                                                            branchNames
+                                                                        )
+                                                                    }
+                                                                </td>
+
+                                                                <td>
+                                                                    {
+                                                                        row.branch_item_code ||
+                                                                        row.branch_item_id ||
+                                                                        "—"
+                                                                    }
+                                                                </td>
+
+                                                                <td>
+                                                                    {
+                                                                        row.branch_item_name ||
+                                                                        "—"
+                                                                    }
+                                                                </td>
+
+                                                                <td>
+                                                                    {
+                                                                        row.match_status ||
+                                                                        "—"
+                                                                    }
+                                                                </td>
+
+                                                            </tr>
+
+                                                        )
+                                                    )
+                                                }
+
+                                            </tbody>
+
+                                        </table>
+
+                                    </div>
+
+                                </div>
+
+                            )
+                        }
+
+
+                        {
+                            selectedItem && (
+
+                                <div className="table-card">
+
+                                    <div
+                                        className="table-card-header"
+                                    >
+
+                                        <div>
+
+                                            <strong>
+                                                {
+                                                    selectedItem.unified_code
+                                                }
+                                            </strong>
+
+                                            <span>
+                                                {
+                                                    selectedItem.canonical_name
+                                                }
+                                            </span>
+
+                                        </div>
+
+
+                                        {
+                                            detailLoading && (
+
+                                                <span>
+                                                    جاري التحميل...
+                                                </span>
+
+                                            )
+                                        }
+
+                                    </div>
+
+
+                                    <div
+                                        style={{
+                                            padding:
+                                                "18px"
+                                        }}
+                                    >
+
+                                        <div
+                                            className="table-wrap"
+                                        >
+
+                                            <table>
+
+                                                <thead>
+
+                                                    <tr>
+
+                                                        <th>
+                                                            الفرع
+                                                        </th>
+
+                                                        <th>
+                                                            كود الصنف
+                                                        </th>
+
+                                                        <th>
+                                                            الاسم الأصلي
+                                                        </th>
+
+                                                        <th>
+                                                            Barcode
+                                                        </th>
+
+                                                        <th>
+                                                            Parts
+                                                        </th>
+
+                                                        <th>
+                                                            حالة المطابقة
+                                                        </th>
+
+                                                    </tr>
+
+                                                </thead>
+
+
+                                                <tbody>
+
+                                                    {
+                                                        (
+                                                            selectedItem.branches ||
+                                                            []
+                                                        ).map(
+                                                            branch => (
+
+                                                                <tr
+                                                                    key={
+                                                                        `${branch.branch_id}-${branch.branch_item_id}`
+                                                                    }
+                                                                >
+
+                                                                    <td>
+                                                                        {
+                                                                            displayBranchName(
+                                                                                branch.branch_id,
+                                                                                branchNames
+                                                                            )
+                                                                        }
+                                                                    </td>
+
+                                                                    <td>
+                                                                        <strong>
+                                                                            {
+                                                                                branch.branch_item_code ||
+                                                                                branch.branch_item_id
+                                                                            }
+                                                                        </strong>
+                                                                    </td>
+
+                                                                    <td>
+                                                                        {
+                                                                            branch.branch_item_name ||
+                                                                            "—"
+                                                                        }
+                                                                    </td>
+
+                                                                    <td>
+                                                                        {
+                                                                            branch.barcode &&
+                                                                            branch.barcode !== "0" &&
+                                                                            branch.barcode !== "1"
+                                                                                ? branch.barcode
+                                                                                : "—"
+                                                                        }
+                                                                    </td>
+
+                                                                    <td>
+                                                                        {
+                                                                            branch.parts ??
+                                                                            1
+                                                                        }
+                                                                    </td>
+
+                                                                    <td>
+                                                                        {
+                                                                            branch.match_status ||
+                                                                            "—"
+                                                                        }
+                                                                    </td>
+
+                                                                </tr>
+
+                                                            )
+                                                        )
+                                                    }
+
+                                                </tbody>
+
+                                            </table>
+
+                                        </div>
+
+                                    </div>
+
+                                </div>
+
+                            )
+                        }
+
+                    </div>
+
+                )
+            }
+
+        </section>
+
+    );
+
+}

@@ -1,0 +1,887 @@
+import { app } from "electron";
+import sql from "mssql";
+
+import {
+    getAllSavedConnections
+} from "../electron/settings/connectionStore.js";
+
+import {
+    getBranchPool,
+    closeAllConnections
+} from "../electron/connection/connectionManager.js";
+
+
+const TEST_BRANCH_IDS = [
+    2,
+    5
+];
+
+const FROM_DATE = "2026-09-01";
+const TO_DATE = "2026-09-17";
+
+const FROM_DATE_SQL =
+    `${FROM_DATE} 00:00:00`;
+
+const TO_DATE_EXCLUSIVE_SQL =
+    "2026-09-18 00:00:00";
+
+
+function log(message) {
+    console.log(message);
+}
+
+
+async function runTimed(
+    label,
+    fn
+) {
+    const started =
+        Date.now();
+
+    try {
+
+        const result =
+            await fn();
+
+        const elapsed =
+            Date.now() - started;
+
+        log(
+            `[STAGE] ${label} -> ${elapsed} ms`
+        );
+
+        return {
+            result,
+            elapsed,
+            ok: true
+        };
+
+    }
+    catch (error) {
+
+        const elapsed =
+            Date.now() - started;
+
+        log(
+            `[STAGE FAILED] ${label} -> ${elapsed} ms`
+        );
+
+        log(
+            `[ERROR] ${error?.message || error}`
+        );
+
+        throw error;
+    }
+}
+
+
+async function logCount(
+    transaction,
+    label,
+    query
+) {
+
+    const result =
+        await transaction
+            .request()
+            .query(query);
+
+    const count =
+        Number(
+            result?.recordset?.[0]?.row_count
+        ) || 0;
+
+    log(
+        `[STAGE] ${label} -> rows=${count}`
+    );
+
+}
+
+
+async function runBranch(
+    branch
+) {
+
+    const branchId =
+        Number(
+            branch.branchId
+        );
+
+    log("");
+    log(
+        "============================================================"
+    );
+
+    log(
+        `Branch ${branchId} - ${branch.branchName || ""}`
+    );
+
+    log(
+        `Server   : ${branch.server}`
+    );
+
+    log(
+        `Database : ${branch.database}`
+    );
+
+    log(
+        `Port     : ${branch.port}`
+    );
+
+    log(
+        `Range    : ${FROM_DATE} -> ${TO_DATE}`
+    );
+
+    log(
+        "============================================================"
+    );
+
+
+    /*
+     * IMPORTANT:
+     * Use the exact saved connection loaded by the real application.
+     */
+    const pool =
+        await getBranchPool(
+            branchId,
+            branch
+        );
+
+
+    log(
+        "[CONNECTION] Connected through PharmaBI connectionManager."
+    );
+
+
+    const transaction =
+        new sql.Transaction(
+            pool
+        );
+
+
+    try {
+
+        await transaction.begin();
+
+        log(
+            "[TRANSACTION] Started."
+        );
+
+
+        /*
+         * =========================================================
+         * STAGE 1
+         * #SalesBase BUILD
+         * =========================================================
+         */
+
+        await runTimed(
+            "1A #SalesBase BUILD",
+            async () => {
+
+                await transaction
+                    .request()
+
+                    .input(
+                        "fromDate",
+                        FROM_DATE_SQL
+                    )
+
+                    .input(
+                        "toDateExclusive",
+                        TO_DATE_EXCLUSIVE_SQL
+                    )
+
+                    .query(`
+                        SET NOCOUNT ON;
+
+                        IF OBJECT_ID(
+                            'tempdb..#SalesBase'
+                        ) IS NOT NULL
+                            DROP TABLE #SalesBase;
+
+                        SELECT
+                            t.ID AS ticket_id,
+                            t.ztime AS ticket_ztime,
+                            t.SalesReturn AS sales_return,
+                            t.CustomerID AS customer_id,
+                            c.Name AS customer_name,
+                            t.Total AS ticket_total,
+                            t.StoreID AS ticket_store_id,
+                            t.SalesRepID AS sales_rep_id,
+
+                            pi.ID AS line_id,
+                            pi.ItemID AS item_id,
+                            i.name AS item_name,
+                            i.Parts AS item_parts,
+                            pi.Packs AS packs,
+                            pi.Units AS units,
+                            pi.iParts AS line_parts,
+                            pi.Bonus AS bonus,
+                            pi.SalesPrice AS line_sales_price,
+                            pi.Cost AS line_cost,
+                            pi.Discount AS line_discount,
+                            pi.ExtraDiscount AS line_extra_discount,
+                            pi.IsContent AS is_content,
+                            pi.StoreID AS line_store_id
+
+                        INTO #SalesBase
+
+                        FROM posTickets t
+
+                        INNER JOIN posItems pi
+                            ON pi.TicketID = t.ID
+
+                        LEFT JOIN Cards c
+                            ON c.ID = t.CustomerID
+
+                        LEFT JOIN Items i
+                            ON i.ID = pi.ItemID
+
+                        WHERE
+                            t.ztime >= @fromDate
+                            AND t.ztime < @toDateExclusive;
+                    `);
+            }
+        );
+
+
+        await runTimed(
+            "1B #SalesBase INDEX",
+            async () => {
+
+                await transaction
+                    .request()
+                    .query(`
+                        CREATE NONCLUSTERED INDEX
+                            IX_SalesBase_Item_Date_Line
+
+                        ON #SalesBase (
+                            item_id,
+                            ticket_ztime,
+                            line_id
+                        );
+                    `);
+            }
+        );
+
+
+        await logCount(
+            transaction,
+            "1C #SalesBase ROWCOUNT",
+            `
+                SELECT COUNT_BIG(*) AS row_count
+                FROM #SalesBase;
+            `
+        );
+
+
+        /*
+         * =========================================================
+         * STAGE 2
+         * #NeededItems
+         * =========================================================
+         */
+
+        await runTimed(
+            "2A #NeededItems BUILD",
+            async () => {
+
+                await transaction
+                    .request()
+                    .query(`
+                        SELECT DISTINCT
+                            item_id
+
+                        INTO #NeededItems
+
+                        FROM #SalesBase
+
+                        WHERE
+                            item_id IS NOT NULL;
+                    `);
+            }
+        );
+
+
+        await runTimed(
+            "2B #NeededItems INDEX",
+            async () => {
+
+                await transaction
+                    .request()
+                    .query(`
+                        CREATE UNIQUE CLUSTERED INDEX
+                            IX_NeededItems_Item
+
+                        ON #NeededItems (
+                            item_id
+                        );
+                    `);
+            }
+        );
+
+
+        await logCount(
+            transaction,
+            "2C #NeededItems ROWCOUNT",
+            `
+                SELECT COUNT_BIG(*) AS row_count
+                FROM #NeededItems;
+            `
+        );
+
+
+        /*
+         * =========================================================
+         * STAGE 3
+         * #Purchases
+         * =========================================================
+         */
+
+        await runTimed(
+            "3A #Purchases BUILD",
+            async () => {
+
+                await transaction
+                    .request()
+
+                    .input(
+                        "fromDate",
+                        FROM_DATE_SQL
+                    )
+
+                    .input(
+                        "toDateExclusive",
+                        TO_DATE_EXCLUSIVE_SQL
+                    )
+
+                    .query(`
+                        SELECT
+                            pitem.item_id AS item_id,
+                            pitem.CostPrice AS purchase_cost,
+
+                            COALESCE(
+                                pinv.ztime,
+                                pinv.inv_date
+                            ) AS purchase_date,
+
+                            pinv.ID AS purchase_invoice_id,
+                            pinv.inv_code AS purchase_invoice_code,
+                            pinv.vendor_id AS purchase_vendor_id,
+                            pitem.ID AS purchase_item_id
+
+                        INTO #Purchases
+
+                        FROM PurchaseItems pitem
+
+                        INNER JOIN PurchaseInvoices pinv
+                            ON pinv.ID = pitem.inv_id
+
+                        INNER JOIN #NeededItems needed
+                            ON needed.item_id = pitem.item_id
+
+                        WHERE
+                            COALESCE(
+                                pinv.ztime,
+                                pinv.inv_date
+                            ) >= @fromDate
+
+                            AND COALESCE(
+                                pinv.ztime,
+                                pinv.inv_date
+                            ) < @toDateExclusive;
+                    `);
+            }
+        );
+
+
+        await runTimed(
+            "3B #Purchases INDEX",
+            async () => {
+
+                await transaction
+                    .request()
+                    .query(`
+                        CREATE CLUSTERED INDEX
+                            IX_Purchases_Item_Date
+
+                        ON #Purchases (
+                            item_id,
+                            purchase_date,
+                            purchase_invoice_id,
+                            purchase_item_id
+                        );
+                    `);
+            }
+        );
+
+
+        await logCount(
+            transaction,
+            "3C #Purchases ROWCOUNT",
+            `
+                SELECT COUNT_BIG(*) AS row_count
+                FROM #Purchases;
+            `
+        );
+
+
+        /*
+         * =========================================================
+         * STAGE 4
+         * #PreviousPurchases
+         * =========================================================
+         */
+
+        await runTimed(
+            "4A #PreviousPurchases BUILD",
+            async () => {
+
+                await transaction
+                    .request()
+
+                    .input(
+                        "fromDate",
+                        FROM_DATE_SQL
+                    )
+
+                    .query(`
+                        SELECT
+                            needed.item_id,
+                            previousPurchase.purchase_cost,
+                            previousPurchase.purchase_date,
+                            previousPurchase.purchase_invoice_id,
+                            previousPurchase.purchase_invoice_code,
+                            previousPurchase.purchase_vendor_id,
+                            previousPurchase.purchase_item_id
+
+                        INTO #PreviousPurchases
+
+                        FROM #NeededItems needed
+
+                        OUTER APPLY (
+
+                            SELECT TOP 1
+
+                                pitem.CostPrice
+                                    AS purchase_cost,
+
+                                COALESCE(
+                                    pinv.ztime,
+                                    pinv.inv_date
+                                )
+                                    AS purchase_date,
+
+                                pinv.ID
+                                    AS purchase_invoice_id,
+
+                                pinv.inv_code
+                                    AS purchase_invoice_code,
+
+                                pinv.vendor_id
+                                    AS purchase_vendor_id,
+
+                                pitem.ID
+                                    AS purchase_item_id
+
+                            FROM PurchaseItems pitem
+
+                            INNER JOIN PurchaseInvoices pinv
+                                ON pinv.ID = pitem.inv_id
+
+                            WHERE
+                                pitem.item_id =
+                                    needed.item_id
+
+                                AND COALESCE(
+                                    pinv.ztime,
+                                    pinv.inv_date
+                                ) < @fromDate
+
+                            ORDER BY
+                                COALESCE(
+                                    pinv.ztime,
+                                    pinv.inv_date
+                                ) DESC,
+
+                                pinv.ID DESC,
+
+                                pitem.ID DESC
+                        ) previousPurchase;
+                    `);
+            }
+        );
+
+
+        await runTimed(
+            "4B #PreviousPurchases INDEX",
+            async () => {
+
+                await transaction
+                    .request()
+                    .query(`
+                        CREATE UNIQUE CLUSTERED INDEX
+                            IX_PreviousPurchases_Item
+
+                        ON #PreviousPurchases (
+                            item_id
+                        );
+                    `);
+            }
+        );
+
+
+        await logCount(
+            transaction,
+            "4C #PreviousPurchases ROWCOUNT",
+            `
+                SELECT COUNT_BIG(*) AS row_count
+                FROM #PreviousPurchases;
+            `
+        );
+
+
+        /*
+         * =========================================================
+         * STAGE 5
+         * FINAL SELECT
+         * =========================================================
+         */
+
+        await runTimed(
+            "5 FINAL SELECT",
+            async () => {
+
+                const result =
+                    await transaction
+                        .request()
+                        .query(`
+                            SELECT
+
+                                s.ticket_id,
+                                s.ticket_ztime,
+                                s.sales_return,
+                                s.customer_id,
+                                s.customer_name,
+                                s.ticket_total,
+                                s.ticket_store_id,
+                                s.sales_rep_id,
+                                s.line_id,
+                                s.item_id,
+                                s.item_name,
+                                s.item_parts,
+                                s.packs,
+                                s.units,
+                                s.line_parts,
+                                s.bonus,
+                                s.line_sales_price,
+                                s.line_cost,
+                                s.line_discount,
+                                s.line_extra_discount,
+                                s.is_content,
+                                s.line_store_id,
+
+                                latestPurchase.purchase_cost
+                                    AS last_purchase_cost,
+
+                                latestPurchase.purchase_date
+                                    AS last_purchase_date,
+
+                                latestPurchase.purchase_invoice_id
+                                    AS last_purchase_invoice_id,
+
+                                latestPurchase.purchase_invoice_code
+                                    AS last_purchase_invoice_code,
+
+                                latestPurchase.purchase_vendor_id
+                                    AS last_purchase_vendor_id,
+
+                                s.item_parts
+                                    AS last_purchase_parts
+
+                            FROM #SalesBase s
+
+                            OUTER APPLY (
+
+                                SELECT TOP 1
+
+                                    p.purchase_cost,
+                                    p.purchase_date,
+                                    p.purchase_invoice_id,
+                                    p.purchase_invoice_code,
+                                    p.purchase_vendor_id,
+                                    p.purchase_item_id
+
+                                FROM (
+
+                                    SELECT
+
+                                        purchase_cost,
+                                        purchase_date,
+                                        purchase_invoice_id,
+                                        purchase_invoice_code,
+                                        purchase_vendor_id,
+                                        purchase_item_id
+
+                                    FROM #Purchases
+
+                                    WHERE
+                                        item_id =
+                                            s.item_id
+
+                                        AND purchase_date <=
+                                            s.ticket_ztime
+
+                                    UNION ALL
+
+                                    SELECT
+
+                                        purchase_cost,
+                                        purchase_date,
+                                        purchase_invoice_id,
+                                        purchase_invoice_code,
+                                        purchase_vendor_id,
+                                        purchase_item_id
+
+                                    FROM #PreviousPurchases
+
+                                    WHERE
+                                        item_id =
+                                            s.item_id
+
+                                        AND NOT EXISTS (
+
+                                            SELECT 1
+
+                                            FROM #Purchases currentPurchase
+
+                                            WHERE
+                                                currentPurchase.item_id =
+                                                    s.item_id
+
+                                                AND currentPurchase.purchase_date <=
+                                                    s.ticket_ztime
+                                        )
+
+                                ) p
+
+                                ORDER BY
+                                    p.purchase_date DESC,
+                                    p.purchase_invoice_id DESC,
+                                    p.purchase_item_id DESC
+
+                            ) latestPurchase;
+                        `);
+
+                log(
+                    `[RESULT] FINAL SELECT rows=${result?.recordset?.length || 0}`
+                );
+            }
+        );
+
+
+        await transaction.rollback();
+
+        log(
+            "[TRANSACTION] Rolled back."
+        );
+
+        log(
+            `[DONE] Branch ${branchId}`
+        );
+
+    }
+    catch (error) {
+
+        try {
+            await transaction.rollback();
+        }
+        catch {}
+
+        log(
+            `[ABORTED] Branch ${branchId}`
+        );
+
+        console.error(
+            error?.stack || error
+        );
+    }
+}
+
+
+async function main() {
+
+    /*
+     * Electron MUST be ready before connectionStore
+     * tries to resolve app.getPath("userData").
+     */
+    await app.whenReady();    
+    const pharmabiUserData =
+        "C:\\Users\\SHIKO\\AppData\\Roaming\\pharmabi-live";
+
+    app.setPath(
+        "userData",
+        pharmabiUserData
+    );
+
+    console.log(
+        "[ELECTRON PATH] userData=" + app.getPath("userData")
+    );
+
+
+
+    log(
+        "============================================================"
+    );
+
+    log(
+        "PHARMABI SALES STAGE DIAGNOSTIC"
+    );
+
+    log(
+        `Range: ${FROM_DATE} -> ${TO_DATE}`
+    );
+
+    log(
+        "Electron app is ready."
+    );
+
+    log(
+        "Using the exact saved connections from connectionStore."
+    );
+
+    log(
+        "No dashboard / no warm-up."
+    );
+
+    log(
+        "============================================================"
+    );
+
+
+    const savedConnections =
+        getAllSavedConnections();
+    /*
+     * DIAGNOSTIC ONLY:
+     * The standalone Electron process cannot decrypt the saved
+     * safeStorage password. Use the known password for this test.
+     */
+    for (const branch of savedConnections) {
+        branch.password = "123";
+    }
+
+
+
+    log(
+        `[CONNECTION STORE] Saved branches=${savedConnections.length}`
+    );
+
+
+    for (
+        const connection
+        of savedConnections
+    ) {
+
+        log(
+            `[SAVED] branch=${connection.branchId} name="${connection.branchName}" server=${connection.server} database=${connection.database} port=${connection.port}`
+        );
+
+    }
+
+
+    const selectedBranches =
+        TEST_BRANCH_IDS
+            .map(
+                branchId =>
+                    savedConnections.find(
+                        connection =>
+                            Number(
+                                connection.branchId
+                            ) === branchId
+                    )
+            )
+            .filter(
+                Boolean
+            );
+
+
+    if (
+        selectedBranches.length !==
+        TEST_BRANCH_IDS.length
+    ) {
+
+        throw new Error(
+            "One or more requested branches were not found in the saved connection store."
+        );
+
+    }
+
+
+    for (
+        const branch
+        of selectedBranches
+    ) {
+
+        try {
+
+            await runBranch(
+                branch
+            );
+
+        }
+        catch (error) {
+
+            console.error(
+                `[BRANCH FAILED] Branch ${branch.branchId}`,
+                error?.stack || error
+            );
+
+        }
+
+    }
+
+
+    try {
+
+        await closeAllConnections();
+
+    }
+    catch {}
+
+    log("");
+
+    log(
+        "============================================================"
+    );
+
+    log(
+        "ALL DIAGNOSTICS FINISHED"
+    );
+
+    log(
+        "============================================================"
+    );
+
+
+    app.quit();
+}
+
+
+main().catch(
+    async error => {
+
+        console.error(
+            error?.stack || error
+        );
+
+        try {
+            await closeAllConnections();
+        }
+        catch {}
+
+        app.quit();
+
+        process.exitCode = 1;
+    }
+);

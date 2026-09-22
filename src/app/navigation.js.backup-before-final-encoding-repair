@@ -1,0 +1,107 @@
+﻿export const NAVIGATION = [
+
+    {
+        id: "dashboard",
+        label: "ظ„ظˆط­ط© ط§ظ„طھط­ظƒظ…",
+        children: [
+            { id: "overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ†ط´ط§ط·", sectionId: "dashboard" },
+            { id: "branch-health", label: "طµط­ط© ط§ظ„ظپط±ظˆط¹", sectionId: "dashboard" },
+            { id: "alerts", label: "ط§ظ„طھظ†ط¨ظٹظ‡ط§طھ ظˆط§ظ„ظپط±طµ", sectionId: "dashboard" }
+        ]
+    },
+
+    {
+        id: "sales",
+        label: "ط§ظ„ظ…ط¨ظٹط¹ط§طھ",
+        children: [
+            { id: "sales-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ط¨ظٹط¹ط§طھ", sectionId: "sales" },
+            { id: "sales-trend", label: "ط§طھط¬ط§ظ‡ ط§ظ„ظ…ط¨ظٹط¹ط§طھ", sectionId: "sales" },
+            { id: "sales-day-hour", label: "ط§ظ„ظٹظˆظ… / ط§ظ„ط³ط§ط¹ط©", sectionId: "sales" },
+            { id: "sales-sellers", label: "ط§ظ„ط¨ط§ط¦ط¹ظˆظ†", sectionId: "sales" },
+            { id: "sales-returns", label: "ط§ظ„ظ…ط±طھط¬ط¹ط§طھ", sectionId: "sales" }
+        ]
+    },
+
+    {
+        id: "customers",
+        label: "ط§ظ„ط¹ظ…ظ„ط§ط،",
+        children: [
+            { id: "customer-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ط¹ظ…ظ„ط§ط،", sectionId: "customers" },
+            { id: "customer-rfm", label: "طھط­ظ„ظٹظ„ RFM", sectionId: "customers" },
+            { id: "customer-retention", label: "ط§ظ„ط§ط­طھظپط§ط¸ ط¨ط§ظ„ط¹ظ…ظ„ط§ط،", sectionId: "customers" },
+            { id: "customer-churn", label: "ط§ظ„طھظˆظ‚ظپ / ط¹ط¯ظ… ط§ظ„ظ†ط´ط§ط·", sectionId: "customers" },
+            { id: "customer-clv", label: "ط§ظ„ظ‚ظٹظ…ط© ط§ظ„ط¹ظ…ط±ظٹط© ظ„ظ„ط¹ظ…ظٹظ„", sectionId: "customers" },
+            { id: "customer-cohort", label: "طھط­ظ„ظٹظ„ ظ…ط¬ظ…ظˆط¹ط§طھ ط§ظ„ط¹ظ…ظ„ط§ط،", sectionId: "customers" }
+        ]
+    },
+
+    {
+        id: "products",
+        label: "ط§ظ„ظ…ظ†طھط¬ط§طھ",
+        children: [
+            { id: "product-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ظ†طھط¬ط§طھ", sectionId: "products" },
+            { id: "product-top", label: "ط£ظپط¶ظ„ ط§ظ„ظ…ظ†طھط¬ط§طھ", sectionId: "products" },
+            { id: "product-profitability", label: "ط§ظ„ط±ط¨ط­ظٹط©", sectionId: "products" },
+            { id: "product-abc", label: "طھط­ظ„ظٹظ„ ABC", sectionId: "products" },
+            { id: "product-stock", label: "ظ…ط®ط§ط·ط± ط§ظ„ظ…ط®ط²ظˆظ†", sectionId: "products" }
+        ]
+    },
+
+    {
+        id: "operations",
+        label: "ط§ظ„ط­ط³ط§ط¨ط§طھ",
+        children: [
+            {
+                id: "purchase-overview",
+                label: "\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629 \u0639\u0644\u0649 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a \u0648\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a",
+                sectionId: "procurement"
+            },
+            {
+                id: "supplier-performance",
+                label: "\u0623\u062f\u0627\u0621 \u0627\u0644\u0645\u0648\u0631\u062f\u064a\u0646",
+                sectionId: "procurement"
+            }
+        ]
+    },
+
+    {
+        id: "performance",
+        label: "ط§ظ„ط£ط¯ط§ط،",
+        children: [
+            { id: "profit-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ط±ط¨ط­ظٹط©", sectionId: "profitability" },
+            { id: "profit-branch", label: "ط§ظ„ط±ط¨ط­ظٹط© ط­ط³ط¨ ط§ظ„ظپط±ط¹", sectionId: "profitability" },
+            { id: "profit-product", label: "ط§ظ„ط±ط¨ط­ظٹط© ط­ط³ط¨ ط§ظ„ظ…ظ†طھط¬", sectionId: "profitability" },
+            { id: "profit-anomalies", label: "ط´ط°ظˆط° ط§ظ„طھظƒظ„ظپط©", sectionId: "profitability" },
+            { id: "branch-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظپط±ظˆط¹", sectionId: "branches" },
+            { id: "branch-comparison", label: "ظ…ظ‚ط§ط±ظ†ط© ط§ظ„ظپط±ظˆط¹", sectionId: "branches" },
+            { id: "branch-ranking", label: "طھط±طھظٹط¨ ط§ظ„ظپط±ظˆط¹", sectionId: "branches" },
+            { id: "staff-overview", label: "ظ†ط¸ط±ط© ط¹ط§ظ…ط© ط¹ظ„ظ‰ ط§ظ„ظ…ظˆط¸ظپظٹظ†", sectionId: "staff" },
+            { id: "staff-sales", label: "ط§ظ„ظ…ط¨ظٹط¹ط§طھ ط­ط³ط¨ ط§ظ„ط¨ط§ط¦ط¹", sectionId: "staff" },
+            { id: "staff-productivity", label: "ط§ظ„ط¥ظ†طھط§ط¬ظٹط©", sectionId: "staff" }
+        ]
+    },
+
+    {
+        id: "forecast",
+        label: "ط§ظ„طھظ†ط¨ط¤",
+        children: [
+            { id: "forecast-sales", label: "طھظˆظ‚ط¹ ط§ظ„ظ…ط¨ظٹط¹ط§طھ", sectionId: "forecast" },
+            { id: "forecast-demand", label: "طھظˆظ‚ط¹ ط§ظ„ط·ظ„ط¨", sectionId: "forecast" },
+            { id: "forecast-inventory", label: "طھظˆظ‚ط¹ ط§ظ„ظ…ط®ط²ظˆظ†", sectionId: "forecast" }
+        ]
+    },
+
+    {
+        id: "system",
+        label: "ط§ظ„ظ†ط¸ط§ظ…",
+        children: [
+            { id: "quality-overview", label: "ط¬ظˆط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ", sectionId: "quality" },
+            { id: "quality-cost", label: "ط¬ظˆط¯ط© ط§ظ„طھظƒظ„ظپط©", sectionId: "quality" },
+            { id: "quality-reconciliation", label: "ظ…ط·ط§ط¨ظ‚ط© ط§ظ„ظ…ط¨ظٹط¹ط§طھ", sectionId: "quality" },
+            { id: "connections", label: "ط§طھطµط§ظ„ط§طھ ط§ظ„ظپط±ظˆط¹", sectionId: "system" },
+            { id: "cache", label: "ط­ط§ظ„ط© ط§ظ„طھط®ط²ظٹظ† ط§ظ„ظ…ط¤ظ‚طھ", sectionId: "system" }
+        ]
+    }
+
+];
+

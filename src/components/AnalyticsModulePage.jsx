@@ -1,0 +1,87 @@
+import React, { useEffect, useState } from 'react';
+
+function num(v){const n=Number(v);return Number.isFinite(n)?n:0;}
+function fmt(v,type='number'){
+    const n=num(v);
+    if(type==='money') return n.toLocaleString('ar-EG',{maximumFractionDigits:0});
+    if(type==='percent') return `${n.toLocaleString('ar-EG',{maximumFractionDigits:1})}%`;
+    return n.toLocaleString('ar-EG',{maximumFractionDigits:2});
+}
+function change(v){
+    if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
+    const n=Number(v);
+    return `${n>0?'↑ ':n<0?'↓ ':''}${Math.abs(n).toLocaleString('ar-EG',{maximumFractionDigits:1})}%`;
+}
+
+export default function AnalyticsModulePage({moduleId,activeModuleDefinition,selectedBranchId,selectedConnection,fromDate,toDate}){
+    const [data,setData]=useState(null);
+    const [loading,setLoading]=useState(true);
+    const [error,setError]=useState('');
+
+    useEffect(()=>{
+        let cancelled=false;
+        async function load(){
+            try{
+                setLoading(true);setError('');setData(null);
+                const result=await window.pharmaBI.analytics.module({
+                    moduleId,
+                    branchId:selectedBranchId === 'all' ? 'all' : Number(selectedBranchId),
+                    selectedBranchId,
+                    connection:selectedConnection||null,
+                    fromDate,toDate
+                });
+                if(!cancelled) setData(result);
+            }catch(e){
+                if(!cancelled) setError(e?.message||'تعذر تحميل التحليل.');
+            }finally{
+                if(!cancelled) setLoading(false);
+            }
+        }
+        if(selectedBranchId!=='all' || ['branch-overview','branch-comparison','branch-ranking'].includes(moduleId)) load();
+        else {setLoading(false);setError('اختر فرعًا لعرض التحليل التفصيلي.');}
+        return ()=>{cancelled=true;};
+    },[moduleId,selectedBranchId,selectedConnection,fromDate,toDate]);
+
+    if(loading) return <section className="page-card loading-card"><div className="loading-spinner"/><h2>جاري تحليل {activeModuleDefinition?.label||'البيانات'}...</h2></section>;
+    if(error) return <section className="page-card"><div className="status error">{error}</div></section>;
+    if(!data) return null;
+
+    return <section className="page-card">
+        <div className="page-header">
+            <div><div className="page-eyebrow">PHARMABI ANALYTICS</div><h2>{data.title}</h2><p>{data.subtitle}</p></div>
+            <div className="period-chip">{fromDate}<span>→</span>{toDate}</div>
+        </div>
+
+        <div className="kpi-grid">
+            {(data.kpis||[]).map((x,i)=><div className="kpi-card" key={i}>
+                <span>{x.label}</span>
+                <strong>{fmt(x.value,x.formatter)}</strong>
+                {x.change!==null&&x.change!==undefined&&<small style={{marginTop:8,fontWeight:700}}>{change(x.change)}</small>}
+            </div>)}
+        </div>
+
+        {(data.sections||[]).map((s,i)=>s.kind==='line'?<div className="table-card" style={{marginTop:18}} key={i}><div className="table-card-header"><div><strong>{s.title}</strong><span>الاتجاه الزمني</span></div></div><div style={{padding:20,overflowX:'auto'}}><table><thead><tr><th>التاريخ</th><th>المبيعات</th><th>الفواتير</th></tr></thead><tbody>{(s.data||[]).map((r,j)=><tr key={j}><td>{r.date}</td><td>{fmt(r.netSales??r.sales,'money')}</td><td>{fmt(r.tickets)}</td></tr>)}</tbody></table></div></div>:<AnalyticsTable section={s} key={i}/>)}
+        {(data.tables||[]).map((s,i)=><AnalyticsTable section={s} key={`t-${i}`}/>)}
+
+        <div className="table-card" style={{marginTop:18}}>
+            <div className="table-card-header"><div><strong>التشخيص</strong><span>ما الذي يستحق الانتباه؟</span></div></div>
+            <div style={{padding:'18px 20px',display:'grid',gap:10}}>
+                {(data.diagnosis||['لا توجد ملاحظات حرجة.']).map((x,i)=><div key={i} style={{fontWeight:700}}>{x}</div>)}
+            </div>
+        </div>
+    </section>;
+}
+
+function AnalyticsTable({section}){
+    const rows=section.rows||[];
+    const cols=section.columns||[];
+    return <div className="table-card" style={{marginTop:18}}>
+        <div className="table-card-header"><div><strong>{section.title}</strong><span>تحليل تفصيلي</span></div></div>
+        <div style={{padding:20,overflowX:'auto'}}>
+            <table>
+                <thead><tr>{cols.map((c,i)=><th key={i}>{c}</th>)}</tr></thead>
+                <tbody>{rows.map((r,i)=><tr key={i}>{r.map((v,j)=><td key={j}>{typeof v==='number'?fmt(v):String(v??'—')}</td>)}</tr>)}</tbody>
+            </table>
+        </div>
+    </div>;
+}

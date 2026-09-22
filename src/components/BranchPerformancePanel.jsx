@@ -1,0 +1,2825 @@
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+import {
+    utils as XLSXUtils,
+    writeFile as XLSXWriteFile
+} from "xlsx";
+
+
+function n(value) {
+    const result = Number(value);
+
+    return Number.isFinite(result)
+        ? result
+        : 0;
+}
+
+
+function money(value) {
+    return n(value).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits: 0
+        }
+    );
+}
+
+
+function num(value) {
+    return n(value).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits: 2
+        }
+    );
+}
+
+
+function pct(value) {
+    return `${n(value).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits: 1
+        }
+    )}%`;
+}
+
+
+function forecastErrorPct(
+    actual,
+    forecast
+) {
+    const actualValue =
+        Number(
+            actual
+        );
+
+    const forecastValue =
+        Number(
+            forecast
+        );
+
+    if (
+        !Number.isFinite(
+            actualValue
+        ) ||
+        actualValue <= 0 ||
+        !Number.isFinite(
+            forecastValue
+        )
+    ) {
+        return null;
+    }
+
+    return (
+        Math.abs(
+            forecastValue -
+            actualValue
+        ) /
+        actualValue
+    ) *
+    100;
+}
+
+
+function monthLabel(value) {
+    const text =
+        String(value || "");
+
+    if (
+        !/^\d{4}-\d{2}$/.test(text)
+    ) {
+        return text;
+    }
+
+    const [
+        year,
+        month
+    ] = text.split("-");
+
+    const labels = [
+        "يناير",
+        "فبراير",
+        "مارس",
+        "أبريل",
+        "مايو",
+        "يونيو",
+        "يوليو",
+        "أغسطس",
+        "سبتمبر",
+        "أكتوبر",
+        "نوفمبر",
+        "ديسمبر"
+    ];
+
+    return `${labels[
+        Number(month) - 1
+    ] || month} ${year}`;
+}
+
+
+function scoreText(
+    value
+) {
+    const score =
+        n(value);
+
+    if (score >= 80) {
+        return "مرتفع";
+    }
+
+    if (score >= 60) {
+        return "جيد";
+    }
+
+    if (score >= 40) {
+        return "متوسط";
+    }
+
+    return "منخفض";
+}
+
+
+function trendText(
+    value
+) {
+    const growth =
+        n(value);
+
+    if (growth > 5) {
+        return "نمو";
+    }
+
+    if (growth < -5) {
+        return "تراجع";
+    }
+
+    return "مستقر";
+}
+
+
+function Card({
+    label,
+    value,
+    note
+}) {
+    return (
+        <div
+            className="kpi-card"
+        >
+            <span>{label}</span>
+
+            <strong>
+                {value}
+            </strong>
+
+            {note && (
+                <small>
+                    {note}
+                </small>
+            )}
+        </div>
+    );
+}
+
+
+function MetricTable({
+    rows
+}) {
+    return (
+        <div className="table-card">
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        المؤشرات الشهرية
+                    </strong>
+
+                    <span>
+                        جميع المؤشرات معروضة كمتوسط يومي داخل الشهر
+                    </span>
+                </div>
+            </div>
+
+            <div className="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الشهر</th>
+                            <th>متوسط المبيعات / يوم</th>
+                            <th>متوسط الفواتير / يوم</th>
+                            <th>متوسط العملاء / يوم</th>
+                            <th>متوسط الوحدات / يوم</th>
+                            <th>متوسط الفاتورة</th>
+                            <th>متوسط مبيعات الدليفري / يوم</th>
+                            <th>متوسط طلبات الدليفري / يوم</th>
+                            <th>متوسط طلب الدليفري</th>
+                            <th>النمو</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {rows.length > 0
+                            ? rows.map(
+                                row => (
+                                    <tr
+                                        key={
+                                            row.month
+                                        }
+                                    >
+                                        <td>
+                                            {monthLabel(
+                                                row.month
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageDailySales
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyInvoices
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyCustomers
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyUnits
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageInvoiceValue
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageDailyDeliverySales
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyDeliveryOrders
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageDeliveryOrderValue
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {row.salesGrowthPct === null
+                                                ? "-"
+                                                : pct(
+                                                    row.salesGrowthPct
+                                                )}
+                                        </td>
+                                    </tr>
+                                )
+                            )
+                            : (
+                                <tr>
+                                    <td
+                                        colSpan="10"
+                                        style={{
+                                            textAlign:
+                                                "center"
+                                        }}
+                                    >
+                                        لا توجد بيانات
+                                    </td>
+                                </tr>
+                            )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+
+function SimpleLineChart({
+    rows,
+    field,
+    title,
+    formatter = money
+}) {
+    const clean =
+        Array.isArray(rows)
+            ? rows
+            : [];
+
+    const values =
+        clean.map(
+            row => n(
+                row?.[field]
+            )
+        );
+
+    const width = 900;
+    const height = 280;
+
+    const max =
+        Math.max(
+            ...values,
+            1
+        );
+
+    const min =
+        Math.min(
+            ...values,
+            0
+        );
+
+    const span =
+        Math.max(
+            max - min,
+            1
+        );
+
+    const points =
+        values.length > 0
+            ? values
+                .map(
+                    (
+                        value,
+                        index
+                    ) => {
+                        const x =
+                            values.length === 1
+                                ? width / 2
+                                : (
+                                    index *
+                                    width
+                                ) /
+                                (
+                                    values.length - 1
+                                );
+
+                        const y =
+                            height -
+                            38 -
+                            (
+                                (
+                                    value -
+                                    min
+                                ) /
+                                span
+                            ) *
+                            (
+                                height - 80
+                            );
+
+                        return {
+                            x,
+                            y,
+                            value
+                        };
+                    }
+                )
+            : [];
+
+    const polyline =
+        points
+            .map(
+                point =>
+                    `${point.x.toFixed(1)},${point.y.toFixed(1)}`
+            )
+            .join(" ");
+
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        {title}
+                    </strong>
+
+                    <span>
+                        {clean.length} شهر
+                    </span>
+                </div>
+            </div>
+
+            <div
+                style={{
+                    padding:
+                        "14px 18px 18px"
+                }}
+            >
+                {points.length === 0 ? (
+                    <div
+                        style={{
+                            padding: 20,
+                            textAlign:
+                                "center"
+                        }}
+                    >
+                        لا توجد بيانات
+                    </div>
+                ) : (
+                    <svg
+                        viewBox={
+                            `0 0 ${width} ${height}`
+                        }
+                        width="100%"
+                        height="280"
+                        role="img"
+                        aria-label={
+                            title
+                        }
+                    >
+                        <line
+                            x1="0"
+                            y1="40"
+                            x2={width}
+                            y2="40"
+                            stroke="currentColor"
+                            opacity="0.08"
+                        />
+
+                        <line
+                            x1="0"
+                            y1={height - 40}
+                            x2={width}
+                            y2={
+                                height - 40
+                            }
+                            stroke="currentColor"
+                            opacity="0.12"
+                        />
+
+                        <polyline
+                            points={
+                                polyline
+                            }
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity="0.85"
+                        />
+
+                        {points.map(
+                            (
+                                point,
+                                index
+                            ) => (
+                                <g
+                                    key={
+                                        clean[
+                                            index
+                                        ]?.month ||
+                                        index
+                                    }
+                                >
+                                    <circle
+                                        cx={
+                                            point.x
+                                        }
+                                        cy={
+                                            point.y
+                                        }
+                                        r="5"
+                                        fill="currentColor"
+                                        opacity="0.9"
+                                    />
+
+                                    <text
+                                        x={
+                                            point.x
+                                        }
+                                        y={
+                                            point.y -
+                                            10
+                                        }
+                                        textAnchor="middle"
+                                        fontSize="11"
+                                        opacity="0.75"
+                                    >
+                                        {formatter(
+                                            point.value
+                                        )}
+                                    </text>
+
+                                    <text
+                                        x={
+                                            point.x
+                                        }
+                                        y={
+                                            height -
+                                            12
+                                        }
+                                        textAnchor="middle"
+                                        fontSize="11"
+                                        opacity="0.65"
+                                    >
+                                        {String(
+                                            clean[
+                                                index
+                                            ]?.month ||
+                                            ""
+                                        ).slice(5)}
+                                    </text>
+                                </g>
+                            )
+                        )}
+                    </svg>
+                )}
+            </div>
+        </div>
+    );
+}
+
+
+function BranchSummary({
+    latest,
+    previous,
+    indicators
+}) {
+    const latestSales =
+        n(
+            latest?.averageDailySales
+        );
+
+    const previousSales =
+        n(
+            previous?.averageDailySales
+        );
+
+    return (
+        <>
+            <div className="kpi-grid">
+                <Card
+                    label="متوسط المبيعات / يوم"
+                    value={money(
+                        latestSales
+                    )}
+                    note={
+                        previousSales > 0
+                            ? `${pct(
+                                (
+                                    (
+                                        latestSales -
+                                        previousSales
+                                    ) /
+                                    previousSales
+                                ) *
+                                100
+                            )} عن الشهر السابق`
+                            : "لا يوجد شهر سابق"
+                    }
+                />
+
+                <Card
+                    label="متوسط الفواتير / يوم"
+                    value={num(
+                        latest?.averageDailyInvoices
+                    )}
+                />
+
+                <Card
+                    label="متوسط العملاء / يوم"
+                    value={num(
+                        latest?.averageDailyCustomers
+                    )}
+                />
+
+                <Card
+                    label="متوسط الوحدات / يوم"
+                    value={num(
+                        latest?.averageDailyUnits
+                    )}
+                />
+
+                <Card
+                    label="متوسط الفاتورة"
+                    value={money(
+                        latest?.averageInvoiceValue
+                    )}
+                />
+
+                <Card
+                    label="متوسط الدليفري / يوم"
+                    value={money(
+                        latest?.averageDailyDeliverySales
+                    )}
+                />
+
+                <Card
+                    label="طلبات الدليفري / يوم"
+                    value={num(
+                        latest?.averageDailyDeliveryOrders
+                    )}
+                />
+
+                <Card
+                    label="متوسط طلب الدليفري"
+                    value={money(
+                        latest?.averageDeliveryOrderValue
+                    )}
+                />
+            </div>
+
+            <div
+                className="kpi-grid"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <Card
+                    label="النمو الشهري"
+                    value={pct(
+                        indicators?.growthPct
+                    )}
+                    note={
+                        trendText(
+                            indicators?.growthPct
+                        )
+                    }
+                />
+
+                <Card
+                    label="التطور عن خط الأساس"
+                    value={pct(
+                        indicators?.developmentPct
+                    )}
+                    note="مقارنة بمتوسط أول 3 أشهر"
+                />
+
+                <Card
+                    label="مؤشر الاستقرار"
+                    value={num(
+                        indicators?.stabilityIndex
+                    )}
+                    note={
+                        scoreText(
+                            indicators?.stabilityIndex
+                        )
+                    }
+                />
+
+                <Card
+                    label="ميل الاتجاه"
+                    value={money(
+                        indicators?.trendSlope
+                    )}
+                    note="تغير متوسط المبيعات اليومية شهريًا"
+                />
+            </div>
+        </>
+    );
+}
+
+
+function BranchRankingTable({
+    branches,
+    mode
+}) {
+    let sorted =
+        Array.isArray(branches)
+            ? [
+                ...branches
+            ]
+            : [];
+
+    if (mode === "growth") {
+        sorted.sort(
+            (
+                a,
+                b
+            ) =>
+                n(
+                    b.growthPct
+                ) -
+                n(
+                    a.growthPct
+                )
+        );
+    }
+
+    if (mode === "development") {
+        sorted.sort(
+            (
+                a,
+                b
+            ) =>
+                n(
+                    b.developmentPct
+                ) -
+                n(
+                    a.developmentPct
+                )
+        );
+    }
+
+    if (mode === "stability") {
+        sorted.sort(
+            (
+                a,
+                b
+            ) =>
+                n(
+                    b.stabilityIndex
+                ) -
+                n(
+                    a.stabilityIndex
+                )
+        );
+    }
+
+    return (
+        <div className="table-card">
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        مقارنة الفروع
+                    </strong>
+
+                    <span>
+                        المقارنة مبنية على متوسطات يومية داخل الشهر
+                    </span>
+                </div>
+            </div>
+
+            <div className="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الفرع</th>
+                            <th>متوسط المبيعات / يوم</th>
+                            <th>متوسط الفواتير / يوم</th>
+                            <th>متوسط العملاء / يوم</th>
+                            <th>متوسط الوحدات / يوم</th>
+                            <th>متوسط الفاتورة</th>
+                            <th>متوسط الدليفري / يوم</th>
+                            <th>طلبات الدليفري / يوم</th>
+                            <th>النمو</th>
+                            <th>التطور</th>
+                            <th>الاستقرار</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {sorted.length > 0
+                            ? sorted.map(
+                                row => (
+                                    <tr
+                                        key={
+                                            row.branchId
+                                        }
+                                    >
+                                        <td>
+                                            <strong>
+                                                {
+                                                    row.branchName
+                                                }
+                                            </strong>
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageDailySales
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyInvoices
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyCustomers
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyUnits
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageInvoiceValue
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {money(
+                                                row.averageDailyDeliverySales
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.averageDailyDeliveryOrders
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {pct(
+                                                row.growthPct
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {pct(
+                                                row.developmentPct
+                                            )}
+                                        </td>
+
+                                        <td>
+                                            {num(
+                                                row.stabilityIndex
+                                            )}
+                                        </td>
+                                    </tr>
+                                )
+                            )
+                            : (
+                                <tr>
+                                    <td
+                                        colSpan="11"
+                                        style={{
+                                            textAlign:
+                                                "center"
+                                        }}
+                                    >
+                                        لا توجد بيانات للفروع
+                                    </td>
+                                </tr>
+                            )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+
+function ForecastCards({
+    forecast,
+    managementTargetA,
+    managementTargetB,
+    setManagementTargetA,
+    setManagementTargetB,
+    targetLoading,
+    targetSaving,
+    targetMessage,
+    onSaveManagementTargets
+}) {
+    const days =
+        Number(
+            forecast?.targetMonthDays ??
+            0
+        );
+
+    const dailyForecast =
+        Number(
+            forecast?.forecast?.dailySales ??
+            0
+        );
+
+    const monthlyForecast =
+        Number(
+            forecast?.forecast?.monthlySales ??
+            dailyForecast * days
+        );
+
+    const programA =
+        Number(
+            forecast?.programTargets?.targetA?.daily ??
+            0
+        );
+
+    const programB =
+        Number(
+            forecast?.programTargets?.targetB?.daily ??
+            0
+        );
+
+    const programAMonth =
+        Number(
+            forecast?.programTargets?.targetA?.monthly ??
+            programA * days
+        );
+
+    const programBMonth =
+        Number(
+            forecast?.programTargets?.targetB?.monthly ??
+            programB * days
+        );
+
+    const managementA =
+        Number(
+            managementTargetA
+        ) || 0;
+
+    const managementB =
+        Number(
+            managementTargetB
+        ) || 0;
+
+    const managementAMonth =
+        managementA * days;
+
+    const managementBMonth =
+        managementB * days;
+
+    return (
+        <div
+            className="kpi-grid"
+            style={{
+                alignItems: "stretch"
+            }}
+        >
+            <Card
+                label="توقع البرنامج الأساسي / يوم"
+                value={money(dailyForecast)}
+                note={
+                    forecast?.forecast?.method
+                }
+            />
+
+            <Card
+                label="توقع البرنامج الأساسي للشهر"
+                value={money(monthlyForecast)}
+                note={
+                    `${num(days)} يوم`
+                }
+            />
+
+            <Card
+                label="تنبؤ البرنامج A / يوم"
+                value={money(programA)}
+                note="الرقم الأول"
+            />
+
+            <Card
+                label="تنبؤ البرنامج B / يوم"
+                value={money(programB)}
+                note="الرقم الثاني"
+            />
+
+            <Card
+                label="تنبؤ البرنامج A للشهر"
+                value={money(programAMonth)}
+            />
+
+            <Card
+                label="تنبؤ البرنامج B للشهر"
+                value={money(programBMonth)}
+            />
+
+            <div
+                className="page-card"
+                style={{
+                    gridColumn: "1 / -1",
+                    padding: 18
+                }}
+            >
+                <div className="page-header">
+                    <div>
+                        <div className="page-eyebrow">
+                            أهداف الإدارة
+                        </div>
+
+                        <h3>
+                            تحديد الهدف الإداري للشهر
+                        </h3>
+
+                        <p>
+                            أهداف الإدارة يتم إدخالها يدويًا
+                            ولا يتم توليدها تلقائيًا.
+                        </p>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                            "repeat(auto-fit,minmax(240px,1fr))",
+                        gap: 16,
+                        marginTop: 16
+                    }}
+                >
+                    <div>
+                        <label
+                            style={{
+                                display: "block",
+                                marginBottom: 8,
+                                fontWeight: 600
+                            }}
+                        >
+                            هدف الإدارة A / يوم
+                        </label>
+
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={managementTargetA}
+                            disabled={
+                                targetLoading ||
+                                targetSaving
+                            }
+                            onChange={event =>
+                                setManagementTargetA(
+                                    event.target.value
+                                )
+                            }
+                            style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                padding: "10px 12px",
+                                border:
+                                    "1px solid #cbd5e1",
+                                borderRadius: 8
+                            }}
+                        />
+
+                        <div
+                            style={{
+                                marginTop: 6,
+                                fontSize: 12,
+                                color: "#64748b"
+                            }}
+                        >
+                            الشهري:{" "}
+                            {money(
+                                managementAMonth
+                            )}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label
+                            style={{
+                                display: "block",
+                                marginBottom: 8,
+                                fontWeight: 600
+                            }}
+                        >
+                            هدف الإدارة B / يوم
+                        </label>
+
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={managementTargetB}
+                            disabled={
+                                targetLoading ||
+                                targetSaving
+                            }
+                            onChange={event =>
+                                setManagementTargetB(
+                                    event.target.value
+                                )
+                            }
+                            style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                padding: "10px 12px",
+                                border:
+                                    "1px solid #cbd5e1",
+                                borderRadius: 8
+                            }}
+                        />
+
+                        <div
+                            style={{
+                                marginTop: 6,
+                                fontSize: 12,
+                                color: "#64748b"
+                            }}
+                        >
+                            الشهري:{" "}
+                            {money(
+                                managementBMonth
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                        marginTop: 16
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={
+                            onSaveManagementTargets
+                        }
+                        disabled={
+                            targetLoading ||
+                            targetSaving
+                        }
+                    >
+                        {
+                            targetSaving
+                                ? "جاري الحفظ..."
+                                : "حفظ أهداف الإدارة"
+                        }
+                    </button>
+
+                    {targetLoading && (
+                        <span>
+                            جاري تحميل الأهداف المحفوظة...
+                        </span>
+                    )}
+
+                    {!!targetMessage && (
+                        <span
+                            style={{
+                                color:
+                                    targetMessage.includes(
+                                        "نجاح"
+                                    )
+                                        ? "#15803d"
+                                        : "#b91c1c"
+                            }}
+                        >
+                            {targetMessage}
+                        </span>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+function ForecastEvaluationTable({
+    rows,
+    loading,
+    error
+}) {
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        تقييم دقة التنبؤات
+                    </strong>
+
+                    <span>
+                        المقارنة تعتمد على متوسط المبيعات اليومية الفعلي فقط
+                    </span>
+                </div>
+            </div>
+
+            {loading ? (
+                <div
+                    style={{
+                        padding: 20,
+                        textAlign: "center"
+                    }}
+                >
+                    جاري تحميل سجل التنبؤات...
+                </div>
+            ) : error ? (
+                <div
+                    className="status error"
+                    style={{
+                        margin: 18
+                    }}
+                >
+                    {error}
+                </div>
+            ) : (
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>الشهر</th>
+                                <th>الفعلي / يوم</th>
+                                <th>برنامج A</th>
+                                <th>خطأ برنامج A</th>
+                                <th>برنامج B</th>
+                                <th>خطأ برنامج B</th>
+                                <th>إدارة A</th>
+                                <th>خطأ إدارة A</th>
+                                <th>إدارة B</th>
+                                <th>خطأ إدارة B</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {rows.length > 0
+                                ? rows.map(
+                                    row => {
+                                        const hasActual =
+                                            Number.isFinite(
+                                                Number(
+                                                    row.actualDaily
+                                                )
+                                            ) &&
+                                            Number(
+                                                row.actualDaily
+                                            ) > 0;
+
+                                        const programAError =
+                                            hasActual
+                                                ? forecastErrorPct(
+                                                    row.actualDaily,
+                                                    row.programA
+                                                )
+                                                : null;
+
+                                        const programBError =
+                                            hasActual
+                                                ? forecastErrorPct(
+                                                    row.actualDaily,
+                                                    row.programB
+                                                )
+                                                : null;
+
+                                        const managementAError =
+                                            hasActual
+                                                ? forecastErrorPct(
+                                                    row.actualDaily,
+                                                    row.managementA
+                                                )
+                                                : null;
+
+                                        const managementBError =
+                                            hasActual
+                                                ? forecastErrorPct(
+                                                    row.actualDaily,
+                                                    row.managementB
+                                                )
+                                                : null;
+
+                                        return (
+                                            <tr
+                                                key={`${row.branchId}-${row.month}`}
+                                            >
+                                                <td>
+                                                    {monthLabel(
+                                                        row.month
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {hasActual
+                                                        ? money(
+                                                            row.actualDaily
+                                                        )
+                                                        : (
+                                                            <span
+                                                                style={{
+                                                                    color:
+                                                                        "#64748b"
+                                                                }}
+                                                            >
+                                                                غير متاح
+                                                            </span>
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {row.programA === null
+                                                        ? "-"
+                                                        : money(
+                                                            row.programA
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {programAError === null
+                                                        ? "-"
+                                                        : pct(
+                                                            programAError
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {row.programB === null
+                                                        ? "-"
+                                                        : money(
+                                                            row.programB
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {programBError === null
+                                                        ? "-"
+                                                        : pct(
+                                                            programBError
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {row.managementA === null
+                                                        ? "-"
+                                                        : money(
+                                                            row.managementA
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {managementAError === null
+                                                        ? "-"
+                                                        : pct(
+                                                            managementAError
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {row.managementB === null
+                                                        ? "-"
+                                                        : money(
+                                                            row.managementB
+                                                        )}
+                                                </td>
+
+                                                <td>
+                                                    {managementBError === null
+                                                        ? "-"
+                                                        : pct(
+                                                            managementBError
+                                                        )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    }
+                                )
+                                : (
+                                    <tr>
+                                        <td
+                                            colSpan="10"
+                                            style={{
+                                                textAlign:
+                                                    "center"
+                                            }}
+                                        >
+                                            لا يوجد سجل محفوظ للتنبؤات
+                                        </td>
+                                    </tr>
+                                )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {rows.length > 0 && (
+                <div
+                    style={{
+                        padding:
+                            "10px 18px 16px",
+                        color: "#64748b",
+                        fontSize: 12
+                    }}
+                >
+                    خطأ التنبؤ = الفرق المطلق بين التنبؤ والفعلي ÷ الفعلي × 100.
+                    الأشهر التي لا يتوفر لها فعلي معروض لها "-" أو "غير متاح".
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+function ExportBranchHistory({
+    rows,
+    branchName
+}) {
+    const exportRows =
+        (
+            Array.isArray(rows)
+                ? rows
+                : []
+        ).map(
+            row => ({
+                "الشهر":
+                    row.month,
+
+                "متوسط المبيعات / يوم":
+                    n(
+                        row.averageDailySales
+                    ),
+
+                "متوسط الفواتير / يوم":
+                    n(
+                        row.averageDailyInvoices
+                    ),
+
+                "متوسط العملاء / يوم":
+                    n(
+                        row.averageDailyCustomers
+                    ),
+
+                "متوسط الوحدات / يوم":
+                    n(
+                        row.averageDailyUnits
+                    ),
+
+                "متوسط الفاتورة":
+                    n(
+                        row.averageInvoiceValue
+                    ),
+
+                "متوسط مبيعات الدليفري / يوم":
+                    n(
+                        row.averageDailyDeliverySales
+                    ),
+
+                "متوسط طلبات الدليفري / يوم":
+                    n(
+                        row.averageDailyDeliveryOrders
+                    ),
+
+                "متوسط طلب الدليفري":
+                    n(
+                        row.averageDeliveryOrderValue
+                    ),
+
+                "النمو":
+                    n(
+                        row.salesGrowthPct
+                    )
+            })
+        );
+
+    const worksheet =
+        XLSXUtils.json_to_sheet(
+            exportRows
+        );
+
+    const workbook =
+        XLSXUtils.book_new();
+
+    XLSXUtils.book_append_sheet(
+        workbook,
+        worksheet,
+        "أداء الفرع"
+    );
+
+    const safeName =
+        String(
+            branchName ||
+            "الفرع"
+        )
+        .replace(
+            /[\\/:*?"<>|]/g,
+            "-"
+        );
+
+    XLSXWriteFile(
+        workbook,
+        `PharmaBI-أداء-${safeName}.xlsx`
+    );
+}
+
+
+function ExportBranchComparison({
+    branches,
+    month
+}) {
+    const rows =
+        (
+            Array.isArray(
+                branches
+            )
+                ? branches
+                : []
+        ).map(
+            row => ({
+                "الفرع":
+                    row.branchName,
+
+                "الشهر":
+                    month,
+
+                "متوسط المبيعات / يوم":
+                    n(
+                        row.averageDailySales
+                    ),
+
+                "متوسط الفواتير / يوم":
+                    n(
+                        row.averageDailyInvoices
+                    ),
+
+                "متوسط العملاء / يوم":
+                    n(
+                        row.averageDailyCustomers
+                    ),
+
+                "متوسط الوحدات / يوم":
+                    n(
+                        row.averageDailyUnits
+                    ),
+
+                "متوسط الفاتورة":
+                    n(
+                        row.averageInvoiceValue
+                    ),
+
+                "متوسط الدليفري / يوم":
+                    n(
+                        row.averageDailyDeliverySales
+                    ),
+
+                "طلبات الدليفري / يوم":
+                    n(
+                        row.averageDailyDeliveryOrders
+                    ),
+
+                "متوسط طلب الدليفري":
+                    n(
+                        row.averageDeliveryOrderValue
+                    ),
+
+                "النمو":
+                    n(
+                        row.growthPct
+                    ),
+
+                "التطور":
+                    n(
+                        row.developmentPct
+                    ),
+
+                "الاستقرار":
+                    n(
+                        row.stabilityIndex
+                    )
+            })
+        );
+
+    const worksheet =
+        XLSXUtils.json_to_sheet(
+            rows
+        );
+
+    const workbook =
+        XLSXUtils.book_new();
+
+    XLSXUtils.book_append_sheet(
+        workbook,
+        worksheet,
+        "مقارنة الفروع"
+    );
+
+    XLSXWriteFile(
+        workbook,
+        `PharmaBI-مقارنة-الفروع-${month}.xlsx`
+    );
+}
+
+
+function SectionTitle({
+    title,
+    description
+}) {
+    return (
+        <div
+            className="table-card-header"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div>
+                <strong>
+                    {title}
+                </strong>
+
+                {description && (
+                    <span>
+                        {description}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}
+
+
+export default function BranchPerformancePanel({
+    mode = "overview",
+    branchId,
+    connection,
+    toDate,
+    historyMonths = 12
+}) {
+    const [
+        data,
+        setData
+    ] = useState(null);
+
+    const [
+        loading,
+        setLoading
+    ] = useState(true);
+
+    const [
+        error,
+        setError
+    ] = useState("");
+
+    const [
+        managementTargetA,
+        setManagementTargetA
+    ] = useState("");
+
+    const [
+        managementTargetB,
+        setManagementTargetB
+    ] = useState("");
+
+    const [
+        targetLoading,
+        setTargetLoading
+    ] = useState(false);
+
+    const [
+        targetSaving,
+        setTargetSaving
+    ] = useState(false);
+
+    const [
+        targetMessage,
+        setTargetMessage
+    ] = useState("");
+
+    const [
+        forecastHistory,
+        setForecastHistory
+    ] = useState([]);
+
+    const [
+        forecastHistoryLoading,
+        setForecastHistoryLoading
+    ] = useState(false);
+
+    const [
+        forecastHistoryError,
+        setForecastHistoryError
+    ] = useState("");
+
+
+    useEffect(
+        () => {
+            let cancelled = false;
+
+            async function load() {
+                setLoading(true);
+                setError("");
+
+                try {
+                    let result;
+
+                    if (
+                        mode ===
+                        "forecast"
+                    ) {
+                        result =
+                            await window.pharmaBI.dashboard.overview({
+                                action:
+                                    "branch-forecast",
+
+                                branchId:
+                                    branchId,
+
+                                toDate:
+                                    toDate,
+
+                                connection:
+                                    connection,
+
+                                historyMonths:
+                                    historyMonths
+                            });
+                    }
+                    else {
+                        const comparison =
+                            mode ===
+                            "comparison" ||
+                            mode ===
+                            "ranking";
+
+                        result =
+                            await window.pharmaBI.dashboard.overview({
+                                action:
+                                    "branch-performance",
+
+                                branchId:
+                                    comparison
+                                        ? "all"
+                                        : branchId,
+
+                                toDate:
+                                    toDate,
+
+                                connection:
+                                    comparison
+                                        ? null
+                                        : connection,
+
+                                historyMonths:
+                                    historyMonths,
+
+                                mode:
+                                    comparison
+                                        ? "comparison"
+                                        : "branch"
+                            });
+                    }
+
+                    if (
+                        !cancelled
+                    ) {
+                        setData(
+                            result
+                        );
+                    }
+                }
+                catch (err) {
+                    if (
+                        !cancelled
+                    ) {
+                        setError(
+                            err?.message ||
+                            "تعذر تحميل أداء الفرع."
+                        );
+                    }
+                }
+                finally {
+                    if (
+                        !cancelled
+                    ) {
+                        setLoading(
+                            false
+                        );
+                    }
+                }
+            }
+
+            load();
+
+            return () => {
+                cancelled = true;
+            };
+        },
+        [
+            mode,
+            branchId,
+            connection,
+            toDate,
+            historyMonths
+        ]
+    );
+
+
+    useEffect(
+        () => {
+            let cancelled = false;
+
+            async function loadManagementTargets() {
+                if (
+                    mode !== "forecast" ||
+                    !branchId ||
+                    !data?.targetMonth
+                ) {
+                    return;
+                }
+
+                setTargetLoading(true);
+                setTargetMessage("");
+
+                try {
+                    const result =
+                        await window.pharmaBI.dashboard.overview({
+                            action:
+                                "branch-target-get",
+
+                            branchId,
+
+                            month:
+                                data.targetMonth
+                        });
+
+                    if (
+                        cancelled
+                    ) {
+                        return;
+                    }
+
+                    const record =
+                        result?.target ??
+                        result?.data ??
+                        result ??
+                        null;
+
+                    setManagementTargetA(
+                        record?.managementTargetADaily ??
+                        ""
+                    );
+
+                    setManagementTargetB(
+                        record?.managementTargetBDaily ??
+                        ""
+                    );
+                }
+                catch (err) {
+                    if (!cancelled) {
+                        setTargetMessage(
+                            err?.message ||
+                            "تعذر تحميل أهداف الإدارة."
+                        );
+                    }
+                }
+                finally {
+                    if (!cancelled) {
+                        setTargetLoading(
+                            false
+                        );
+                    }
+                }
+            }
+
+            loadManagementTargets();
+
+            return () => {
+                cancelled = true;
+            };
+        },
+        [
+            mode,
+            branchId,
+            data?.targetMonth
+        ]
+    );
+
+
+    useEffect(
+        () => {
+            let cancelled = false;
+
+            async function loadForecastHistory() {
+                if (
+                    mode !== "forecast" ||
+                    !branchId
+                ) {
+                    return;
+                }
+
+                setForecastHistoryLoading(
+                    true
+                );
+
+                setForecastHistoryError("");
+
+                try {
+                    const result =
+                        await window.pharmaBI.dashboard.overview({
+                            action:
+                                "branch-target-all"
+                        });
+
+                    if (
+                        cancelled
+                    ) {
+                        return;
+                    }
+
+                    const raw =
+                        result?.targets ??
+                        result?.data?.targets ??
+                        result?.data ??
+                        result ??
+                        [];
+
+                    const rows =
+                        Array.isArray(
+                            raw
+                        )
+                            ? raw
+                            : [];
+
+                    const currentBranchId =
+                        Number(
+                            branchId
+                        );
+
+                    setForecastHistory(
+                        rows.filter(
+                            row =>
+                                Number(
+                                    row?.branchId
+                                ) ===
+                                currentBranchId
+                        )
+                    );
+                }
+                catch (err) {
+                    if (!cancelled) {
+                        setForecastHistoryError(
+                            err?.message ||
+                            "تعذر تحميل سجل التنبؤات."
+                        );
+
+                        setForecastHistory(
+                            []
+                        );
+                    }
+                }
+                finally {
+                    if (!cancelled) {
+                        setForecastHistoryLoading(
+                            false
+                        );
+                    }
+                }
+            }
+
+            loadForecastHistory();
+
+            return () => {
+                cancelled = true;
+            };
+        },
+        [
+            mode,
+            branchId
+        ]
+    );
+
+
+    async function saveManagementTargets() {
+        if (
+            mode !== "forecast" ||
+            !branchId ||
+            !data?.targetMonth
+        ) {
+            return;
+        }
+
+        const targetA = Number(
+            managementTargetA
+        );
+
+        const targetB = Number(
+            managementTargetB
+        );
+
+        if (
+            !Number.isFinite(
+                targetA
+            ) ||
+            targetA <= 0
+        ) {
+            setTargetMessage(
+                "أدخل هدف الإدارة A بشكل صحيح."
+            );
+
+            return;
+        }
+
+        if (
+            !Number.isFinite(
+                targetB
+            ) ||
+            targetB <= 0
+        ) {
+            setTargetMessage(
+                "أدخل هدف الإدارة B بشكل صحيح."
+            );
+
+            return;
+        }
+
+        if (
+            targetB < targetA
+        ) {
+            setTargetMessage(
+                "هدف الإدارة B يجب أن يكون أكبر من أو يساوي هدف الإدارة A."
+            );
+
+            return;
+        }
+
+        setTargetSaving(
+            true
+        );
+
+        setTargetMessage(
+            ""
+        );
+
+        try {
+            const result =
+                await window.pharmaBI.dashboard.overview({
+                    action:
+                        "branch-target-save",
+
+                    branchId,
+
+                    month:
+                        data.targetMonth,
+
+                    forecastDaily:
+                        data?.forecast?.dailySales ??
+                        null,
+
+                    programTargetADaily:
+                        data?.programTargets?.targetA?.daily ??
+                        null,
+
+                    programTargetBDaily:
+                        data?.programTargets?.targetB?.daily ??
+                        null,
+
+                    managementTargetADaily:
+                        targetA,
+
+                    managementTargetBDaily:
+                        targetB
+                });
+
+            const saved =
+                result?.target ??
+                result?.data ??
+                result ??
+                null;
+
+            setManagementTargetA(
+                saved?.managementTargetADaily ??
+                targetA
+            );
+
+            setManagementTargetB(
+                saved?.managementTargetBDaily ??
+                targetB
+            );
+
+            setForecastHistory(
+                previous =>
+                    [
+                        ...previous.filter(
+                            row =>
+                                !(
+                                    Number(
+                                        row?.branchId
+                                    ) ===
+                                    Number(
+                                        branchId
+                                    ) &&
+                                    row?.month ===
+                                    data.targetMonth
+                                )
+                        ),
+                        saved
+                    ].filter(
+                        Boolean
+                    )
+            );
+
+            setTargetMessage(
+                "تم حفظ أهداف الإدارة بنجاح."
+            );
+        }
+        catch (err) {
+            setTargetMessage(
+                err?.message ||
+                "تعذر حفظ أهداف الإدارة."
+            );
+        }
+        finally {
+            setTargetSaving(
+                false
+            );
+        }
+    }
+
+
+    const pageTitle =
+        mode === "forecast"
+            ? "توقع مبيعات الشهر القادم"
+            : mode === "comparison"
+                ? "مقارنة أداء الفروع"
+                : mode === "ranking"
+                    ? "تحليل تطور واستقرار الفروع"
+                    : "تقييم أداء الفرع";
+
+
+    const rankingMode =
+        mode === "ranking"
+            ? "growth"
+            : "comparison";
+
+
+    const monthlyRows =
+        useMemo(
+            () =>
+                Array.isArray(
+                    data?.monthly
+                )
+                    ? data.monthly
+                    : [],
+            [
+                data
+            ]
+        );
+
+
+    const forecastEvaluationRows =
+        useMemo(
+            () => {
+                const actualRows =
+                    Array.isArray(
+                        data?.historicalMonthly
+                    )
+                        ? data.historicalMonthly
+                        : [];
+
+                const actualByMonth =
+                    new Map();
+
+                actualRows.forEach(
+                    row => {
+                        if (
+                            row?.month
+                        ) {
+                            actualByMonth.set(
+                                row.month,
+                                n(
+                                    row.averageDailySales
+                                )
+                            );
+                        }
+                    }
+                );
+
+                const storedRows =
+                    Array.isArray(
+                        forecastHistory
+                    )
+                        ? forecastHistory
+                        : [];
+
+                return [
+                    ...storedRows
+                ]
+                .sort(
+                    (
+                        a,
+                        b
+                    ) =>
+                        String(
+                            b?.month ||
+                            ""
+                        ).localeCompare(
+                            String(
+                                a?.month ||
+                                ""
+                            )
+                        )
+                )
+                .map(
+                    row => ({
+                        branchId:
+                            row?.branchId,
+
+                        month:
+                            row?.month,
+
+                        actualDaily:
+                            actualByMonth.has(
+                                row?.month
+                            )
+                                ? actualByMonth.get(
+                                    row?.month
+                                )
+                                : null,
+
+                        programA:
+                            row?.programTargetADaily !==
+                                null &&
+                            row?.programTargetADaily !==
+                                undefined
+                                ? Number(
+                                    row.programTargetADaily
+                                )
+                                : null,
+
+                        programB:
+                            row?.programTargetBDaily !==
+                                null &&
+                            row?.programTargetBDaily !==
+                                undefined
+                                ? Number(
+                                    row.programTargetBDaily
+                                )
+                                : null,
+
+                        managementA:
+                            row?.managementTargetADaily !==
+                                null &&
+                            row?.managementTargetADaily !==
+                                undefined
+                                ? Number(
+                                    row.managementTargetADaily
+                                )
+                                : null,
+
+                        managementB:
+                            row?.managementTargetBDaily !==
+                                null &&
+                            row?.managementTargetBDaily !==
+                                undefined
+                                ? Number(
+                                    row.managementTargetBDaily
+                                )
+                                : null
+                    })
+                );
+            },
+            [
+                forecastHistory,
+                data?.historicalMonthly
+            ]
+        );
+
+
+    if (loading) {
+        return (
+            <section className="page-card loading-card">
+                <div className="loading-spinner" />
+
+                <h2>
+                    جاري تحميل {pageTitle}...
+                </h2>
+
+                <p>
+                    يتم استخدام بيانات PharmaFly
+                    والكاش المتاح للفترة المطلوبة.
+                </p>
+            </section>
+        );
+    }
+
+
+    if (error) {
+        return (
+            <section className="page-card">
+                <div className="status error">
+                    {error}
+                </div>
+            </section>
+        );
+    }
+
+
+    if (!data) {
+        return (
+            <section className="page-card empty-state">
+                <h2>
+                    {pageTitle}
+                </h2>
+
+                <p>
+                    لا توجد نتيجة.
+                </p>
+            </section>
+        );
+    }
+
+
+    if (
+        mode ===
+        "forecast"
+    ) {
+        const forecast =
+            data;
+
+        return (
+            <section className="page-card">
+                <div className="page-header">
+                    <div>
+                        <div className="page-eyebrow">
+                            PharmaBI Analytics
+                        </div>
+
+                        <h2>
+                            {pageTitle}
+                        </h2>
+
+                        <p>
+                            {forecast.branchName}
+                            {" · "}
+                            الهدف للشهر التالي:
+                            {" "}
+                            {monthLabel(
+                                forecast.targetMonth
+                            )}
+                        </p>
+                    </div>
+
+                    <div className="period-chip">
+                        {forecast.historyMonths}
+                        {" شهر تاريخي"}
+                    </div>
+                </div>
+
+
+                <ForecastCards
+                    forecast={
+                        forecast
+                    }
+                    managementTargetA={
+                        managementTargetA
+                    }
+                    managementTargetB={
+                        managementTargetB
+                    }
+                    setManagementTargetA={
+                        setManagementTargetA
+                    }
+                    setManagementTargetB={
+                        setManagementTargetB
+                    }
+                    targetLoading={
+                        targetLoading
+                    }
+                    targetSaving={
+                        targetSaving
+                    }
+                    targetMessage={
+                        targetMessage
+                    }
+                    onSaveManagementTargets={
+                        saveManagementTargets
+                    }
+                />
+
+
+                <ForecastEvaluationTable
+                    rows={
+                        forecastEvaluationRows
+                    }
+                    loading={
+                        forecastHistoryLoading
+                    }
+                    error={
+                        forecastHistoryError
+                    }
+                />
+
+
+                <div
+                    className="table-card"
+                    style={{
+                        marginTop: 18
+                    }}
+                >
+                    <div
+                        style={{
+                            padding: 20,
+                            lineHeight: 1.9
+                        }}
+                    >
+                        <strong>
+                            سياسة الأهداف
+                        </strong>
+
+                        <div
+                            style={{
+                                marginTop: 10
+                            }}
+                        >
+                            الهدف A هو الرقم الذي يعتبره البرنامج قابلًا للتحقيق بالمجهود الطبيعي.
+                        </div>
+
+                        <div>
+                            الهدف B أعلى من A ويتطلب مجهودًا واستمرارًا أعلى،
+                            لكنه مبني على التاريخ الفعلي للفرع.
+                        </div>
+
+                        <div>
+                            الربحية والهامش غير داخلين في الحسابات الحالية.
+                        </div>
+                    </div>
+                </div>
+
+
+                <SimpleLineChart
+                    rows={
+                        forecast.historicalMonthly
+                    }
+                    field="averageDailySales"
+                    title="تطور متوسط المبيعات اليومية"
+                    formatter={
+                        money
+                    }
+                />
+
+
+                <MetricTable
+                    rows={
+                        forecast.historicalMonthly
+                    }
+                />
+            </section>
+        );
+    }
+
+
+    if (
+        mode ===
+        "comparison" ||
+        mode ===
+        "ranking"
+    ) {
+        const branches =
+            data.branches ||
+            [];
+
+        return (
+            <section className="page-card">
+                <div className="page-header">
+                    <div>
+                        <div className="page-eyebrow">
+                            PharmaBI Analytics
+                        </div>
+
+                        <h2>
+                            {pageTitle}
+                        </h2>
+
+                        <p>
+                            الشهر:
+                            {" "}
+                            {monthLabel(
+                                data.month
+                            )}
+                        </p>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() =>
+                            ExportBranchComparison({
+                                branches,
+                                month:
+                                    data.month
+                            })
+                        }
+                        style={{
+                            border:
+                                "1px solid #D7E0EE",
+                            background:
+                                "#fff",
+                            color:
+                                "#173A73",
+                            borderRadius:
+                                10,
+                            padding:
+                                "9px 14px",
+                            cursor:
+                                "pointer",
+                            fontWeight:
+                                800,
+                            fontFamily:
+                                "inherit"
+                        }}
+                    >
+                        ↓ تصدير Excel
+                    </button>
+                </div>
+
+
+                <div className="kpi-grid">
+                    <Card
+                        label="عدد الفروع"
+                        value={num(
+                            branches.length
+                        )}
+                    />
+
+                    <Card
+                        label="الشهر محل المقارنة"
+                        value={monthLabel(
+                            data.month
+                        )}
+                    />
+
+                    <Card
+                        label="منهج المقارنة"
+                        value="يومي"
+                        note="لا يتم ترتيب الفروع على إجمالي الشهر"
+                    />
+                </div>
+
+
+                <SectionTitle
+                    title={
+                        mode ===
+                        "ranking"
+                            ? "التطور والاستقرار"
+                            : "جدول المقارنة"
+                    }
+                    description={
+                        "كل الأرقام التشغيلية متوسطات يومية داخل الشهر."
+                    }
+                />
+
+
+                <BranchRankingTable
+                    branches={
+                        branches
+                    }
+                    mode={
+                        rankingMode
+                    }
+                />
+
+
+                <SectionTitle
+                    title="حسب النمو"
+                    description={
+                        "آخر شهر مقابل الشهر السابق."
+                    }
+                />
+
+                <BranchRankingTable
+                    branches={
+                        data.growthRanking ||
+                        []
+                    }
+                    mode="growth"
+                />
+
+
+                <SectionTitle
+                    title="حسب التطور"
+                    description={
+                        "آخر شهر مقابل متوسط أول 3 أشهر من فترة التحليل."
+                    }
+                />
+
+                <BranchRankingTable
+                    branches={
+                        data.developmentRanking ||
+                        []
+                    }
+                    mode="development"
+                />
+
+
+                <SectionTitle
+                    title="حسب الاستقرار"
+                    description={
+                        "مؤشر مبني على تذبذب متوسط المبيعات اليومية خلال آخر 6 أشهر."
+                    }
+                />
+
+                <BranchRankingTable
+                    branches={
+                        data.stabilityRanking ||
+                        []
+                    }
+                    mode="stability"
+                />
+            </section>
+        );
+    }
+
+
+    const latest =
+        data.latest ||
+        {};
+
+    const previous =
+        data.previous ||
+        {};
+
+    const indicators =
+        data.indicators ||
+        {};
+
+
+    return (
+        <section className="page-card">
+            <div className="page-header">
+                <div>
+                    <div className="page-eyebrow">
+                        PharmaBI Analytics
+                    </div>
+
+                    <h2>
+                        {pageTitle}
+                    </h2>
+
+                    <p>
+                        {data.branchName}
+                        {" · "}
+                        آخر شهر:
+                        {" "}
+                        {monthLabel(
+                            latest.month
+                        )}
+                    </p>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() =>
+                        ExportBranchHistory({
+                            rows:
+                                monthlyRows,
+                            branchName:
+                                data.branchName
+                        })
+                    }
+                    style={{
+                        border:
+                            "1px solid #D7E0EE",
+                        background:
+                            "#fff",
+                        color:
+                            "#173A73",
+                        borderRadius:
+                            10,
+                        padding:
+                            "9px 14px",
+                        cursor:
+                            "pointer",
+                        fontWeight:
+                            800,
+                        fontFamily:
+                            "inherit"
+                    }}
+                >
+                    ↓ تصدير Excel
+                </button>
+            </div>
+
+
+            <BranchSummary
+                latest={
+                    latest
+                }
+                previous={
+                    previous
+                }
+                indicators={
+                    indicators
+                }
+            />
+
+
+            <SimpleLineChart
+                rows={
+                    monthlyRows
+                }
+                field="averageDailySales"
+                title="تطور متوسط المبيعات اليومية"
+                formatter={
+                    money
+                }
+            />
+
+
+            <SimpleLineChart
+                rows={
+                    monthlyRows
+                }
+                field="averageDailyInvoices"
+                title="تطور متوسط الفواتير اليومية"
+                formatter={
+                    num
+                }
+            />
+
+
+            <SimpleLineChart
+                rows={
+                    monthlyRows
+                }
+                field="averageInvoiceValue"
+                title="تطور متوسط قيمة الفاتورة"
+                formatter={
+                    money
+                }
+            />
+
+
+            <SimpleLineChart
+                rows={
+                    monthlyRows
+                }
+                field="averageDailyDeliverySales"
+                title="تطور متوسط مبيعات الدليفري اليومية"
+                formatter={
+                    money
+                }
+            />
+
+
+            <MetricTable
+                rows={
+                    monthlyRows
+                }
+            />
+
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div
+                    style={{
+                        padding: 20,
+                        lineHeight: 1.9
+                    }}
+                >
+                    <strong>
+                        قراءة الأداء
+                    </strong>
+
+                    <div
+                        style={{
+                            marginTop: 10
+                        }}
+                    >
+                        النمو الشهري:
+                        {" "}
+                        <b>
+                            {pct(
+                                indicators.growthPct
+                            )}
+                        </b>
+                    </div>
+
+                    <div>
+                        التطور عن خط الأساس:
+                        {" "}
+                        <b>
+                            {pct(
+                                indicators.developmentPct
+                            )}
+                        </b>
+                    </div>
+
+                    <div>
+                        الاستقرار:
+                        {" "}
+                        <b>
+                            {num(
+                                indicators.stabilityIndex
+                            )}
+                        </b>
+                        {" / 100"}
+                    </div>
+
+                    <div>
+                        جميع المقارنات الحالية تعتمد على متوسط المبيعات اليومية
+                        وليس إجمالي الشهر.
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}

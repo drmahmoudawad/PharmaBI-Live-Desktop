@@ -1,0 +1,64 @@
+import React, { useEffect, useMemo, useState } from 'react';
+
+function n(v){const x=Number(v);return Number.isFinite(x)?x:0;}
+function money(v){return n(v).toLocaleString('ar-EG',{maximumFractionDigits:0});}
+function num(v){return n(v).toLocaleString('ar-EG',{maximumFractionDigits:2});}
+function pct(v){return `${n(v).toLocaleString('ar-EG',{maximumFractionDigits:1})}%`;}
+
+const TITLES={
+ overview:'نظرة عامة على النشاط','branch-health':'صحة الفروع',alerts:'التنبيهات والفرص',
+ 'sales-overview':'نظرة عامة على المبيعات','sales-trend':'اتجاه المبيعات','sales-day-hour':'اليوم / الساعة','sales-sellers':'البائعون','sales-returns':'المرتجعات',
+ 'customer-overview':'نظرة عامة على العملاء','customer-rfm':'تحليل RFM','customer-retention':'الاحتفاظ بالعملاء','customer-churn':'التوقف / عدم النشاط','customer-clv':'القيمة العمرية للعميل','customer-cohort':'تحليل مجموعات العملاء',
+ 'product-overview':'نظرة عامة على المنتجات','product-top':'أفضل المنتجات','product-profitability':'الربحية','product-abc':'تحليل ABC','product-stock':'مخاطر المخزون',
+ 'inventory-overview':'نظرة عامة على المخزون','inventory-risk':'مخاطر المخزون','inventory-reorder':'تحليل إعادة الطلب','purchase-overview':'نظرة عامة على المشتريات','supplier-performance':'أداء الموردين','purchase-opportunities':'فرص الشراء',
+ 'profit-overview':'نظرة عامة على الربحية','profit-branch':'الربحية حسب الفرع','profit-product':'الربحية حسب المنتج','profit-anomalies':'شذوذ التكلفة',
+ 'branch-overview':'نظرة عامة على الفروع','branch-comparison':'مقارنة الفروع','branch-ranking':'ترتيب الفروع',
+ 'staff-overview':'نظرة عامة على الموظفين','staff-sales':'المبيعات حسب البائع','staff-productivity':'الإنتاجية',
+ 'forecast-sales':'توقع المبيعات','forecast-demand':'توقع الطلب','forecast-inventory':'توقع المخزون',
+ 'quality-overview':'جودة البيانات','quality-cost':'جودة التكلفة','quality-reconciliation':'مطابقة المبيعات'
+};
+
+function Cards({items=[]}){
+ return <div className="kpi-grid">{items.map((x,i)=><div className="kpi-card" key={i}><span>{x.label}</span><strong>{x.value}</strong>{x.note&&<small>{x.note}</small>}</div>)}</div>;
+}
+function Table({columns,rows=[]}){
+ return <div className="table-card"><div className="table-wrap"><table><thead><tr>{columns.map(c=><th key={c.key}>{c.label}</th>)}</tr></thead><tbody>{rows.length?rows.map((r,i)=><tr key={i}>{columns.map(c=><td key={c.key}>{c.render?c.render(r,i):r[c.key] ?? '-'}</td>)}</tr>):<tr><td colSpan={columns.length} style={{textAlign:'center'}}>لا توجد بيانات</td></tr>}</tbody></table></div></div>;
+}
+function Diagnosis({data,moduleId}){
+ let text='التحليل التشخيصي سيقارن العوامل الرئيسية ويحدد مصدر التغير عندما تتوفر بيانات كافية.';
+ if(data?.performance?.flags?.length) text=data.performance.flags.slice(0,2).map(x=>x.message||x.label).join(' + ');
+ if(data?.primary?.message) text=data.primary.message;
+ if(moduleId==='quality-cost' && data?.quality) text=`جودة التكلفة: ${data.quality.zeroCostRate}% من السطور بتكلفة صفر و${data.quality.missingCostRate}% بدون تكلفة مرجعية.`;
+ return <div className="table-card" style={{marginTop:18}}><div className="table-card-header"><div><strong>لماذا تغير الأداء؟</strong><span>تشخيص مختصر مبني على البيانات الحالية</span></div></div><div style={{padding:20,fontSize:16,fontWeight:700}}>{text}</div></div>;
+}
+
+export default function AnalyticsHubPanel({moduleId,branchId,connection,fromDate,toDate}){
+ const [data,setData]=useState(null); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
+ useEffect(()=>{let cancelled=false;(async()=>{setLoading(true);setError('');try{const result=moduleId==="sales-sellers"?await window.pharmaBI.dashboard.overview({branchId,connection,fromDate,toDate}):await window.pharmaBI.analytics.module({moduleId,branchId,connection,fromDate,toDate});if(!cancelled)setData(moduleId==="sales-sellers"?{...result,sellers:result?.employees||[]}:result);}catch(e){if(!cancelled)setError(e?.message||'تعذر تحميل التحليل.')}finally{if(!cancelled)setLoading(false)}})();return()=>{cancelled=true}},[moduleId,branchId,connection,fromDate,toDate]);
+ const title=TITLES[moduleId]||'تحليل';
+ const cards=useMemo(()=>{const s=data?.summary||data?.current||{};if(moduleId==='sales-overview'||moduleId==='overview') return [{label:'إجمالي المبيعات',value:money(data?.summary?.netSales)},{label:'عدد الفواتير',value:num(data?.summary?.saleTickets)},{label:'متوسط الفاتورة',value:money(data?.summary?.averageTicket)},{label:'الربح الصافي',value:money(data?.summary?.netProfit)},{label:'هامش الربح',value:pct(data?.summary?.grossMargin)},{label:'مبيعات الدليفري',value:money(data?.delivery?.deliverySales)},{label:'طلبات الدليفري',value:num(data?.delivery?.deliveryTickets)}];
+ if(moduleId==='profit-overview'||moduleId==='profit-branch'||moduleId==='profit-anomalies') return [{label:'Net Sales',value:money(data?.summary?.netSales)},{label:'Cost',value:money(data?.summary?.netCost)},{label:'Gross Profit',value:money(data?.summary?.grossProfit)},{label:'Net Profit',value:money(data?.summary?.netProfit)},{label:'Margin',value:pct(data?.summary?.grossMargin)}];
+ if(moduleId==='inventory-overview'||moduleId==='inventory-risk'||moduleId==='inventory-reorder') return [{label:'الأصناف المتحركة',value:num(data?.items?.length)},{label:'الأصناف السريعة',value:num(data?.fastMovers?.length)},{label:'الأصناف البطيئة',value:num(data?.slowMovers?.length)}];
+ if(moduleId==='purchase-overview'||moduleId==='purchase-opportunities') return [{label:'إجمالي المشتريات',value:money(data?.purchaseValue)},{label:'الفواتير',value:num(data?.invoices)},{label:'بنود الشراء',value:num(data?.lines)},{label:'الأصناف',value:num(data?.items)}];
+ if(moduleId==='supplier-performance') return [{label:'الموردون',value:num(data?.suppliers?.length)},{label:'إجمالي الشراء',value:money((data?.suppliers||[]).reduce((a,x)=>a+n(x.purchaseValue),0))}];
+ if(moduleId==='quality-overview'||moduleId==='quality-cost') return [{label:'سطور البيع',value:num(data?.quality?.lines)},{label:'Missing Cost',value:num(data?.quality?.missingCost)},{label:'Zero Cost',value:num(data?.quality?.zeroCost)},{label:'Suspicious',value:num(data?.quality?.suspicious)}];
+ if(moduleId.startsWith('customer')) return [{label:'العملاء',value:num(data?.summary?.customers||data?.summary?.totalCustomers)},{label:'متوسط Recency',value:num(data?.summary?.averageRecencyDays)},{label:'متوسط Frequency',value:num(data?.summary?.averageFrequency)},{label:'متوسط Monetary',value:money(data?.summary?.averageMonetary)}];
+ return []},[data,moduleId]);
+ if(loading)return <section className="page-card loading-card"><div className="loading-spinner"/><h2>جاري تحميل {title}...</h2><p>يتم استخدام بيانات PharmaFly/الكاش المتاح.</p></section>;
+ if(error)return <section className="page-card"><div className="status error">{error}</div></section>;
+ if(!data)return <section className="page-card empty-state"><h2>{title}</h2><p>لا توجد نتيجة.</p></section>;
+ let body=null;
+ if(moduleId==='sales-trend') body=<Table columns={[{key:'date',label:'التاريخ'},{key:'sales',label:'المبيعات',render:r=>money(r.sales)},{key:'returns',label:'المرتجعات',render:r=>money(r.returns)},{key:'netSales',label:'صافي',render:r=>money(r.netSales)},{key:'tickets',label:'الفواتير'}]} rows={data.rows}/>;
+ else if(moduleId==='sales-day-hour') body=<><Table columns={[{key:'date',label:'اليوم'},{key:'sales',label:'المبيعات',render:r=>money(r.sales)},{key:'tickets',label:'الفواتير'}]} rows={data.days}/><div style={{height:18}}/><Table columns={[{key:'hour',label:'الساعة'},{key:'sales',label:'المبيعات',render:r=>money(r.sales)},{key:'tickets',label:'الفواتير'}]} rows={data.hours?.slice(0,24)}/></>;
+ else if(moduleId==='sales-sellers'||moduleId.startsWith('staff')) body=<Table columns={[{key:'employeeName',label:'\u0627\u0644\u0628\u0627\u0626\u0639',render:r=>r.employeeName||r.employeeId||'-'},{key:'sales',label:'\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',render:r=>money(r.sales)},{key:'invoices',label:'\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',render:r=>num(r.invoices)},{key:'averageInvoice',label:'\u0645\u062a\u0648\u0633\u0637 \u0627\u0644\u0641\u0627\u062a\u0648\u0631\u0629',render:r=>money(r.averageInvoice)},{key:'customers',label:'\u0627\u0644\u0639\u0645\u0644\u0627\u0621',render:r=>num(r.customers)},{key:'units',label:'\u0627\u0644\u0639\u0645\u0644\u0627\u0621',render:r=>num(r.units)}]} rows={data.sellers}/>;
+ else if(moduleId==='sales-returns') body=<Cards items={[{label:'المرتجعات',value:money(data.returns)},{label:'فواتير المرتجع',value:num(data.returnTickets)},{label:'بنود المرتجع',value:num(data.returnLines)},{label:'معدل المرتجع',value:pct(data.returnRate)}]}/>;
+ else if(moduleId.includes('product')){const rows=data.products||data.topProducts||data.current?.topProducts||data.negativeMarginProducts||[]; body=<Table columns={[{key:'itemName',label:'المنتج',render:r=>r.itemName||r.productName||r.name||r.item_name||'-'},{key:'units',label:'الكمية',render:r=>num(r.units??r.quantity)},{key:'netSales',label:'المبيعات',render:r=>money(r.netSales??r.sales)},{key:'grossProfit',label:'الربح',render:r=>money(r.grossProfit??r.profit)},{key:'margin',label:'الهامش',render:r=>pct(r.margin)}]} rows={rows}/>}
+ else if(moduleId.startsWith('customer')){const rows=data.customers||data.rows||data.inactiveCustomers||data.topCustomers||[]; body=<Table columns={[{key:'customerName',label:'العميل',render:r=>r.customerName||r.name||r.customer_name||r.customerId||r.customer_id||'-'},{key:'segment',label:'Segment',render:r=>r.segment||'-'},{key:'recencyDays',label:'Recency',render:r=>num(r.recencyDays)},{key:'tickets',label:'Frequency',render:r=>num(r.tickets??r.frequency??r.invoices)},{key:'monetary',label:'Monetary',render:r=>money(r.monetary??r.netSales??r.total_sales)}]} rows={rows.slice(0,100)}/>}
+ else if(moduleId.includes('supplier')) body=<Table columns={[{key:'supplierId',label:'المورد'},{key:'purchaseValue',label:'قيمة الشراء',render:r=>money(r.purchaseValue)},{key:'invoices',label:'الفواتير'},{key:'items',label:'الأصناف'}]} rows={data.suppliers}/>;
+ else if(moduleId.includes('inventory')) body=<Table columns={[{key:'itemName',label:'المنتج'},{key:'velocity',label:'سرعة الحركة',render:r=>num(r.velocity)},{key:'units',label:'الوحدات',render:r=>num(r.units)},{key:'sales',label:'المبيعات',render:r=>money(r.sales)}]} rows={data.items}/>;
+ else if(moduleId.includes('forecast')) body=<><Cards items={[{label:'الاتجاه',value:num(data.forecast?.slope)},{label:'أيام التنبؤ',value:num(data.forecast?.forecast?.length)}]}/><Table columns={[{key:'day',label:'اليوم'},{key:'value',label:'التوقع',render:r=>money(r.value)}]} rows={data.forecast?.forecast||[]}/></>;
+ else if(moduleId.includes('branch')) body=<Table columns={[{key:'rank',label:'الترتيب'},{key:'branchName',label:'الفرع',render:r=>r.branchName||r.name||r.branchId},{key:'sales',label:'المبيعات',render:r=>money(r.sales)},{key:'profit',label:'الربح',render:r=>money(r.profit)},{key:'margin',label:'الهامش',render:r=>pct(r.margin)},{key:'invoices',label:'الفواتير'}]} rows={data.branches}/>;
+ else if(moduleId.includes('reconciliation')) body=<Cards items={[{label:'عدد الفواتير',value:num(data.reconciliation?.ticketCount)},{label:'فروقات',value:num(data.reconciliation?.ticketsWithDifference)},{label:'إجمالي الفرق',value:money(data.reconciliation?.absoluteDifference)}]}/>;
+ else body=<pre style={{whiteSpace:'pre-wrap',margin:0}}>{JSON.stringify(data,null,2)}</pre>;
+ return <section className="page-card"><div className="page-header"><div><div className="page-eyebrow">PharmaBI Analytics</div><h2>{title}</h2><p>{fromDate} → {toDate}</p></div><div className="period-chip">{branchId==='all'?'كل الفروع':`الفرع ${branchId}`}</div></div>{cards.length>0&&<Cards items={cards}/>}<div style={{marginTop:18}}>{body}</div><Diagnosis data={data} moduleId={moduleId}/></section>;
+}

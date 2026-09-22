@@ -1,0 +1,1375 @@
+import fs from "node:fs";
+
+import {
+    getLocalSalesDatabase
+} from "../localdb/localSalesDb.js";
+
+
+const SCHEMA_VERSION =
+    1;
+
+
+function ensureMasterItemSchema() {
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    db.exec(`
+
+        CREATE TABLE IF NOT EXISTS master_items (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            unified_code TEXT NOT NULL UNIQUE,
+
+            canonical_name TEXT NOT NULL,
+
+            normalized_name TEXT NOT NULL,
+
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+        );
+
+
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            idx_master_items_unified_code
+
+        ON master_items (
+            unified_code
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_items_normalized_name
+
+        ON master_items (
+            normalized_name
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_items_canonical_name
+
+        ON master_items (
+            canonical_name
+        );
+
+
+        CREATE TABLE IF NOT EXISTS master_item_branch_map (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            master_item_id INTEGER NOT NULL,
+
+            branch_id INTEGER NOT NULL,
+
+            branch_item_id TEXT NOT NULL,
+
+            branch_item_code TEXT,
+
+            branch_item_name TEXT,
+
+            barcode TEXT,
+
+            parts REAL DEFAULT 1,
+
+            match_status TEXT NOT NULL DEFAULT 'AUTO_HIGH',
+
+            source TEXT NOT NULL DEFAULT 'MASTER_SEED',
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (
+                master_item_id
+            )
+            REFERENCES master_items (
+                id
+            )
+            ON DELETE CASCADE,
+
+            UNIQUE (
+                branch_id,
+                branch_item_id
+            )
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_branch_master
+
+        ON master_item_branch_map (
+            master_item_id
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_branch_code
+
+        ON master_item_branch_map (
+            branch_id,
+            branch_item_code
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_branch_item
+
+        ON master_item_branch_map (
+            branch_id,
+            branch_item_id
+        );
+
+
+        CREATE TABLE IF NOT EXISTS master_item_aliases (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            master_item_id INTEGER NOT NULL,
+
+            alias_value TEXT NOT NULL,
+
+            normalized_alias TEXT NOT NULL,
+
+            alias_type TEXT NOT NULL DEFAULT 'BRANCH_NAME',
+
+            branch_id INTEGER,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (
+                master_item_id
+            )
+            REFERENCES master_items (
+                id
+            )
+            ON DELETE CASCADE
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_alias_normalized
+
+        ON master_item_aliases (
+            normalized_alias
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_alias_branch
+
+        ON master_item_aliases (
+            branch_id,
+            normalized_alias
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_alias_master
+
+        ON master_item_aliases (
+            master_item_id
+        );
+
+
+        CREATE TABLE IF NOT EXISTS master_item_review (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            branch_id INTEGER NOT NULL,
+
+            branch_item_id TEXT NOT NULL,
+
+            branch_item_code TEXT,
+
+            branch_item_name TEXT,
+
+            normalized_name TEXT,
+
+            reason TEXT NOT NULL,
+
+            status TEXT NOT NULL DEFAULT 'PENDING',
+
+            suggested_master_item_id INTEGER,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (
+                suggested_master_item_id
+            )
+            REFERENCES master_items (
+                id
+            )
+            ON DELETE SET NULL,
+
+            UNIQUE (
+                branch_id,
+                branch_item_id
+            )
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_review_status
+
+        ON master_item_review (
+            status
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_master_item_review_branch
+
+        ON master_item_review (
+            branch_id,
+            branch_item_id
+        );
+
+
+    `);
+
+
+    return {
+        schemaVersion:
+            SCHEMA_VERSION
+    };
+
+}
+
+
+function normalizeSearchValue(
+    value
+) {
+
+    return String(
+        value ?? ""
+    )
+        .trim()
+        .replace(/\s+/g, " ")
+        .toUpperCase();
+
+}
+
+
+function importMasterItemSeed(
+    seedPath
+) {
+
+    ensureMasterItemSchema();
+
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    if (
+        !fs.existsSync(
+            seedPath
+        )
+    ) {
+
+        throw new Error(
+            `Master item seed not found: ${seedPath}`
+        );
+
+    }
+
+
+    const seed =
+        JSON.parse(
+            fs.readFileSync(
+                seedPath,
+                "utf8"
+            )
+        );
+
+
+    const masterItems =
+        Array.isArray(
+            seed?.masterItems
+        )
+            ? seed.masterItems
+            : [];
+
+
+    if (
+        masterItems.length === 0
+    ) {
+
+        throw new Error(
+            "Master item seed contains no masterItems."
+        );
+
+    }
+
+
+    const insertMaster =
+        db.prepare(`
+
+            INSERT INTO master_items (
+
+                unified_code,
+                canonical_name,
+                normalized_name,
+                status,
+                updated_at
+
+            )
+
+            VALUES (
+
+                @unified_code,
+                @canonical_name,
+                @normalized_name,
+                'ACTIVE',
+                CURRENT_TIMESTAMP
+
+            )
+
+            ON CONFLICT (
+                unified_code
+            )
+
+            DO UPDATE SET
+
+                canonical_name =
+                    excluded.canonical_name,
+
+                normalized_name =
+                    excluded.normalized_name,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+
+        `);
+
+
+    const getMaster =
+        db.prepare(`
+
+            SELECT
+                id,
+                unified_code
+
+            FROM master_items
+
+            WHERE unified_code =
+                ?
+
+            LIMIT 1
+
+        `);
+
+
+    const insertMap =
+        db.prepare(`
+
+            INSERT INTO master_item_branch_map (
+
+                master_item_id,
+                branch_id,
+                branch_item_id,
+                branch_item_code,
+                branch_item_name,
+                barcode,
+                parts,
+                match_status,
+                source,
+                updated_at
+
+            )
+
+            VALUES (
+
+                @master_item_id,
+                @branch_id,
+                @branch_item_id,
+                @branch_item_code,
+                @branch_item_name,
+                @barcode,
+                @parts,
+                'AUTO_HIGH',
+                'MASTER_SEED',
+                CURRENT_TIMESTAMP
+
+            )
+
+            ON CONFLICT (
+                branch_id,
+                branch_item_id
+            )
+
+            DO UPDATE SET
+
+                master_item_id =
+                    excluded.master_item_id,
+
+                branch_item_code =
+                    excluded.branch_item_code,
+
+                branch_item_name =
+                    excluded.branch_item_name,
+
+                barcode =
+                    excluded.barcode,
+
+                parts =
+                    excluded.parts,
+
+                match_status =
+                    excluded.match_status,
+
+                source =
+                    excluded.source,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+
+        `);
+
+
+    const insertAlias =
+        db.prepare(`
+
+            INSERT INTO master_item_aliases (
+
+                master_item_id,
+                alias_value,
+                normalized_alias,
+                alias_type,
+                branch_id,
+                updated_at
+
+            )
+
+            VALUES (
+
+                @master_item_id,
+                @alias_value,
+                @normalized_alias,
+                @alias_type,
+                @branch_id,
+                CURRENT_TIMESTAMP
+
+            )
+
+        `);
+
+
+    const transaction =
+        db.transaction(
+            items => {
+
+                let masterCount = 0;
+                let mappingCount = 0;
+                let aliasCount = 0;
+
+
+                for (
+                    const item
+                    of items
+                ) {
+
+                    if (
+                        !item?.unifiedCode ||
+                        !item?.canonicalName ||
+                        !Array.isArray(
+                            item?.branches
+                        )
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    insertMaster.run({
+
+                        unified_code:
+                            String(
+                                item.unifiedCode
+                            ),
+
+                        canonical_name:
+                            String(
+                                item.canonicalName
+                            ),
+
+                        normalized_name:
+                            String(
+                                item.normalizedName ||
+                                normalizeSearchValue(
+                                    item.canonicalName
+                                )
+                            )
+
+                    });
+
+
+                    const master =
+                        getMaster.get(
+                            String(
+                                item.unifiedCode
+                            )
+                        );
+
+
+                    if (
+                        !master?.id
+                    ) {
+
+                        throw new Error(
+                            `Failed to resolve master item ${item.unifiedCode}`
+                        );
+
+                    }
+
+
+                    masterCount += 1;
+
+
+                    for (
+                        const branch
+                        of item.branches
+                    ) {
+
+                        const branchId =
+                            Number(
+                                branch?.branchId
+                            );
+
+
+                        const branchItemId =
+                            String(
+                                branch?.branchItemId ?? ""
+                            );
+
+
+                        if (
+                            !Number.isInteger(
+                                branchId
+                            ) ||
+                            branchId <= 0 ||
+                            !branchItemId ||
+                            branchItemId === "0"
+                        ) {
+
+                            continue;
+
+                        }
+
+
+                        insertMap.run({
+
+                            master_item_id:
+                                master.id,
+
+                            branch_id:
+                                branchId,
+
+                            branch_item_id:
+                                branchItemId,
+
+                            branch_item_code:
+                                branch?.branchItemCode ??
+                                null,
+
+                            branch_item_name:
+                                branch?.branchItemName ??
+                                null,
+
+                            barcode:
+                                branch?.barcode ??
+                                null,
+
+                            parts:
+                                Number(
+                                    branch?.parts
+                                ) || 1
+
+                        });
+
+
+                        mappingCount += 1;
+
+
+                        if (
+                            branch?.branchItemName
+                        ) {
+
+                            insertAlias.run({
+
+                                master_item_id:
+                                    master.id,
+
+                                alias_value:
+                                    String(
+                                        branch.branchItemName
+                                    ),
+
+                                normalized_alias:
+                                    normalizeSearchValue(
+                                        branch.branchItemName
+                                    ),
+
+                                alias_type:
+                                    "BRANCH_NAME",
+
+                                branch_id:
+                                    branchId
+
+                            });
+
+                            aliasCount += 1;
+
+                        }
+
+                    }
+
+                }
+
+
+                return {
+
+                    masterCount,
+                    mappingCount,
+                    aliasCount
+
+                };
+
+            }
+        );
+
+
+    const result =
+        transaction(
+            masterItems
+        );
+
+
+    return {
+
+        success:
+            true,
+
+        ...result,
+
+        seedMasterCount:
+            masterItems.length
+
+    };
+
+}
+
+
+function searchMasterItems(
+    query,
+    {
+        branchId = null,
+        limit = 50
+    } = {}
+) {
+
+    ensureMasterItemSchema();
+
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    const value =
+        String(
+            query ?? ""
+        ).trim();
+
+
+    if (
+        !value
+    ) {
+
+        return [];
+
+    }
+
+
+    const normalized =
+        normalizeSearchValue(
+            value
+        );
+
+
+    const safeLimit =
+        Math.min(
+            Math.max(
+                Number(limit) || 50,
+                1
+            ),
+            200
+        );
+
+
+    const numericBranchId =
+        Number(
+            branchId
+        );
+
+
+    const hasBranch =
+        Number.isInteger(
+            numericBranchId
+        ) &&
+        numericBranchId > 0;
+
+
+    const unifiedCode =
+        /^PBI-\d+$/i.test(
+            value
+        )
+            ? value.toUpperCase()
+            : null;
+
+
+    if (
+        unifiedCode
+    ) {
+
+        return db.prepare(`
+
+            SELECT
+
+                mi.id,
+                mi.unified_code,
+                mi.canonical_name,
+                mi.normalized_name,
+                mi.status,
+
+                mim.branch_id,
+                mim.branch_item_id,
+                mim.branch_item_code,
+                mim.branch_item_name,
+                mim.barcode,
+                mim.parts
+
+            FROM master_items mi
+
+            LEFT JOIN master_item_branch_map mim
+
+                ON mim.master_item_id =
+                   mi.id
+
+            WHERE
+
+                mi.unified_code = ?
+
+                AND (
+                    ? = 0
+                    OR mim.branch_id = ?
+                )
+
+            ORDER BY
+                mim.branch_id
+
+            LIMIT ${safeLimit}
+
+        `).all(
+            unifiedCode,
+            hasBranch
+                ? numericBranchId
+                : 0,
+            hasBranch
+                ? numericBranchId
+                : 0
+        );
+
+    }
+    if (
+        /^\d+$/.test(value)
+    ) {
+
+        if (
+            hasBranch
+        ) {
+
+            const branchItem =
+                db.prepare(`
+
+                    SELECT
+
+                        mi.id,
+                        mi.unified_code,
+                        mi.canonical_name,
+                        mi.normalized_name,
+                        mi.status,
+
+                        mim.branch_id,
+                        mim.branch_item_id,
+                        mim.branch_item_code,
+                        mim.branch_item_name,
+                        mim.barcode,
+                        mim.parts
+
+                    FROM master_item_branch_map mim
+
+                    INNER JOIN master_items mi
+
+                        ON mi.id =
+                           mim.master_item_id
+
+                    WHERE
+
+                        mim.branch_id = ?
+
+                        AND (
+                            mim.branch_item_id = ?
+                            OR mim.branch_item_code = ?
+                        )
+
+                    ORDER BY
+                        mi.id
+
+                    LIMIT 20
+
+                `).all(
+                    numericBranchId,
+                    value,
+                    value
+                );
+
+
+            if (
+                branchItem.length
+            ) {
+
+                return branchItem;
+
+            }
+
+        }
+        else {
+
+            const groupItems =
+                db.prepare(`
+
+                    SELECT
+
+                        mi.id,
+                        mi.unified_code,
+                        mi.canonical_name,
+                        mi.normalized_name,
+                        mi.status,
+
+                        mim.branch_id,
+                        mim.branch_item_id,
+                        mim.branch_item_code,
+                        mim.branch_item_name,
+                        mim.barcode,
+                        mim.parts
+
+                    FROM master_item_branch_map mim
+
+                    INNER JOIN master_items mi
+
+                        ON mi.id =
+                           mim.master_item_id
+
+                    WHERE
+
+                        mim.branch_item_id = ?
+
+                        OR mim.branch_item_code = ?
+
+                    ORDER BY
+
+                        mi.id,
+                        mim.branch_id
+
+                    LIMIT 100
+
+                `).all(
+                    value,
+                    value
+                );
+
+
+            if (
+                groupItems.length
+            ) {
+
+                return groupItems;
+
+            }
+
+        }
+
+    }
+
+
+    const exactAlias =
+        db.prepare(`
+
+            SELECT DISTINCT
+
+                mi.id,
+                mi.unified_code,
+                mi.canonical_name,
+                mi.normalized_name,
+                mi.status,
+
+                mim.branch_id,
+                mim.branch_item_id,
+                mim.branch_item_code,
+                mim.branch_item_name,
+                mim.barcode,
+                mim.parts
+
+            FROM master_item_aliases mia
+
+            INNER JOIN master_items mi
+
+                ON mi.id =
+                   mia.master_item_id
+
+            LEFT JOIN master_item_branch_map mim
+
+                ON mim.master_item_id =
+                   mi.id
+
+                AND (
+                    mia.branch_id IS NULL
+                    OR mim.branch_id =
+                       mia.branch_id
+                )
+
+            WHERE
+
+                mia.normalized_alias = ?
+
+                AND (
+                    ? = 0
+                    OR mim.branch_id = ?
+                    OR mim.branch_id IS NULL
+                )
+
+            ORDER BY
+                mi.id
+
+            LIMIT ${safeLimit}
+
+        `).all(
+            normalized,
+            hasBranch
+                ? numericBranchId
+                : 0,
+            hasBranch
+                ? numericBranchId
+                : 0
+        );
+
+
+    if (
+        exactAlias.length
+    ) {
+
+        return exactAlias;
+
+    }
+
+
+    const like =
+        `%${normalized}%`;
+
+
+    return db.prepare(`
+
+        SELECT DISTINCT
+
+            mi.id,
+            mi.unified_code,
+            mi.canonical_name,
+            mi.normalized_name,
+            mi.status,
+
+            mim.branch_id,
+            mim.branch_item_id,
+            mim.branch_item_code,
+            mim.branch_item_name,
+            mim.barcode,
+            mim.parts
+
+        FROM master_items mi
+
+        LEFT JOIN master_item_branch_map mim
+
+            ON mim.master_item_id =
+               mi.id
+
+        WHERE
+
+            (
+                mi.normalized_name LIKE ?
+
+                OR mi.canonical_name LIKE ?
+
+            )
+
+            AND (
+                ? = 0
+                OR mim.branch_id = ?
+                OR mim.branch_id IS NULL
+            )
+
+        ORDER BY
+
+            CASE
+
+                WHEN mi.normalized_name = ?
+                    THEN 0
+
+                WHEN mi.canonical_name = ?
+                    THEN 1
+
+                ELSE 2
+
+            END,
+
+            mi.canonical_name
+
+        LIMIT ${safeLimit}
+
+    `).all(
+
+        like,
+        like,
+
+        hasBranch
+            ? numericBranchId
+            : 0,
+
+        hasBranch
+            ? numericBranchId
+            : 0,
+
+        normalized,
+        value
+
+    );
+
+}
+
+
+function resolveItem(
+    query,
+    {
+        branchId = null
+    } = {}
+) {
+
+    const results =
+        searchMasterItems(
+            query,
+            {
+                branchId,
+                limit:
+                    20
+            }
+        );
+
+
+    if (
+        results.length === 0
+    ) {
+
+        return {
+
+            success:
+                false,
+
+            found:
+                false,
+
+            ambiguous:
+                false,
+
+            query:
+
+                String(
+                    query ?? ""
+                ),
+
+            results: []
+
+        };
+
+    }
+
+
+    const masterIds =
+        [
+            ...new Set(
+                results.map(
+                    row =>
+                        row.id
+                )
+            )
+        ];
+
+
+    return {
+
+        success:
+            true,
+
+        found:
+            true,
+
+        ambiguous:
+            masterIds.length > 1,
+
+        query:
+            String(
+                query ?? ""
+            ),
+
+        result:
+            results[0],
+
+        results
+
+    };
+
+}
+
+
+function getMasterItemById(
+    masterItemId
+) {
+
+    ensureMasterItemSchema();
+
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    const master =
+        db.prepare(`
+
+            SELECT
+
+                id,
+                unified_code,
+                canonical_name,
+                normalized_name,
+                status,
+                created_at,
+                updated_at
+
+            FROM master_items
+
+            WHERE id = ?
+
+            LIMIT 1
+
+        `).get(
+            Number(
+                masterItemId
+            )
+        );
+
+
+    if (
+        !master
+    ) {
+
+        return null;
+
+    }
+
+
+    const branches =
+        db.prepare(`
+
+            SELECT
+
+                mim.branch_id,
+                mim.branch_item_id,
+                mim.branch_item_code,
+                mim.branch_item_name,
+                mim.barcode,
+                mim.parts,
+                mim.match_status,
+                mim.source
+
+            FROM master_item_branch_map mim
+
+            WHERE mim.master_item_id = ?
+
+            ORDER BY
+                mim.branch_id
+
+        `).all(
+            Number(
+                masterItemId
+            )
+        );
+
+
+    const aliases =
+        db.prepare(`
+
+            SELECT
+
+                id,
+                alias_value,
+                normalized_alias,
+                alias_type,
+                branch_id
+
+            FROM master_item_aliases
+
+            WHERE master_item_id = ?
+
+            ORDER BY
+                branch_id,
+                alias_value
+
+        `).all(
+            Number(
+                masterItemId
+            )
+        );
+
+
+    return {
+
+        ...master,
+
+        branches,
+
+        aliases
+
+    };
+
+}
+
+
+function getMasterItemStats() {
+
+    ensureMasterItemSchema();
+
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    const masterCount =
+        db.prepare(`
+
+            SELECT COUNT(*) AS count
+            FROM master_items
+
+        `).get().count;
+
+
+    const mappingCount =
+        db.prepare(`
+
+            SELECT COUNT(*) AS count
+            FROM master_item_branch_map
+
+        `).get().count;
+
+
+    const aliasCount =
+        db.prepare(`
+
+            SELECT COUNT(*) AS count
+            FROM master_item_aliases
+
+        `).get().count;
+
+
+    const reviewCount =
+        db.prepare(`
+
+            SELECT COUNT(*) AS count
+            FROM master_item_review
+
+            WHERE status =
+                'PENDING'
+
+        `).get().count;
+
+
+    const branchCount =
+        db.prepare(`
+
+            SELECT COUNT(
+                DISTINCT branch_id
+            ) AS count
+
+            FROM master_item_branch_map
+
+        `).get().count;
+
+
+    return {
+
+        masterCount:
+            Number(
+                masterCount
+            ) || 0,
+
+        mappingCount:
+            Number(
+                mappingCount
+            ) || 0,
+
+        aliasCount:
+            Number(
+                aliasCount
+            ) || 0,
+
+        pendingReviewCount:
+            Number(
+                reviewCount
+            ) || 0,
+
+        branchCount:
+            Number(
+                branchCount
+            ) || 0
+
+    };
+
+}
+
+
+export {
+
+    ensureMasterItemSchema,
+
+    importMasterItemSeed,
+
+    searchMasterItems,
+
+    resolveItem,
+
+    getMasterItemById,
+
+    getMasterItemStats
+
+};

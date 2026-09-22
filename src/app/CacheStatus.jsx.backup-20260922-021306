@@ -1,0 +1,280 @@
+import React from "react";
+
+import {
+    normalizeBranchName,
+    isBranchActive
+} from "./appHelpers.js";
+
+
+export default function CacheStatus({
+    savedBranches,
+    activeConnections
+}) {
+
+    return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            النظام
+                        </div>
+
+
+                        <h2>
+                            حالة التخزين المؤقت
+                        </h2>
+
+
+                        <p>
+                            حالة الفروع والاتصالات والتخزين المحلي.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div className="kpi-grid">
+
+                    <div className="kpi-card">
+
+                        <span>
+                            الفروع المحفوظة
+                        </span>
+
+                        <strong>
+                            {
+                                savedBranches.length
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            الاتصالات النشطة
+                        </span>
+
+                        <strong>
+                            {
+                                activeConnections.length
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            التخزين المحلي
+                        </span>
+
+                        <strong>
+                            SQLite
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            الوضع
+                        </span>
+
+                        <strong>
+                            متعدد الفروع
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div className="table-card">
+
+                    <div className="table-card-header">
+
+                        <div>
+
+                            <strong>
+                                حالة الاتصال
+                            </strong>
+
+                            <span>
+                                الفروع المحفوظة حاليًا
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="table-wrap">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>
+                                        المعرّف
+                                    </th>
+
+                                    <th>
+                                        الفرع
+                                    </th>
+
+                                    <th>
+                                        الاتصال
+                                    </th>
+
+                                    <th>
+                                        الخادم
+                                    </th>
+
+                                    <th>
+                                        قاعدة البيانات
+                                    </th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody>
+
+                                {
+                                    savedBranches.map(
+
+                                        branch => {
+
+                                            const active =
+                                                isBranchActive(
+
+                                                    activeConnections,
+
+                                                    branch.branchId
+
+                                                );
+
+
+                                            return (
+
+                                                <tr
+
+                                                    key={
+                                                        branch.branchId
+                                                    }
+
+                                                >
+
+                                                    <td>
+                                                        {
+                                                            branch.branchId
+                                                        }
+                                                    </td>
+
+
+                                                    <td>
+
+                                                        <strong>
+
+                                                            {
+                                                                normalizeBranchName(
+                                                                    branch
+                                                                )
+                                                            }
+
+                                                        </strong>
+
+                                                    </td>
+
+
+                                                    <td>
+
+                                                        <span>
+
+                                                            <span
+
+                                                                className={
+
+                                                                    active
+
+                                                                        ? "mode-dot branch"
+
+                                                                        : "mode-dot"
+
+                                                                }
+
+                                                            />
+
+                                                            {" "}
+
+                                                            {
+
+                                                                active
+
+                                                                    ? "متصل"
+
+                                                                    : "غير متصل"
+
+                                                            }
+
+                                                        </span>
+
+                                                    </td>
+
+
+                                                    <td>
+
+                                                        {
+                                                            branch.server ||
+                                                            "—"
+                                                        }
+
+                                                    </td>
+
+
+                                                    <td>
+
+                                                        {
+                                                            branch.database ||
+                                                            "—"
+                                                        }
+
+                                                    </td>
+
+                                                </tr>
+
+                                            );
+
+                                        }
+
+                                    )
+
+                                }
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+

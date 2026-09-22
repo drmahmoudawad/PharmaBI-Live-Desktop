@@ -1,0 +1,745 @@
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+function number(value) {
+
+    const result = Number(value);
+
+    return Number.isFinite(result)
+        ? result
+        : 0;
+
+}
+
+
+function money(value) {
+
+    return number(value).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits: 0
+        }
+    );
+
+}
+
+
+function numeric(value) {
+
+    return number(value).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits: 1
+        }
+    );
+
+}
+
+
+function shortDate(value) {
+
+    const text = String(value || "");
+
+    return text.slice(5);
+
+}
+
+
+function SectionTitle({
+    title,
+    subtitle
+}) {
+
+    return (
+
+        <div className="table-card-header">
+
+            <div>
+
+                <strong>
+                    {title}
+                </strong>
+
+                <span>
+                    {subtitle}
+                </span>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+function MiniTable({
+    columns,
+    rows
+}) {
+
+    return (
+
+        <div className="table-card">
+
+            <div className="table-wrap">
+
+                <table>
+
+                    <thead>
+
+                        <tr>
+
+                            {
+                                columns.map(
+                                    column => (
+
+                                        <th
+                                            key={column.key}
+                                        >
+                                            {column.label}
+                                        </th>
+
+                                    )
+                                )
+                            }
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {
+                            rows.length === 0
+
+                                ? (
+
+                                    <tr>
+
+                                        <td
+                                            colSpan={columns.length}
+                                            style={{
+                                                textAlign: "center"
+                                            }}
+                                        >
+                                            لا توجد بيانات
+                                        </td>
+
+                                    </tr>
+
+                                )
+
+                                : rows.map(
+
+                                    (row, index) => (
+
+                                        <tr
+                                            key={
+                                                row.id ||
+                                                row.itemId ||
+                                                row.customerId ||
+                                                row.employeeId ||
+                                                `${index}`
+                                            }
+                                        >
+
+                                            {
+                                                columns.map(
+                                                    column => (
+
+                                                        <td
+                                                            key={column.key}
+                                                        >
+
+                                                            {
+                                                                column.render
+                                                                    ? column.render(row)
+                                                                    : row[column.key] ?? "-"
+                                                            }
+
+                                                        </td>
+
+                                                    )
+                                                )
+                                            }
+
+                                        </tr>
+
+                                    )
+
+                                )
+                        }
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+function DailySalesChart({
+    rows
+}) {
+
+    const width = 980;
+    const height = 300;
+    const padding = {
+        top: 24,
+        right: 24,
+        bottom: 42,
+        left: 70
+    };
+
+    const values = rows.map(
+        row => number(row.sales)
+    );
+
+    const max = Math.max(
+        ...values,
+        1
+    );
+
+    const innerWidth =
+        width -
+        padding.left -
+        padding.right;
+
+    const innerHeight =
+        height -
+        padding.top -
+        padding.bottom;
+
+    const points = rows.map(
+        (row, index) => {
+
+            const x =
+                padding.left +
+                (
+                    rows.length <= 1
+                        ? innerWidth / 2
+                        : index /
+                          (rows.length - 1) *
+                          innerWidth
+                );
+
+            const y =
+                padding.top +
+                innerHeight -
+                (
+                    number(row.sales) /
+                    max
+                ) *
+                innerHeight;
+
+            return {
+                ...row,
+                x,
+                y
+            };
+
+        }
+    );
+
+    const polyline = points
+        .map(
+            point => `${point.x},${point.y}`
+        )
+        .join(" ");
+
+    return (
+
+        <div className="table-card dashboard-chart-card">
+
+            <SectionTitle
+                title="مبيعات الشهر يوميًا"
+                subtitle="صافي المبيعات لكل يوم خلال الفترة المحددة"
+            />
+
+            <div
+                style={{
+                    padding: "12px 18px 18px",
+                    overflowX: "auto"
+                }}
+            >
+
+                <svg
+                    viewBox={`0 0 ${width} ${height}`}
+                    width="100%"
+                    role="img"
+                    aria-label="مبيعات الشهر يوميًا"
+                >
+
+                    <line
+                        x1={padding.left}
+                        y1={padding.top + innerHeight}
+                        x2={width - padding.right}
+                        y2={padding.top + innerHeight}
+                        stroke="currentColor"
+                        opacity="0.18"
+                    />
+
+                    <line
+                        x1={padding.left}
+                        y1={padding.top}
+                        x2={padding.left}
+                        y2={padding.top + innerHeight}
+                        stroke="currentColor"
+                        opacity="0.18"
+                    />
+
+                    <polyline
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        points={polyline}
+                    />
+
+                    {
+                        points.map(
+                            point => (
+
+                                <circle
+                                    key={point.date}
+                                    cx={point.x}
+                                    cy={point.y}
+                                    r="3.5"
+                                    fill="currentColor"
+                                />
+
+                            )
+                        )
+                    }
+
+                    {
+                        points.filter(
+                            (_, index) =>
+                                index === 0 ||
+                                index === points.length - 1 ||
+                                index % 5 === 0
+                        ).map(
+                            point => (
+
+                                <text
+                                    key={`label-${point.date}`}
+                                    x={point.x}
+                                    y={height - 14}
+                                    textAnchor="middle"
+                                    fontSize="12"
+                                    fill="currentColor"
+                                    opacity="0.68"
+                                >
+                                    {shortDate(point.date)}
+                                </text>
+
+                            )
+                        )
+                    }
+
+                    <text
+                        x={padding.left - 10}
+                        y={padding.top + 6}
+                        textAnchor="end"
+                        fontSize="12"
+                        fill="currentColor"
+                        opacity="0.68"
+                    >
+                        {money(max)}
+                    </text>
+
+                    <text
+                        x={padding.left - 10}
+                        y={padding.top + innerHeight}
+                        textAnchor="end"
+                        fontSize="12"
+                        fill="currentColor"
+                        opacity="0.68"
+                    >
+                        0
+                    </text>
+
+                </svg>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+export default function DashboardOverview({
+    selectedBranchId,
+    selectedConnection,
+    fromDate,
+    toDate,
+    selectedBranchName
+}) {
+
+    const [
+        data,
+        setData
+    ] = useState(null);
+
+    const [
+        loading,
+        setLoading
+    ] = useState(true);
+
+    const [
+        error,
+        setError
+    ] = useState("");
+
+
+    useEffect(
+
+        () => {
+
+            let cancelled = false;
+
+            async function load() {
+
+                try {
+
+                    setLoading(true);
+                    setError("");
+
+                    const result =
+                        await window
+                            .pharmaBI
+                            .dashboard
+                            .overview({
+
+                                branchId:
+                                    selectedBranchId,
+
+                                connection:
+                                    selectedConnection || null,
+
+                                fromDate,
+                                toDate
+
+                            });
+
+                    if (!cancelled) {
+                        setData(result);
+                    }
+
+                }
+                catch (requestError) {
+
+                    if (!cancelled) {
+
+                        setData(null);
+
+                        setError(
+                            requestError?.message ||
+                            "تعذر تحميل لوحة التحكم."
+                        );
+
+                    }
+
+                }
+                finally {
+
+                    if (!cancelled) {
+                        setLoading(false);
+                    }
+
+                }
+
+            }
+
+            load();
+
+            return () => {
+                cancelled = true;
+            };
+
+        },
+
+        [
+            selectedBranchId,
+            selectedConnection,
+            fromDate,
+            toDate
+        ]
+
+    );
+
+
+    const daily = data?.daily || [];
+
+    const customers = data?.topCustomers || [];
+    const products = data?.topProducts || [];
+    const employees = data?.employees || [];
+
+
+    const employeeRows =
+        useMemo(
+            () =>
+                employees.map(
+                    (employee, index) => ({
+                        ...employee,
+                        rank:
+                            index + 1
+                    })
+                ),
+            [employees]
+        );
+
+
+    if (loading) {
+
+        return (
+
+            <section className="page-card loading-card">
+
+                <div className="loading-spinner" />
+
+                <h2>
+                    جاري تحميل لوحة التحكم...
+                </h2>
+
+                <p>
+                    يتم استخدام بيانات المبيعات المحملة والكاش المتاح.
+                </p>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (error) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="status error">
+                    {error}
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    const modeLabel =
+        selectedBranchId === "all"
+            ? "كل الفروع"
+            : selectedBranchName;
+
+
+    return (
+
+        <section className="page-card">
+
+            <div className="page-header">
+
+                <div>
+
+                    <div className="page-eyebrow">
+                        لوحة التحكم
+                    </div>
+
+                    <h2>
+                        {modeLabel}
+                    </h2>
+
+                    <p>
+                        ملخص يومي مباشر للمبيعات والعملاء والدليفري وأفضل الأداءات.
+                    </p>
+
+                </div>
+
+                <div className="period-chip">
+                    {fromDate}
+                    <span>→</span>
+                    {toDate}
+                </div>
+
+            </div>
+
+
+            <div className="kpi-grid">
+
+                <div className="kpi-card">
+                    <span>متوسط المبيعات اليومي</span>
+                    <strong>{money(data?.averageDailySales)}</strong>
+                </div>
+
+
+                <div className="kpi-card">
+                    <span>متوسط عدد العملاء اليومي</span>
+                    <strong>{numeric(data?.averageDailyCustomers)}</strong>
+                </div>
+
+
+                <div className="kpi-card">
+                    <span>متوسط قيمة الدليفري اليومي</span>
+                    <strong>{money(data?.averageDailyDeliverySales)}</strong>
+                </div>
+
+
+                <div className="kpi-card">
+                    <span>متوسط عدد طلبات الدليفري اليومي</span>
+                    <strong>{numeric(data?.averageDailyDeliveryTickets)}</strong>
+                </div>
+
+            </div>
+
+
+            <div style={{ marginTop: 18 }}>
+
+                <DailySalesChart
+                    rows={daily}
+                />
+
+            </div>
+
+
+            <div
+                style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                        "repeat(auto-fit, minmax(360px, 1fr))",
+                    gap: 18,
+                    marginTop: 18
+                }}
+            >
+
+                <div>
+
+                    <SectionTitle
+                        title="أفضل 10 عملاء"
+                        subtitle="مرتبة تنازليًا حسب صافي المبيعات"
+                    />
+
+                    <MiniTable
+                        columns={[
+                            {
+                                key: "customerName",
+                                label: "العميل"
+                            },
+                            {
+                                key: "sales",
+                                label: "المبيعات",
+                                render: row => money(row.sales)
+                            },
+                            {
+                                key: "invoices",
+                                label: "الفواتير",
+                                render: row => numeric(row.invoices)
+                            }
+                        ]}
+                        rows={customers}
+                    />
+
+                </div>
+
+
+                <div>
+
+                    <SectionTitle
+                        title="أفضل 10 منتجات مبيعًا"
+                        subtitle="مرتبة تنازليًا حسب صافي المبيعات"
+                    />
+
+                    <MiniTable
+                        columns={[
+                            {
+                                key: "itemName",
+                                label: "المنتج"
+                            },
+                            {
+                                key: "units",
+                                label: "الكمية",
+                                render: row => numeric(row.units)
+                            },
+                            {
+                                key: "sales",
+                                label: "المبيعات",
+                                render: row => money(row.sales)
+                            }
+                        ]}
+                        rows={products}
+                    />
+
+                </div>
+
+            </div>
+
+
+            <div style={{ marginTop: 18 }}>
+
+                <SectionTitle
+                    title="أفضل الموظفين"
+                    subtitle="ترتيب تنازلي حسب صافي المبيعات"
+                />
+
+                <MiniTable
+                    columns={[
+                        {
+                            key: "rank",
+                            label: "الترتيب"
+                        },
+                        {
+                            key: "employeeName",
+                            label: "الموظف",
+                            render: row =>
+                                row.employeeName ||
+                                row.employeeId ||
+                                "غير محدد"
+                        },
+                        {
+                            key: "averageDailySales",
+                            label: "متوسط المبيعات اليومي",
+                            render: row =>
+                                money(
+                                    row.averageDailySales
+                                )
+                        },
+                        {
+                            key: "averageDailyInvoices",
+                            label: "متوسط الفواتير اليومي",
+                            render: row =>
+                                numeric(
+                                    row.averageDailyInvoices
+                                )
+                        },
+                        {
+                            key: "customers",
+                            label: "عدد العملاء",
+                            render: row =>
+                                numeric(
+                                    row.customers
+                                )
+                        }
+                    ]}
+                    rows={employeeRows}
+                />
+
+            </div>
+
+        </section>
+
+    );
+
+}

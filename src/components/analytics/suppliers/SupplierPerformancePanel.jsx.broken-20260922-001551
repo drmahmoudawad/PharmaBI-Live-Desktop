@@ -1,0 +1,795 @@
+import React, {
+    useEffect,
+    useState
+} from 'react';
+
+export default function SupplierPerformancePanel({
+    data,
+    Table,
+    buttonStyle,
+    money,
+    num,
+    pct,
+    n
+}) {
+    const [
+        supplierCategories,
+        setSupplierCategories
+    ] = useState(() => {
+        try {
+            const raw =
+                localStorage.getItem(
+                    'pharmabi_supplier_categories_v1'
+                );
+
+            return raw
+                ? JSON.parse(raw)
+                : {};
+        } catch {
+            return {};
+        }
+    });
+
+    const [
+        supplierFilter,
+        setSupplierFilter
+    ] = useState('all');
+
+    const [
+        supplierExclusions,
+        setSupplierExclusions
+    ] = useState(() => {
+        try {
+            const raw =
+                localStorage.getItem(
+                    'pharmabi_supplier_exclusions_v1'
+                );
+
+            return raw
+                ? JSON.parse(raw)
+                : {};
+        } catch {
+            return {};
+        }
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(
+                'pharmabi_supplier_categories_v1',
+                JSON.stringify(
+                    supplierCategories
+                )
+            );
+        } catch {}
+    }, [supplierCategories]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(
+                'pharmabi_supplier_exclusions_v1',
+                JSON.stringify(
+                    supplierExclusions
+                )
+            );
+        } catch {}
+    }, [supplierExclusions]);
+
+
+            const suppliers =
+                Array.isArray(
+                    data?.suppliers
+                )
+                    ? data.suppliers
+                    : [];
+
+            const categoryFor =
+                row =>
+                    supplierCategories[
+                        String(
+                            row?.supplierId ??
+                            ''
+                        )
+                    ] ||
+                    'unclassified';
+
+            const supplierKey =
+                row =>
+                    String(
+                        row?.supplierId ??
+                        ''
+                    ).trim();
+
+            const isSupplierExcluded =
+                row =>
+                    supplierExclusions[
+                        supplierKey(row)
+                    ] === true;
+
+            const visibleSuppliers =
+                supplierFilter ===
+                'all'
+                    ? suppliers
+                    : suppliers.filter(
+                        row =>
+                            categoryFor(row) ===
+                            supplierFilter
+                    );
+
+            const includedVisibleSuppliers =
+                visibleSuppliers.filter(
+                    row =>
+                        !isSupplierExcluded(row)
+                );
+
+
+            const categoryTotals = {
+                medicine: {
+                    netPurchaseBeforeDiscount: 0,
+                    purchaseProfit: 0,
+                    suppliers: 0,
+                    netPurchaseCost: 0,
+                    netPacks: 0,
+                    netUnits: 0
+                },
+                accessories: {
+                    netPurchaseBeforeDiscount: 0,
+                    purchaseProfit: 0,
+                    suppliers: 0,
+                    netPurchaseCost: 0,
+                    netPacks: 0,
+                    netUnits: 0
+                },
+                unclassified: {
+                    netPurchaseBeforeDiscount: 0,
+                    purchaseProfit: 0,
+                    suppliers: 0,
+                    netPurchaseCost: 0,
+                    netPacks: 0,
+                    netUnits: 0
+                }
+            };
+
+            for (const row of suppliers.filter(row => !isSupplierExcluded(row))) {
+                const category =
+                    categoryFor(row);
+
+                const bucket =
+                    categoryTotals[
+                        category
+                    ] ||
+                    categoryTotals.unclassified;
+
+                bucket.suppliers++;
+
+                bucket.netPurchaseCost +=
+                    n(
+                        row?.netPurchaseCost
+                    );
+
+                bucket.netPacks +=
+                    n(
+                        row?.netPacks
+                    );
+
+                bucket.netUnits +=
+                    n(
+                        row?.netUnits
+                    );
+                bucket.netPurchaseBeforeDiscount +=
+                    n(
+                        row?.netPurchaseBeforeDiscount
+                    );
+
+                bucket.purchaseProfit +=
+                    n(
+                        row?.purchaseProfit
+                    );
+
+            }
+
+            const filteredTotal =
+                includedVisibleSuppliers.reduce(
+                    (acc, row) => ({
+                        invoices:
+                            acc.invoices +
+                            n(row?.invoices),
+
+                        lines:
+                            acc.lines +
+                            n(row?.lines),
+
+                        items:
+                            acc.items +
+                            n(row?.items),
+
+                        netPurchaseCost:
+                            acc.netPurchaseCost +
+                            n(
+                                row?.netPurchaseCost
+                            ),
+
+                        netPurchaseBeforeDiscount:
+                            acc.netPurchaseBeforeDiscount +
+                            n(
+                                row?.netPurchaseBeforeDiscount
+                            ),
+
+                        purchaseProfit:
+                            acc.purchaseProfit +
+                            n(
+                                row?.purchaseProfit
+                            ),
+
+                        netPacks:
+                            acc.netPacks +
+                            n(
+                                row?.netPacks
+                            ),
+
+                        netUnits:
+                            acc.netUnits +
+                            n(
+                                row?.netUnits
+                            )
+                    }),
+                    {
+                        invoices: 0,
+                        lines: 0,
+                        items: 0,
+                        netPurchaseCost: 0,
+                        netPurchaseBeforeDiscount: 0,
+                        purchaseProfit: 0,
+                        netPacks: 0,
+                        netUnits: 0
+                    }
+                );
+
+            const filteredMargin =
+                filteredTotal
+                    .netPurchaseBeforeDiscount > 0
+                    ? (
+                        filteredTotal.purchaseProfit /
+                        filteredTotal.netPurchaseBeforeDiscount
+                    ) * 100
+                    : 0;
+
+            const categoryLabel = category => {
+                if (
+                    category ===
+                    'medicine'
+                ) {
+                    return 'أدوية';
+                }
+
+                if (
+                    category ===
+                    'accessories'
+                ) {
+                    return 'إكسسوارات';
+                }
+
+                return 'غير مصنف';
+            };
+
+            const body = (
+                <>
+                    <div
+                        style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            marginBottom: 16
+                        }}
+                    >
+                        <strong>
+                            تصنيف الموردين
+                        </strong>
+
+                        <select
+                            value={
+                                supplierFilter
+                            }
+                            onChange={event =>
+                                setSupplierFilter(
+                                    event.target.value
+                                )
+                            }
+                            style={{
+                                padding:
+                                    '8px 12px',
+                                borderRadius: 10,
+                                border:
+                                    '1px solid rgba(127,127,127,.25)',
+                                background:
+                                    'transparent',
+                                fontFamily:
+                                    'inherit',
+                                fontWeight: 700
+                            }}
+                        >
+                            <option value="all">
+                                كل الموردين
+                            </option>
+                            <option value="medicine">
+                                أدوية
+                            </option>
+                            <option value="accessories">
+                                إكسسوارات
+                            </option>
+                            <option value="unclassified">
+                                غير مصنف
+                            </option>
+                        </select>
+                    </div>
+
+                    <div
+                        className="table-card"
+                        style={{
+                            marginBottom: 18
+                        }}
+                    >
+                        <div
+                            className="table-card-header"
+                        >
+                            <div>
+                                <strong>
+                                    ملخص المشتريات حسب نوع المورد
+                                </strong>
+                                <span>
+                                    أرقام مستقلة للأدوية والإكسسوارات
+                                </span>
+                            </div>
+                        </div>
+
+                        <div
+                            className="table-wrap"
+                        >
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>
+                                            الفئة
+                                        </th>
+
+                                        <th>
+                                            الموردون
+                                        </th>
+
+                                        <th>
+                                            قيمة المشتريات
+                                        </th>
+
+                                        <th>
+                                            العبوات
+                                        </th>
+
+                                        <th>
+                                            الوحدات
+                                        </th>
+
+                                        <th>
+                                            هامش الربحية
+                                        </th>
+                                    </tr>
+                                </thead>
+
+                                <tbody>
+                                    {[
+                                        'medicine',
+                                        'accessories',
+                                        'unclassified'
+                                    ].map(
+                                        category => {
+                                            const row =
+                                                categoryTotals[
+                                                    category
+                                                ];
+
+                                            const margin =
+                                                n(
+                                                    row?.netPurchaseBeforeDiscount
+                                                ) > 0
+                                                    ? (
+                                                        n(
+                                                            row?.purchaseProfit
+                                                        ) /
+                                                        n(
+                                                            row?.netPurchaseBeforeDiscount
+                                                        )
+                                                    ) * 100
+                                                    : 0;
+
+                                            return (
+                                                <tr
+                                                    key={
+                                                        category
+                                                    }
+                                                >
+                                                    <td>
+                                                        {
+                                                            categoryLabel(
+                                                                category
+                                                            )
+                                                        }
+                                                    </td>
+
+                                                    <td>
+                                                        {num(
+                                                            row?.suppliers
+                                                        )}
+                                                    </td>
+
+                                                    <td>
+                                                        {money(
+                                                            row?.netPurchaseCost
+                                                        )}
+                                                    </td>
+
+                                                    <td>
+                                                        {num(
+                                                            row?.netPacks
+                                                        )}
+                                                    </td>
+
+                                                    <td>
+                                                        {num(
+                                                            row?.netUnits
+                                                        )}
+                                                    </td>
+
+                                                    <td>
+                                                        {pct(
+                                                            margin
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        }
+                                    )}
+                                </tbody>
+                            </table>
+                    </div>
+
+                    <div
+                        className="kpi-grid"
+                        style={{
+                            marginBottom: 18
+                        }}
+                    >
+                        <div className="kpi-card">
+                            <span>
+                                عدد الموردين
+                            </span>
+                            <strong>
+                                {num(
+                                    includedVisibleSuppliers.length
+                                )}
+                            </strong>
+                        </div>
+
+                        <div className="kpi-card">
+                            <span>
+                                قيمة المشتريات
+                            </span>
+                            <strong>
+                                {money(
+                                    filteredTotal.netPurchaseCost
+                                )}
+                            </strong>
+                        </div>
+
+                        <div className="kpi-card">
+                            <span>
+                                العبوات
+                            </span>
+                            <strong>
+                                {num(
+                                    filteredTotal.netPacks
+                                )}
+                            </strong>
+                        </div>
+
+                        <div className="kpi-card">
+                            <span>
+                                الوحدات
+                            </span>
+                            <strong>
+                                {num(
+                                    filteredTotal.netUnits
+                                )}
+                            </strong>
+                        </div>
+
+                        <div className="kpi-card">
+                            <span>
+                                ربحية المشتريات
+                            </span>
+                            <strong>
+                                {money(
+                                    filteredTotal.purchaseProfit
+                                )}
+                            </strong>
+                        </div>
+
+                        <div className="kpi-card">
+                            <span>
+                                هامش الربحية
+                            </span>
+                            <strong>
+                                {pct(
+                                    filteredMargin
+                                )}
+                            </strong>
+                        </div>
+                    </div>
+
+                    <Table
+                        columns={[
+                            {
+                                key:
+                                    'supplierName',
+                                label:
+                                    'المورد'
+                            },
+                            {
+                                key:
+                                    'category',
+                                label:
+                                    'التصنيف',
+                                render:
+                                    row => (
+                                        <select
+                                            value={
+                                                categoryFor(
+                                                    row
+                                                )
+                                            }
+                                            onChange={event => {
+                                                const key =
+                                                    String(
+                                                        row?.supplierId ??
+                                                        ''
+                                                    );
+
+                                                setSupplierCategories(
+                                                    previous => ({
+                                                        ...previous,
+                                                        [key]:
+                                                            event.target.value
+                                                    })
+                                                );
+                                            }}
+                                            style={{
+                                                padding:
+                                                    '6px 10px',
+                                                borderRadius:
+                                                    8,
+                                                border:
+                                                    '1px solid rgba(127,127,127,.25)',
+                                                background:
+                                                    'transparent',
+                                                fontFamily:
+                                                    'inherit'
+                                            }}
+                                        >
+                                            <option value="medicine">
+                                                أدوية
+                                            </option>
+                                            <option value="accessories">
+                                                إكسسوارات
+                                            </option>
+                                            <option value="unclassified">
+                                                غير مصنف
+                                            </option>
+                                        </select>
+                                    )
+                            },
+                            {
+                                key:
+                                    'aggregationStatus',
+                                label:
+                                    'تجميع المشتريات',
+                                render:
+                                    row => {
+                                        const key =
+                                            supplierKey(row);
+
+                                        const excluded =
+                                            supplierExclusions[
+                                                key
+                                            ] === true;
+
+                                        return (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setSupplierExclusions(
+                                                        previous => {
+                                                            const next = {
+                                                                ...previous
+                                                            };
+
+                                                            if (
+                                                                next[key]
+                                                            ) {
+                                                                delete next[key];
+                                                            } else {
+                                                                next[key] = true;
+                                                            }
+
+                                                            return next;
+                                                        }
+                                                    );
+                                                }}
+                                                style={{
+                                                    ...buttonStyle,
+                                                    padding:
+                                                        '6px 10px',
+                                                    color:
+                                                        excluded
+                                                            ? '#166534'
+                                                            : '#991b1b'
+                                                }}
+                                            >
+                                                {
+                                                    excluded
+                                                        ? 'إعادة'
+                                                        : 'استبعاد'
+                                                }
+                                            </button>
+                                        );
+                                    }
+                            },
+                            {
+                                key:
+                                    'invoices',
+                                label:
+                                    'الفواتير',
+                                render:
+                                    row =>
+                                        num(
+                                            row.invoices
+                                        )
+                            },
+                            {
+                                key:
+                                    'lines',
+                                label:
+                                    'بنود الشراء',
+                                render:
+                                    row =>
+                                        num(
+                                            row.lines
+                                        )
+                            },
+                            {
+                                key:
+                                    'items',
+                                label:
+                                    'الأصناف',
+                                render:
+                                    row =>
+                                        num(
+                                            row.items
+                                        )
+                            },
+                            {
+                                key:
+                                    'netPurchaseCost',
+                                label:
+                                    'التكلفة الفعلية',
+                                render:
+                                    row =>
+                                        money(
+                                            row.netPurchaseCost
+                                        )
+                            },
+                            {
+                                key:
+                                    'netPacks',
+                                label:
+                                    'العبوات',
+                                render:
+                                    row =>
+                                        num(
+                                            row.netPacks
+                                        )
+                            },
+                            {
+                                key:
+                                    'netUnits',
+                                label:
+                                    'الوحدات',
+                                render:
+                                    row =>
+                                        num(
+                                            row.netUnits
+                                        )
+                            },
+                            {
+                                key:
+                                    'purchaseProfit',
+                                label:
+                                    'ربحية المشتريات',
+                                render:
+                                    row =>
+                                        money(
+                                            row.purchaseProfit
+                                        )
+                            },
+                            {
+                                key:
+                                    'purchaseMarginPercent',
+                                label:
+                                    'هامش الربحية',
+                                render:
+                                    row =>
+                                        pct(
+                                            row.purchaseMarginPercent
+                                        )
+                            }
+                        ]}
+                        rows={visibleSuppliers}
+                    />
+
+                    <div
+                        className="table-card"
+                        style={{
+                            marginTop: 18
+                        }}
+                    >
+                        <div
+                            className="table-card-header"
+                        >
+                            <div>
+                                <strong>
+                                    إجمالي الاختيار الحالي
+                                </strong>
+                                <span>
+                                    {supplierFilter === 'all'
+                                        ? 'كل الموردين'
+                                        : categoryLabel(
+                                            supplierFilter
+                                        )}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div
+                            className="table-wrap"
+                        >
+                            <table>
+                                <tbody>
+                                    <tr>
+                                        <td>
+                                            قيمة المشتريات
+                                        </td>
+                                        <td>
+                                            {money(
+                                                filteredTotal.netPurchaseCost
+                                            )}
+                                        </td>
+                                    </tr>
+
+                                    <tr>
+                                        <td>
+                                            ربحية المشتريات
+                                        </td>
+                                        <td>
+                                            {money(
+                                                filteredTotal.purchaseProfit
+                                            )}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </>
+            );
+
+
+    return body;
+}

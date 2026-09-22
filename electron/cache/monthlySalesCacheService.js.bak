@@ -1,0 +1,1031 @@
+import {
+    getPersistentCache,
+    setPersistentCache,
+    deletePersistentCache
+} from "./persistentCacheService.js";
+
+
+const CACHE_GROUP =
+    "sales-monthly";
+
+
+/*
+ * v2
+ *
+ * The sales rows now contain customerName.
+ *
+ * Changing the version makes the old v1 monthly cache
+ * invisible without forcing the application to delete
+ * or rebuild the entire historical cache at startup.
+ *
+ * Only months that are actually requested will be loaded
+ * again from SQL and then saved under v2.
+ */
+
+const CACHE_VERSION =
+    "sales-monthly-v2";
+
+
+const CACHE_TTL_MS =
+    7 *
+    24 *
+    60 *
+    60 *
+    1000;
+
+
+/*
+ * =========================================================
+ * BASIC HELPERS
+ * =========================================================
+ */
+
+function normalizeBranchId(
+    branchId
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    return id;
+
+}
+
+
+function normalizeMonth(
+    month
+) {
+
+    const text =
+        String(
+            month ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}$/.test(
+            text
+        )
+    ) {
+
+        throw new Error(
+            "Invalid month. Expected YYYY-MM"
+        );
+
+    }
+
+
+    const [
+        year,
+        monthNumber
+    ] =
+        text
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    if (
+        !Number.isInteger(
+            year
+        ) ||
+        !Number.isInteger(
+            monthNumber
+        ) ||
+        monthNumber < 1 ||
+        monthNumber > 12
+    ) {
+
+        throw new Error(
+            "Invalid month"
+        );
+
+    }
+
+
+    return text;
+
+}
+
+
+/*
+ * =========================================================
+ * CACHE KEY
+ * =========================================================
+ */
+
+function buildKey(
+    branchId,
+    month
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const normalizedMonth =
+        normalizeMonth(
+            month
+        );
+
+
+    return [
+
+        CACHE_VERSION,
+
+        id,
+
+        normalizedMonth
+
+    ].join(
+        "|"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * GET MONTH
+ * =========================================================
+ */
+
+export function getMonthlySalesCache(
+    {
+        branchId,
+        month
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const normalizedMonth =
+        normalizeMonth(
+            month
+        );
+
+
+    const key =
+        buildKey(
+
+            id,
+
+            normalizedMonth
+
+        );
+
+
+    const cached =
+        getPersistentCache({
+
+            cacheKey:
+                key
+
+        });
+
+
+    if (
+        !cached ||
+        !Array.isArray(
+            cached.data
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    return {
+
+        cacheKey:
+            key,
+
+        branchId:
+            id,
+
+        month:
+            normalizedMonth,
+
+        rows:
+            cached.data,
+
+        rowCount:
+            Number(
+                cached.rowCount
+            ) ||
+            cached.data.length,
+
+        createdAt:
+            cached.createdAt,
+
+        updatedAt:
+            cached.updatedAt,
+
+        expiresAt:
+            cached.expiresAt,
+
+        expired:
+            Boolean(
+                cached.expired
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SET MONTH
+ * =========================================================
+ */
+
+export function setMonthlySalesCache(
+    {
+        branchId,
+        month,
+        rows
+    }
+) {
+
+    if (
+        !Array.isArray(
+            rows
+        )
+    ) {
+
+        throw new Error(
+            "Monthly sales rows must be an array"
+        );
+
+    }
+
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const normalizedMonth =
+        normalizeMonth(
+            month
+        );
+
+
+    const key =
+        buildKey(
+
+            id,
+
+            normalizedMonth
+
+        );
+
+
+    const result =
+        setPersistentCache({
+
+            cacheKey:
+                key,
+
+            cacheGroup:
+                CACHE_GROUP,
+
+            data:
+                rows,
+
+            rowCount:
+                rows.length,
+
+            ttlMs:
+                CACHE_TTL_MS
+
+        });
+
+
+    return {
+
+        ...result,
+
+        branchId:
+            id,
+
+        month:
+            normalizedMonth
+
+    };
+
+}
+
+
+
+/*
+ * =========================================================
+ * CACHE COVERAGE
+ * =========================================================
+ *
+ * Reads the actual monthly cache and determines:
+ * - first real sales date
+ * - last real sales date
+ * - cached months
+ * - cached rows
+ *
+ * No SQL Server query is executed here.
+ * =========================================================
+ */
+
+export function getMonthlySalesCacheCoverage(
+    {
+        branchId,
+        startYear = 2000
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const today =
+        new Date();
+
+
+    const currentYear =
+        today.getUTCFullYear();
+
+
+    const currentMonth =
+        today.getUTCMonth() + 1;
+
+
+    let earliestDate =
+        null;
+
+    let latestDate =
+        null;
+
+    let cachedMonths =
+        0;
+
+    let cachedRows =
+        0;
+
+
+    for (
+        let year = Number(startYear);
+        year <= currentYear;
+        year += 1
+    ) {
+
+        const lastMonth =
+            year === currentYear
+                ? currentMonth
+                : 12;
+
+
+        for (
+            let month = 1;
+            month <= lastMonth;
+            month += 1
+        ) {
+
+            const normalizedMonth =
+                `${year}-${String(month).padStart(2, "0")}`;
+
+
+            const cached =
+                getMonthlySalesCache({
+
+                    branchId:
+                        id,
+
+                    month:
+                        normalizedMonth
+
+                });
+
+
+            if (
+                !cached ||
+                !Array.isArray(
+                    cached.rows
+                ) ||
+                cached.rows.length === 0
+            ) {
+
+                continue;
+
+            }
+
+
+            cachedMonths +=
+                1;
+
+
+            cachedRows +=
+                Number(
+                    cached.rowCount
+                ) ||
+                cached.rows.length;
+
+
+            /*
+             * salesService stores monthly rows sorted
+             * ascending by date.
+             *
+             * We inspect the first/last valid rows instead
+             * of scanning every historical row.
+             */
+
+            const firstRow =
+                cached.rows.find(
+                    row =>
+                        row?.date ||
+                        row?.ticketDate ||
+                        row?.ztime
+                );
+
+
+            const lastRow =
+                [...cached.rows]
+                    .reverse()
+                    .find(
+                        row =>
+                            row?.date ||
+                            row?.ticketDate ||
+                            row?.ztime
+                    );
+
+
+            const firstValue =
+                firstRow?.date ||
+                firstRow?.ticketDate ||
+                firstRow?.ztime ||
+                null;
+
+
+            const lastValue =
+                lastRow?.date ||
+                lastRow?.ticketDate ||
+                lastRow?.ztime ||
+                null;
+
+
+            if (
+                firstValue
+            ) {
+
+                const firstDate =
+                    new Date(
+                        firstValue
+                    );
+
+
+                if (
+                    !Number.isNaN(
+                        firstDate.getTime()
+                    )
+                ) {
+
+                    const iso =
+                        firstDate
+                            .toISOString()
+                            .slice(
+                                0,
+                                10
+                            );
+
+
+                    if (
+                        !earliestDate ||
+                        iso < earliestDate
+                    ) {
+
+                        earliestDate =
+                            iso;
+
+                    }
+
+                }
+
+            }
+
+
+            if (
+                lastValue
+            ) {
+
+                const lastDate =
+                    new Date(
+                        lastValue
+                    );
+
+
+                if (
+                    !Number.isNaN(
+                        lastDate.getTime()
+                    )
+                ) {
+
+                    const iso =
+                        lastDate
+                            .toISOString()
+                            .slice(
+                                0,
+                                10
+                            );
+
+
+                    if (
+                        !latestDate ||
+                        iso > latestDate
+                    ) {
+
+                        latestDate =
+                            iso;
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+    return {
+
+        branchId:
+            id,
+
+        earliestDate,
+
+        latestDate,
+
+        cachedMonths,
+
+        cachedRows,
+
+        hasData:
+            Boolean(
+                earliestDate ||
+                latestDate
+            )
+
+    };
+
+}
+
+/*
+ * =========================================================
+ * HAS MONTH
+ * =========================================================
+ */
+
+export function hasMonthlySalesCache(
+    {
+        branchId,
+        month
+    }
+) {
+
+    return Boolean(
+
+        getMonthlySalesCache({
+
+            branchId,
+
+            month
+
+        })
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DELETE MONTH
+ * =========================================================
+ */
+
+export function deleteMonthlySalesCache(
+    {
+        branchId,
+        month
+    }
+) {
+
+    const key =
+        buildKey(
+
+            branchId,
+
+            month
+
+        );
+
+
+    deletePersistentCache({
+
+        cacheKey:
+            key
+
+    });
+
+}
+
+
+/*
+ * =========================================================
+ * BUILD MONTH DATE RANGE
+ * =========================================================
+ */
+
+export function getMonthDateRange(
+    month
+) {
+
+    const normalizedMonth =
+        normalizeMonth(
+            month
+        );
+
+
+    const [
+        year,
+        monthNumber
+    ] =
+        normalizedMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const firstDay =
+        new Date(
+
+            Date.UTC(
+
+                year,
+
+                monthNumber - 1,
+
+                1
+
+            )
+
+        );
+
+
+    const nextMonth =
+        new Date(
+
+            Date.UTC(
+
+                year,
+
+                monthNumber,
+
+                1
+
+            )
+
+        );
+
+
+    const lastDay =
+        new Date(
+
+            nextMonth.getTime() -
+            1
+
+        );
+
+
+    return {
+
+        month:
+            normalizedMonth,
+
+        fromDate:
+
+            [
+
+                firstDay.getUTCFullYear(),
+
+                String(
+                    firstDay.getUTCMonth() + 1
+                ).padStart(
+                    2,
+                    "0"
+                ),
+
+                "01"
+
+            ].join(
+                "-"
+            ),
+
+        toDate:
+
+            [
+
+                lastDay.getUTCFullYear(),
+
+                String(
+                    lastDay.getUTCMonth() + 1
+                ).padStart(
+                    2,
+                    "0"
+                ),
+
+                String(
+                    lastDay.getUTCDate()
+                ).padStart(
+                    2,
+                    "0"
+                )
+
+            ].join(
+                "-"
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * PREVIOUS MONTH
+ * =========================================================
+ */
+
+export function getPreviousMonth(
+    month
+) {
+
+    const normalizedMonth =
+        normalizeMonth(
+            month
+        );
+
+
+    const [
+        year,
+        monthNumber
+    ] =
+        normalizedMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const date =
+        new Date(
+
+            Date.UTC(
+
+                year,
+
+                monthNumber - 2,
+
+                1
+
+            )
+
+        );
+
+
+    return [
+
+        date.getUTCFullYear(),
+
+        String(
+            date.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        )
+
+    ].join(
+        "-"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * MONTH LIST
+ * =========================================================
+ */
+
+export function buildMonthList(
+    {
+        endMonth,
+        months = 24
+    }
+) {
+
+    const normalizedEndMonth =
+        normalizeMonth(
+            endMonth
+        );
+
+
+    const requestedCount =
+        Number(
+            months
+        );
+
+
+    const normalizedCount =
+        Number.isFinite(
+            requestedCount
+        ) &&
+        requestedCount > 0
+
+            ? Math.min(
+
+                Math.floor(
+                    requestedCount
+                ),
+
+                60
+
+            )
+
+            : 24;
+
+
+    const [
+        endYear,
+        endMonthNumber
+    ] =
+        normalizedEndMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const result =
+        [];
+
+
+    for (
+
+        let index = 0;
+
+        index <
+        normalizedCount;
+
+        index += 1
+
+    ) {
+
+        const date =
+            new Date(
+
+                Date.UTC(
+
+                    endYear,
+
+                    (
+                        endMonthNumber -
+                        1
+                    ) -
+                    index,
+
+                    1
+
+                )
+
+            );
+
+
+        result.push(
+
+            [
+
+                date.getUTCFullYear(),
+
+                String(
+                    date.getUTCMonth() + 1
+                ).padStart(
+                    2,
+                    "0"
+                )
+
+            ].join(
+                "-"
+            )
+
+        );
+
+    }
+
+
+    return result;
+
+}
+
+
+/*
+ * =========================================================
+ * CONFIG
+ * =========================================================
+ */
+
+export const monthlySalesCacheConfig = {
+
+    cacheGroup:
+        CACHE_GROUP,
+
+    cacheVersion:
+        CACHE_VERSION,
+
+    ttlMs:
+        CACHE_TTL_MS,
+
+    ttlDays:
+
+        CACHE_TTL_MS /
+        (
+            24 *
+            60 *
+            60 *
+            1000
+        )
+
+};
+
+
+/*
+ * =========================================================
+ * EXPORT
+ * =========================================================
+ */
+
+export default {
+
+    getMonthlySalesCache,
+
+    setMonthlySalesCache,
+
+    hasMonthlySalesCache,
+
+    deleteMonthlySalesCache,
+
+    getMonthDateRange,
+
+    getPreviousMonth,
+
+    buildMonthList,
+
+    monthlySalesCacheConfig
+
+};

@@ -1,0 +1,748 @@
+﻿import {
+    app,
+    BrowserWindow,
+    Menu
+} from "electron";
+
+
+import path from "node:path";
+
+
+import {
+    fileURLToPath
+} from "node:url";
+
+
+import {
+    registerConnectionIpc
+} from "./ipc/connection.ipc.js";
+
+
+import {
+    registerSalesIpc
+} from "./ipc/sales.ipc.js";
+
+
+import {
+    registerGroupIpc
+} from "./ipc/group.ipc.js";
+
+
+import {
+    registerCustomersIpc
+} from "./ipc/customers.ipc.js";
+
+
+import {
+    registerDashboardIpc
+} from "./ipc/dashboard.ipc.js";
+
+
+import {
+    registerAnalyticsHubIpc
+} from "./ipc/analyticsHub.ipc.js";
+
+
+import {
+    getAllSavedConnections
+} from "./settings/connectionStore.js";
+
+
+import {
+    getBranchPool,
+    closeAllConnections
+} from "./connection/connectionManager.js";
+
+
+import {
+    startAllBranchesWarmup
+} from "./cache/cacheWarmupService.js";
+
+
+import {
+    preloadPersistentCache,
+    flushPersistentCache
+} from "./cache/persistentCacheService.js";
+
+
+import {
+    closeLocalSalesDatabase
+} from "./localdb/localSalesDb.js";
+
+
+const __filename =
+    fileURLToPath(
+        import.meta.url
+    );
+
+
+const __dirname =
+    path.dirname(
+        __filename
+    );
+
+
+let mainWindow =
+    null;
+
+
+const WARMUP_START_DELAY_AFTER_CONNECT_MS =
+    6000;
+
+
+const DEV_SERVER =
+    process.env.PHARMABI_DEV_SERVER === "1";
+
+
+const DEV_SERVER_URL =
+    "http://localhost:5173";
+
+
+function createWindow() {
+
+    mainWindow =
+        new BrowserWindow({
+
+            width:
+                1450,
+
+            height:
+                900,
+
+            minWidth:
+                1100,
+
+            minHeight:
+                700,
+
+            show:
+                false,
+
+            backgroundColor:
+                "#f5f7fb",
+
+            webPreferences: {
+
+                preload:
+                    path.join(
+                        __dirname,
+                        "preload.js"
+                    ),
+
+                contextIsolation:
+                    true,
+
+                nodeIntegration:
+                    false,
+
+                sandbox:
+                    false
+
+            }
+
+        });
+
+
+    mainWindow.once(
+
+        "ready-to-show",
+
+        () => {
+
+            mainWindow.show();
+
+        }
+
+    );
+
+
+    mainWindow.webContents.on(
+
+        "did-fail-load",
+
+        (
+            _event,
+            errorCode,
+            errorDescription,
+            validatedURL
+        ) => {
+
+            console.error(
+
+                "[Electron] Renderer failed to load:",
+
+                {
+
+                    errorCode,
+
+                    errorDescription,
+
+                    validatedURL
+
+                }
+
+            );
+
+        }
+
+    );
+
+
+    if (
+        DEV_SERVER
+    ) {
+
+        console.log(
+            `[Electron] Development renderer: ${DEV_SERVER_URL}`
+        );
+
+
+        mainWindow.loadURL(
+            DEV_SERVER_URL
+        );
+
+    }
+    else {
+
+        const productionPath =
+            path.join(
+                __dirname,
+                "../dist/index.html"
+            );
+
+
+        console.log(
+            `[Electron] Production renderer: ${productionPath}`
+        );
+
+
+        mainWindow.loadFile(
+            productionPath
+        );
+
+    }
+
+
+    mainWindow.on(
+
+        "closed",
+
+        () => {
+
+            mainWindow =
+                null;
+
+        }
+
+    );
+
+}
+
+
+async function autoConnectSavedBranches() {
+
+    let connections =
+        [];
+
+
+    try {
+
+        connections =
+            getAllSavedConnections();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[Electron] Failed to load saved connections:",
+
+            error
+
+        );
+
+
+        return {
+
+            success:
+                false,
+
+            connected:
+                0,
+
+            failed:
+                0
+
+        };
+
+    }
+
+
+    if (
+        !Array.isArray(
+            connections
+        ) ||
+        connections.length ===
+        0
+    ) {
+
+        console.log(
+
+            "[Electron] No saved branch connections."
+
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            connected:
+                0,
+
+            failed:
+                0
+
+        };
+
+    }
+
+
+    console.log(
+
+        `[Electron] Auto-connecting ${connections.length} saved branch(es)...`
+
+    );
+
+
+    let connected =
+        0;
+
+
+    let failed =
+        0;
+
+
+    for (
+        const connection
+        of connections
+    ) {
+
+        const branchId =
+            Number(
+                connection?.branchId
+            );
+
+
+        if (
+            !Number.isInteger(
+                branchId
+            ) ||
+            branchId <= 0
+        ) {
+
+            failed +=
+                1;
+
+
+            continue;
+
+        }
+
+
+        try {
+
+            const connectPromise =
+                getBranchPool(
+                    branchId,
+                    connection
+                );
+
+            const connectTimeout =
+                new Promise(
+                    (_, reject) => {
+                        setTimeout(
+                            () =>
+                                reject(
+                                    new Error(
+                                        `Auto-connect timeout after 15000ms for branch ${branchId}`
+                                    )
+                                ),
+                            15000
+                        );
+                    }
+                );
+
+            await Promise.race([
+                connectPromise,
+                connectTimeout
+            ]);
+
+
+            connected +=
+                1;
+
+
+            console.log(
+
+                `[Electron] Branch ${branchId} connected automatically.`
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            failed +=
+                1;
+
+
+            console.error(
+
+                `[Electron] Branch ${branchId} auto-connect failed:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+
+    console.log(
+
+        `[Electron] Auto-connect complete. connected=${connected} failed=${failed}`
+
+    );
+
+
+    return {
+
+        success:
+            failed === 0,
+
+        connected,
+
+        failed
+
+    };
+
+}
+
+
+function startBackgroundWarmup() {
+
+    console.log(
+
+        `[Electron] Warm-up will start ${WARMUP_START_DELAY_AFTER_CONNECT_MS}ms after auto-connect completes.`
+
+    );
+
+
+    setTimeout(
+
+        () => {
+
+            try {
+
+                const result =
+                    startAllBranchesWarmup({
+
+                        delayMs:
+                            750,
+
+                        maxRetries:
+                            2
+
+                    });
+
+
+                console.log(
+
+                    "[Electron] Full historical cache warm-up started:",
+
+                    result
+
+                );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+
+                    "[Electron] Cache warm-up startup failed:",
+
+                    error
+
+                );
+
+            }
+
+        },
+
+        WARMUP_START_DELAY_AFTER_CONNECT_MS
+
+    );
+
+}
+
+
+app.whenReady()
+    .then(
+        async () => {
+
+            Menu.setApplicationMenu(null);
+
+
+            try {
+
+                const cacheState =
+                    preloadPersistentCache();
+
+
+                console.log(
+
+                    "[Electron] Persistent cache preloaded:",
+
+                    cacheState
+
+                );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+
+                    "[Electron] Persistent cache preload failed:",
+
+                    error
+
+                );
+
+            }
+
+
+            registerConnectionIpc();
+
+            registerSalesIpc();
+
+            registerGroupIpc();
+
+            registerCustomersIpc();
+
+            registerDashboardIpc();
+
+            registerAnalyticsHubIpc();
+
+
+            console.log(
+                "[Electron] IPC handlers registered."
+            );
+
+
+            createWindow();
+
+
+            setTimeout(
+
+                async () => {
+
+                    try {
+
+                        const connectionResult =
+                            await autoConnectSavedBranches();
+
+
+                        console.log(
+
+                            "[Electron] Auto-connect result:",
+
+                            connectionResult
+
+                        );
+
+
+                        startBackgroundWarmup();
+
+                    }
+                    catch (
+                        error
+                    ) {
+
+                        console.error(
+
+                            "[Electron] Unexpected auto-connect failure:",
+
+                            error
+
+                        );
+
+
+                        startBackgroundWarmup();
+
+                    }
+
+                },
+
+                0
+
+            );
+
+
+            app.on(
+
+                "activate",
+
+                () => {
+
+                    if (
+
+                        BrowserWindow
+                            .getAllWindows()
+                            .length ===
+                        0
+
+                    ) {
+
+                        createWindow();
+
+                    }
+
+                }
+
+            );
+
+        }
+
+    )
+    .catch(
+
+        error => {
+
+            console.error(
+
+                "[Electron] Startup failed:",
+
+                error
+
+            );
+
+
+            app.quit();
+
+        }
+
+    );
+
+
+app.on(
+
+    "before-quit",
+
+    async () => {
+
+        try {
+
+            await flushPersistentCache();
+
+
+            console.log(
+
+                "[Electron] Persistent cache flushed."
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Persistent cache flush failed:",
+
+                error
+
+            );
+
+        }
+
+
+        try {
+
+            closeLocalSalesDatabase();
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Local SQLite cleanup failed:",
+
+                error
+
+            );
+
+        }
+
+
+        try {
+
+            await closeAllConnections();
+
+
+            console.log(
+
+                "[Electron] SQL connections closed."
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Connection cleanup failed:",
+
+                error
+
+            );
+
+        }
+
+    }
+
+);
+
+
+app.on(
+
+    "window-all-closed",
+
+    () => {
+
+        if (
+            process.platform !==
+            "darwin"
+        ) {
+
+            app.quit();
+
+        }
+
+    }
+
+);

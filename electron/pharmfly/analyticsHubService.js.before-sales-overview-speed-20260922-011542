@@ -1,0 +1,3213 @@
+import { getBranchPool } from '../connection/connectionManager.js';
+import { getSales, getSalesSummary, getSalesByDay } from './sales/salesService.js';
+import { getDeliverySummary } from './sales/deliveryAnalyticsService.js';
+import { getSalesPerformance } from './sales/salesPerformanceService.js';
+import { getTopProducts } from './products/topProductsService.js';
+import { getProductProfitability } from './products/productProfitabilityService.js';
+import { getProductMixAnalytics } from './products/productMixService.js';
+import { getCustomerRfm } from './customers/customerRfmService.js';
+import { getCustomerIntelligence } from './customers/customerIntelligenceService.js';
+import { getCustomerRetention } from './customers/customerRetentionService.js';
+import { getCustomerInactivity } from './customers/customerInactivityService.js';
+import { getCustomerClv } from './customers/customerClvService.js';
+import { getCustomerCohort } from './customers/customerCohortService.js';
+import { getGroupSalesOverview } from './group/groupAnalyticsService.js';
+import { getAllSavedConnections } from '../settings/connectionStore.js';
+
+function n(v) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function r(v, d = 2) {
+  return Number(n(v).toFixed(d));
+}
+
+function id(v) {
+  const x = Number(v);
+
+  if (!Number.isInteger(x) || x <= 0) {
+    throw new Error('Invalid branchId');
+  }
+
+  return x;
+}
+
+function daysBetween(a, b) {
+  const x = new Date(`${a}T00:00:00Z`);
+  const y = new Date(`${b}T00:00:00Z`);
+
+  return Math.max(
+    1,
+    Math.round((y - x) / 86400000) + 1
+  );
+}
+
+function pct(a, b) {
+  return n(b) === 0
+    ? (n(a) === 0 ? 0 : null)
+    : r(
+        ((n(a) - n(b)) / Math.abs(n(b))) * 100,
+        1
+      );
+}
+
+async function branchContext(branchId, connection) {
+  const branch = id(branchId);
+  const pool = await getBranchPool(branch, connection);
+
+  return {
+    branchId: branch,
+    pool
+  };
+}
+
+async function aggregateStaff({
+  branchId,
+  fromDate,
+  toDate,
+  connection
+}) {
+  const rows = await getSales({
+    branchId,
+    fromDate,
+    toDate,
+    connection
+  });
+
+  const map = new Map();
+
+  for (const row of rows) {
+    const key =
+      row.salesRepId ||
+      'UNASSIGNED';
+
+    if (!map.has(key)) {
+      map.set(key, {
+        sellerId: key,
+        sales: 0,
+        tickets: new Set(),
+        units: 0
+      });
+    }
+
+    const b = map.get(key);
+
+    if (row.transactionType === 'RETURN') {
+      b.sales -=
+        Math.abs(
+          n(row.netLineValue)
+        );
+    } else {
+      b.sales +=
+        n(row.netLineValue);
+    }
+
+    b.units +=
+      row.transactionType === 'RETURN'
+        ? -Math.abs(
+            n(row.baseUnits)
+          )
+        : n(row.baseUnits);
+
+    b.tickets.add(
+      row.ticketId
+    );
+  }
+
+  const result =
+    [...map.values()]
+      .map(x => ({
+        sellerId:
+          String(
+            x.sellerId
+          ),
+
+        sales:
+          r(x.sales),
+
+        invoices:
+          x.tickets.size,
+
+        averageInvoice:
+          r(
+            x.tickets.size
+              ? x.sales /
+                x.tickets.size
+              : 0
+          ),
+
+        units:
+          r(x.units)
+      }))
+      .sort(
+        (a, b) =>
+          b.sales -
+          a.sales
+      );
+
+  return {
+    success: true,
+    branchId:
+      id(branchId),
+    fromDate,
+    toDate,
+    sellers:
+      result,
+    totals: {
+      sales:
+        r(
+          result.reduce(
+            (s, x) =>
+              s + x.sales,
+            0
+          )
+        ),
+
+      invoices:
+        result.reduce(
+          (s, x) =>
+            s + x.invoices,
+          0
+        )
+    }
+  };
+}
+
+/*
+ * =========================================================
+ * PURCHASE ANALYTICS
+ *
+ * Purchase profit:
+ *
+ * Net purchase before discount
+ *   = gross purchases before discount
+ *     - gross purchase returns before discount
+ *
+ * Net actual purchase cost
+ *   = PurchaseInvoices.total for purchases
+ *     - purchase return totals
+ *
+ * Purchase profit
+ *   = net purchase before discount
+ *     - net actual purchase cost
+ *
+ * CostPrice is NOT used here.
+ * =========================================================
+ */
+
+async function aggregatePurchases({
+  branchId,
+  fromDate,
+  toDate,
+  connection
+}) {
+  const { pool } =
+    await branchContext(
+      branchId,
+      connection
+    );
+
+  const rangeTo =
+    new Date(
+      `${toDate}T00:00:00Z`
+    );
+
+  rangeTo.setUTCDate(
+    rangeTo.getUTCDate() + 1
+  );
+
+  const toEx =
+    rangeTo
+      .toISOString()
+      .slice(0, 10);
+
+  const result =
+    await pool
+      .request()
+      .input(
+        'fromDate',
+        `${fromDate} 00:00:00`
+      )
+      .input(
+        'toDateExclusive',
+        `${toEx} 00:00:00`
+      )
+      .query(`
+        SET NOCOUNT ON;
+
+        WITH InvoiceScope AS (
+          SELECT
+            pi.ID,
+            pi.vendor_id,
+            pi.SalesReturn,
+            pi.total,
+            COALESCE(
+              pi.ztime,
+              pi.inv_date
+            ) AS PurchaseDate
+          FROM PurchaseInvoices pi
+          WHERE
+            COALESCE(
+              pi.ztime,
+              pi.inv_date
+            ) >= @fromDate
+            AND
+            COALESCE(
+              pi.ztime,
+              pi.inv_date
+            ) < @toDateExclusive
+        ),
+
+        LineScope AS (
+          SELECT
+            p.ID,
+            p.inv_id,
+            p.item_id,
+            p.packs,
+            p.units,
+            p.sprice,
+            i.Parts,
+            s.SalesReturn
+          FROM PurchaseItems p
+          INNER JOIN InvoiceScope s
+            ON s.ID = p.inv_id
+          LEFT JOIN Items i
+            ON i.ID = p.item_id
+        )
+
+        SELECT
+
+          (
+            SELECT COUNT(*)
+            FROM InvoiceScope
+          ) AS invoices,
+
+          (
+            SELECT COUNT(*)
+            FROM InvoiceScope
+            WHERE SalesReturn = 1
+          ) AS purchaseInvoices,
+
+          (
+            SELECT COUNT(*)
+            FROM InvoiceScope
+            WHERE SalesReturn = 2
+          ) AS returnInvoices,
+
+          (
+            SELECT COUNT(*)
+            FROM LineScope
+          ) AS lines,
+
+          (
+            SELECT COUNT(DISTINCT item_id)
+            FROM LineScope
+            WHERE
+              item_id IS NOT NULL
+              AND item_id <> 0
+          ) AS items,
+
+          (
+            SELECT COUNT(DISTINCT vendor_id)
+            FROM InvoiceScope
+            WHERE vendor_id IS NOT NULL
+          ) AS suppliers,
+
+          (
+            SELECT COALESCE(
+              SUM(
+                CASE
+                  WHEN SalesReturn = 1
+                  THEN COALESCE(total, 0)
+                  ELSE 0
+                END
+              ),
+              0
+            )
+            FROM InvoiceScope
+          ) AS purchaseTotal,
+
+          (
+            SELECT COALESCE(
+              SUM(
+                CASE
+                  WHEN SalesReturn = 2
+                  THEN ABS(
+                    COALESCE(total, 0)
+                  )
+                  ELSE 0
+                END
+              ),
+              0
+            )
+            FROM InvoiceScope
+          ) AS returnTotal,
+
+          (
+            SELECT COALESCE(
+              SUM(
+                CASE
+                  WHEN
+                    SalesReturn = 1
+                    AND item_id <> 0
+                  THEN
+                    COALESCE(
+                      sprice,
+                      0
+                    )
+                    *
+                    (
+                      COALESCE(
+                        packs,
+                        0
+                      )
+                      +
+                      (
+                        COALESCE(
+                          units,
+                          0
+                        )
+                        /
+                        CASE
+                          WHEN
+                            COALESCE(
+                              Parts,
+                              0
+                            ) > 0
+                          THEN Parts
+                          ELSE 1
+                        END
+                      )
+                    )
+                  ELSE 0
+                END
+              ),
+              0
+            )
+            FROM LineScope
+          ) AS grossPurchaseBeforeDiscount,
+
+          (
+            SELECT COALESCE(
+              SUM(
+                CASE
+                  WHEN
+                    SalesReturn = 2
+                    AND item_id <> 0
+                  THEN
+                    COALESCE(
+                      sprice,
+                      0
+                    )
+                    *
+                    (
+                      COALESCE(
+                        packs,
+                        0
+                      )
+                      +
+                      (
+                        COALESCE(
+                          units,
+                          0
+                        )
+                        /
+                        CASE
+                          WHEN
+                            COALESCE(
+                              Parts,
+                              0
+                            ) > 0
+                          THEN Parts
+                          ELSE 1
+                        END
+                      )
+                    )
+                  ELSE 0
+                END
+              ),
+              0
+            )
+            FROM LineScope
+          ) AS grossReturnsBeforeDiscount;
+      `);
+
+  const x =
+    result.recordset?.[0] ||
+    {};
+
+  const invoices =
+    n(x.invoices);
+
+  const purchaseInvoices =
+    n(x.purchaseInvoices);
+
+  const returnInvoices =
+    n(x.returnInvoices);
+
+  const lines =
+    n(x.lines);
+
+  const items =
+    n(x.items);
+
+  const suppliers =
+    n(x.suppliers);
+
+  const purchaseTotal =
+    n(x.purchaseTotal);
+
+  const returnTotal =
+    n(x.returnTotal);
+
+  const grossPurchaseBeforeDiscount =
+    n(
+      x.grossPurchaseBeforeDiscount
+    );
+
+  const grossReturnsBeforeDiscount =
+    n(
+      x.grossReturnsBeforeDiscount
+    );
+
+  const netPurchaseBeforeDiscount =
+    grossPurchaseBeforeDiscount -
+    grossReturnsBeforeDiscount;
+
+  const netPurchaseCost =
+    purchaseTotal -
+    returnTotal;
+
+  const purchaseProfit =
+    netPurchaseBeforeDiscount -
+    netPurchaseCost;
+
+  const purchaseMarginPercent =
+    netPurchaseBeforeDiscount !== 0
+      ? (
+          purchaseProfit /
+          netPurchaseBeforeDiscount
+        ) *
+        100
+      : 0;
+
+  const salesSummary =
+    await getSalesSummary({
+      branchId,
+      fromDate,
+      toDate,
+      connection
+    });
+
+  return {
+    success: true,
+
+    branchId:
+      id(branchId),
+
+    fromDate,
+    toDate,
+
+    invoices,
+    purchaseInvoices,
+    returnInvoices,
+
+    lines,
+    items,
+    suppliers,
+
+    /*
+     * Backward compatibility
+     * with existing UI.
+     */
+    purchaseValue:
+      r(netPurchaseCost),
+
+    purchaseTotal:
+      r(purchaseTotal),
+
+    returnTotal:
+      r(returnTotal),
+
+    netPurchaseCost:
+      r(netPurchaseCost),
+
+    grossPurchaseBeforeDiscount:
+      r(
+        grossPurchaseBeforeDiscount
+      ),
+
+    grossReturnsBeforeDiscount:
+      r(
+        grossReturnsBeforeDiscount
+      ),
+
+    netPurchaseBeforeDiscount:
+      r(
+        netPurchaseBeforeDiscount
+      ),
+
+    purchaseProfit:
+      r(purchaseProfit),
+
+    purchaseMarginPercent:
+      r(
+        purchaseMarginPercent,
+        2
+      ),
+
+    salesTotal:
+      r(
+        salesSummary?.netSales
+      ),
+
+    salesProfit:
+      r(
+        salesSummary?.netProfit
+      ),
+
+    salesMarginPercent:
+      r(
+        salesSummary?.grossMargin,
+        2
+      )
+  };
+}
+
+/*
+ * =========================================================
+ * SUPPLIER PURCHASE ANALYTICS
+ *
+ * Every supplier gets:
+ *
+ * - invoices
+ * - lines
+ * - items
+ * - purchaseTotal
+ * - returnTotal
+ * - netPurchaseCost
+ * - grossPurchaseBeforeDiscount
+ * - grossReturnsBeforeDiscount
+ * - netPurchaseBeforeDiscount
+ * - purchaseProfit
+ * - purchaseMarginPercent
+ *
+ * Same exact purchase-profit formula used above.
+ * =========================================================
+ */
+
+async function aggregateSuppliers({
+  branchId,
+  fromDate,
+  toDate,
+  connection
+}) {
+  const { pool } =
+    await branchContext(
+      branchId,
+      connection
+    );
+
+  const next =
+    new Date(
+      `${toDate}T00:00:00Z`
+    );
+
+  next.setUTCDate(
+    next.getUTCDate() + 1
+  );
+
+  const toEx =
+    next
+      .toISOString()
+      .slice(0, 10);
+
+  const result =
+    await pool
+      .request()
+      .input(
+        'fromDate',
+        `${fromDate} 00:00:00`
+      )
+      .input(
+        'toDateExclusive',
+        `${toEx} 00:00:00`
+      )
+      .query(`
+        SET NOCOUNT ON;
+
+        WITH InvoiceScope AS (
+          SELECT
+            pi.ID,
+            pi.vendor_id,
+            pi.SalesReturn,
+
+            COALESCE(
+              pi.total,
+              0
+            ) AS total
+
+          FROM PurchaseInvoices pi
+
+          WHERE
+            COALESCE(
+              pi.ztime,
+              pi.inv_date
+            ) >= @fromDate
+
+            AND
+
+            COALESCE(
+              pi.ztime,
+              pi.inv_date
+            ) < @toDateExclusive
+        ),
+
+        SupplierInvoiceTotals AS (
+          SELECT
+            vendor_id,
+
+            COUNT(*) AS invoices,
+
+            SUM(
+              CASE
+                WHEN SalesReturn = 1
+                THEN total
+                ELSE 0
+              END
+            ) AS purchaseTotal,
+
+            SUM(
+              CASE
+                WHEN SalesReturn = 2
+                THEN ABS(total)
+                ELSE 0
+              END
+            ) AS returnTotal
+
+          FROM InvoiceScope
+
+          GROUP BY
+            vendor_id
+        ),
+
+        SupplierLineTotals AS (
+          SELECT
+            s.vendor_id,
+
+            COUNT(
+              p.ID
+            ) AS lines,
+
+            COUNT(
+              DISTINCT
+              CASE
+                WHEN
+                  p.item_id IS NOT NULL
+                  AND
+                  p.item_id <> 0
+                THEN p.item_id
+              END
+            ) AS items,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 1
+                THEN
+                  ABS(
+                    COALESCE(
+                      p.packs,
+                      0
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS purchasePacks,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 2
+                THEN
+                  ABS(
+                    COALESCE(
+                      p.packs,
+                      0
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS returnPacks,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 1
+                THEN
+                  ABS(
+                    COALESCE(
+                      p.units,
+                      0
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS purchaseUnits,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 2
+                THEN
+                  ABS(
+                    COALESCE(
+                      p.units,
+                      0
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS returnUnits,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 1
+                  AND
+                  p.item_id <> 0
+                THEN
+                  COALESCE(
+                    p.sprice,
+                    0
+                  )
+                  *
+                  (
+                    COALESCE(
+                      p.packs,
+                      0
+                    )
+                    +
+                    (
+                      COALESCE(
+                        p.units,
+                        0
+                      )
+                      /
+                      CASE
+                        WHEN
+                          COALESCE(
+                            i.Parts,
+                            0
+                          ) > 0
+                        THEN i.Parts
+                        ELSE 1
+                      END
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS grossPurchaseBeforeDiscount,
+
+            SUM(
+              CASE
+                WHEN
+                  s.SalesReturn = 2
+                  AND
+                  p.item_id <> 0
+                THEN
+                  COALESCE(
+                    p.sprice,
+                    0
+                  )
+                  *
+                  (
+                    COALESCE(
+                      p.packs,
+                      0
+                    )
+                    +
+                    (
+                      COALESCE(
+                        p.units,
+                        0
+                      )
+                      /
+                      CASE
+                        WHEN
+                          COALESCE(
+                            i.Parts,
+                            0
+                          ) > 0
+                        THEN i.Parts
+                        ELSE 1
+                      END
+                    )
+                  )
+                ELSE 0
+              END
+            ) AS grossReturnsBeforeDiscount
+
+          FROM InvoiceScope s
+
+          INNER JOIN PurchaseItems p
+            ON p.inv_id = s.ID
+
+          LEFT JOIN Items i
+            ON i.ID = p.item_id
+
+          GROUP BY
+            s.vendor_id
+        )
+
+        SELECT TOP 100
+
+          COALESCE(
+            NULLIF(
+              LTRIM(
+                RTRIM(
+                  c.Name
+                )
+              ),
+              ''
+            ),
+            CONVERT(
+              varchar(64),
+              i.vendor_id
+            ),
+            'UNASSIGNED'
+          ) AS supplierName,
+
+          COALESCE(
+            CONVERT(
+              varchar(64),
+              i.vendor_id
+            ),
+            'UNASSIGNED'
+          ) AS supplierId,
+
+          COALESCE(
+            i.invoices,
+            0
+          ) AS invoices,
+
+          COALESCE(
+            l.lines,
+            0
+          ) AS lines,
+
+          COALESCE(
+            l.items,
+            0
+          ) AS items,
+
+          COALESCE(
+            i.purchaseTotal,
+            0
+          ) AS purchaseTotal,
+
+          COALESCE(
+            i.returnTotal,
+            0
+          ) AS returnTotal,
+
+          (
+            COALESCE(
+              i.purchaseTotal,
+              0
+            )
+            -
+            COALESCE(
+              i.returnTotal,
+              0
+            )
+          ) AS netPurchaseCost,
+
+          COALESCE(
+            l.purchasePacks,
+            0
+          ) AS purchasePacks,
+
+          COALESCE(
+            l.returnPacks,
+            0
+          ) AS returnPacks,
+
+          (
+            COALESCE(
+              l.purchasePacks,
+              0
+            )
+            -
+            COALESCE(
+              l.returnPacks,
+              0
+            )
+          ) AS netPacks,
+
+          COALESCE(
+            l.purchaseUnits,
+            0
+          ) AS purchaseUnits,
+
+          COALESCE(
+            l.returnUnits,
+            0
+          ) AS returnUnits,
+
+          (
+            COALESCE(
+              l.purchaseUnits,
+              0
+            )
+            -
+            COALESCE(
+              l.returnUnits,
+              0
+            )
+          ) AS netUnits,
+
+          COALESCE(
+            l.grossPurchaseBeforeDiscount,
+            0
+          ) AS grossPurchaseBeforeDiscount,
+
+          COALESCE(
+            l.grossReturnsBeforeDiscount,
+            0
+          ) AS grossReturnsBeforeDiscount,
+
+          (
+            COALESCE(
+              l.grossPurchaseBeforeDiscount,
+              0
+            )
+            -
+            COALESCE(
+              l.grossReturnsBeforeDiscount,
+              0
+            )
+          ) AS netPurchaseBeforeDiscount,
+
+          (
+            (
+              COALESCE(
+                l.grossPurchaseBeforeDiscount,
+                0
+              )
+              -
+              COALESCE(
+                l.grossReturnsBeforeDiscount,
+                0
+              )
+            )
+            -
+            (
+              COALESCE(
+                i.purchaseTotal,
+                0
+              )
+              -
+              COALESCE(
+                i.returnTotal,
+                0
+              )
+            )
+          ) AS purchaseProfit
+
+        FROM SupplierInvoiceTotals i
+
+        LEFT JOIN Cards c
+          ON c.ID = i.vendor_id
+
+        LEFT JOIN SupplierLineTotals l
+          ON
+            (
+              l.vendor_id =
+                i.vendor_id
+
+              OR
+
+              (
+                l.vendor_id IS NULL
+                AND
+                i.vendor_id IS NULL
+              )
+            )
+
+        ORDER BY
+          purchaseProfit DESC;
+      `);
+
+  return {
+    success: true,
+
+    branchId:
+      id(branchId),
+
+    fromDate,
+
+    toDate,
+
+    suppliers:
+      (
+        result.recordset ||
+        []
+      ).map(x => {
+
+        const netPurchaseBeforeDiscount =
+          n(
+            x.netPurchaseBeforeDiscount
+          );
+
+        const purchaseProfit =
+          n(
+            x.purchaseProfit
+          );
+
+        return {
+          supplierId:
+            String(
+              x.supplierId
+            ),
+
+          supplierName:
+            String(
+              x.supplierName ||
+              x.supplierId ||
+              'UNASSIGNED'
+            ),
+
+          invoices:
+            n(x.invoices),
+
+          lines:
+            n(x.lines),
+
+          items:
+            n(x.items),
+
+          purchaseTotal:
+            r(
+              x.purchaseTotal
+            ),
+
+          returnTotal:
+            r(
+              x.returnTotal
+            ),
+
+          netPurchaseCost:
+            r(
+              x.netPurchaseCost
+            ),
+
+          purchasePacks:
+            r(
+              x.purchasePacks
+            ),
+
+          returnPacks:
+            r(
+              x.returnPacks
+            ),
+
+          netPacks:
+            r(
+              x.netPacks
+            ),
+
+          purchaseUnits:
+            r(
+              x.purchaseUnits
+            ),
+
+          returnUnits:
+            r(
+              x.returnUnits
+            ),
+
+          netUnits:
+            r(
+              x.netUnits
+            ),
+
+          grossPurchaseBeforeDiscount:
+            r(
+              x.grossPurchaseBeforeDiscount
+            ),
+
+          grossReturnsBeforeDiscount:
+            r(
+              x.grossReturnsBeforeDiscount
+            ),
+
+          netPurchaseBeforeDiscount:
+            r(
+              netPurchaseBeforeDiscount
+            ),
+
+          purchaseProfit:
+            r(
+              purchaseProfit
+            ),
+
+          purchaseMarginPercent:
+            netPurchaseBeforeDiscount !== 0
+              ? r(
+                  (
+                    purchaseProfit /
+                    netPurchaseBeforeDiscount
+                  ) * 100
+                )
+              : 0,
+
+          purchaseValue:
+            r(
+              x.netPurchaseCost
+            )
+        };
+      })
+  };
+}
+async function aggregateSuppliersAllBranches({
+  fromDate,
+  toDate
+}) {
+  const connections =
+    getAllSavedConnections()
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(a.branchId || 0) -
+          Number(b.branchId || 0)
+      );
+
+  const supplierMap =
+    new Map();
+
+  for (const branch of connections) {
+
+    const result =
+      await aggregateSuppliers({
+        branchId:
+          branch.branchId,
+
+        fromDate,
+
+        toDate,
+
+        connection:
+          branch
+      });
+
+    const rows =
+      Array.isArray(
+        result?.suppliers
+      )
+        ? result.suppliers
+        : [];
+
+    for (const row of rows) {
+
+      const supplierName =
+        String(
+          row?.supplierName ??
+          row?.supplierId ??
+          ''
+        ).trim();
+
+      if (!supplierName) {
+        continue;
+      }
+
+      const key =
+        supplierName.toLocaleLowerCase(
+          'ar-EG'
+        );
+
+      if (!supplierMap.has(key)) {
+
+        supplierMap.set(
+          key,
+          {
+            supplierId:
+              `GROUP:${key}`,
+
+            supplierName,
+
+            invoices: 0,
+            lines: 0,
+            items: 0,
+
+            purchaseTotal: 0,
+            returnTotal: 0,
+            netPurchaseCost: 0,
+
+            purchasePacks: 0,
+            returnPacks: 0,
+            netPacks: 0,
+
+            purchaseUnits: 0,
+            returnUnits: 0,
+            netUnits: 0,
+
+            grossPurchaseBeforeDiscount: 0,
+            grossReturnsBeforeDiscount: 0,
+
+            netPurchaseBeforeDiscount: 0,
+            purchaseProfit: 0
+          }
+        );
+
+      }
+
+      const target =
+        supplierMap.get(key);
+
+      target.invoices +=
+        n(row?.invoices);
+
+      target.lines +=
+        n(row?.lines);
+
+      target.items +=
+        n(row?.items);
+
+      target.purchaseTotal +=
+        n(row?.purchaseTotal);
+
+      target.returnTotal +=
+        n(row?.returnTotal);
+
+      target.netPurchaseCost +=
+        n(row?.netPurchaseCost);
+
+      target.purchasePacks +=
+        n(row?.purchasePacks);
+
+      target.returnPacks +=
+        n(row?.returnPacks);
+
+      target.netPacks +=
+        n(row?.netPacks);
+
+      target.purchaseUnits +=
+        n(row?.purchaseUnits);
+
+      target.returnUnits +=
+        n(row?.returnUnits);
+
+      target.netUnits +=
+        n(row?.netUnits);
+
+      target.grossPurchaseBeforeDiscount +=
+        n(
+          row?.grossPurchaseBeforeDiscount
+        );
+
+      target.grossReturnsBeforeDiscount +=
+        n(
+          row?.grossReturnsBeforeDiscount
+        );
+
+      target.netPurchaseBeforeDiscount +=
+        n(
+          row?.netPurchaseBeforeDiscount
+        );
+
+      target.purchaseProfit +=
+        n(
+          row?.purchaseProfit
+        );
+    }
+  }
+
+  const suppliers =
+    Array.from(
+      supplierMap.values()
+    )
+      .map(row => ({
+
+        ...row,
+
+        purchaseTotal:
+          r(
+            row.purchaseTotal
+          ),
+
+        returnTotal:
+          r(
+            row.returnTotal
+          ),
+
+        netPurchaseCost:
+          r(
+            row.netPurchaseCost
+          ),
+
+        purchasePacks:
+          r(
+            row.purchasePacks
+          ),
+
+        returnPacks:
+          r(
+            row.returnPacks
+          ),
+
+        netPacks:
+          r(
+            row.netPacks
+          ),
+
+        purchaseUnits:
+          r(
+            row.purchaseUnits
+          ),
+
+        returnUnits:
+          r(
+            row.returnUnits
+          ),
+
+        netUnits:
+          r(
+            row.netUnits
+          ),
+
+        grossPurchaseBeforeDiscount:
+          r(
+            row.grossPurchaseBeforeDiscount
+          ),
+
+        grossReturnsBeforeDiscount:
+          r(
+            row.grossReturnsBeforeDiscount
+          ),
+
+        netPurchaseBeforeDiscount:
+          r(
+            row.netPurchaseBeforeDiscount
+          ),
+
+        purchaseProfit:
+          r(
+            row.purchaseProfit
+          ),
+
+        purchaseMarginPercent:
+          row.netPurchaseBeforeDiscount !== 0
+            ? r(
+                (
+                  row.purchaseProfit /
+                  row.netPurchaseBeforeDiscount
+                ) * 100,
+                2
+              )
+            : 0,
+
+        purchaseValue:
+          r(
+            row.netPurchaseCost
+          )
+      }))
+      .sort(
+        (a, b) =>
+          b.purchaseProfit -
+          a.purchaseProfit
+      );
+
+  const total =
+    suppliers.reduce(
+      (acc, row) => ({
+
+        invoices:
+          acc.invoices +
+          n(row.invoices),
+
+        lines:
+          acc.lines +
+          n(row.lines),
+
+        items:
+          acc.items +
+          n(row.items),
+
+        purchaseTotal:
+          acc.purchaseTotal +
+          n(row.purchaseTotal),
+
+        returnTotal:
+          acc.returnTotal +
+          n(row.returnTotal),
+
+        netPurchaseCost:
+          acc.netPurchaseCost +
+          n(row.netPurchaseCost),
+
+        purchasePacks:
+          acc.purchasePacks +
+          n(row.purchasePacks),
+
+        returnPacks:
+          acc.returnPacks +
+          n(row.returnPacks),
+
+        netPacks:
+          acc.netPacks +
+          n(row.netPacks),
+
+        purchaseUnits:
+          acc.purchaseUnits +
+          n(row.purchaseUnits),
+
+        returnUnits:
+          acc.returnUnits +
+          n(row.returnUnits),
+
+        netUnits:
+          acc.netUnits +
+          n(row.netUnits),
+
+        grossPurchaseBeforeDiscount:
+          acc.grossPurchaseBeforeDiscount +
+          n(row.grossPurchaseBeforeDiscount),
+
+        grossReturnsBeforeDiscount:
+          acc.grossReturnsBeforeDiscount +
+          n(row.grossReturnsBeforeDiscount),
+
+        netPurchaseBeforeDiscount:
+          acc.netPurchaseBeforeDiscount +
+          n(row.netPurchaseBeforeDiscount),
+
+        purchaseProfit:
+          acc.purchaseProfit +
+          n(row.purchaseProfit)
+
+      }),
+      {
+        invoices: 0,
+        lines: 0,
+        items: 0,
+
+        purchaseTotal: 0,
+        returnTotal: 0,
+        netPurchaseCost: 0,
+
+        purchasePacks: 0,
+        returnPacks: 0,
+        netPacks: 0,
+
+        purchaseUnits: 0,
+        returnUnits: 0,
+        netUnits: 0,
+
+        grossPurchaseBeforeDiscount: 0,
+        grossReturnsBeforeDiscount: 0,
+
+        netPurchaseBeforeDiscount: 0,
+        purchaseProfit: 0
+      }
+    );
+
+  total.purchaseMarginPercent =
+    total.netPurchaseBeforeDiscount !== 0
+      ? r(
+          (
+            total.purchaseProfit /
+            total.netPurchaseBeforeDiscount
+          ) * 100,
+          2
+        )
+      : 0;
+
+  total.purchaseValue =
+    r(
+      total.netPurchaseCost
+    );
+
+  return {
+    success: true,
+
+    type:
+      'supplier-group',
+
+    branchCount:
+      connections.length,
+
+    suppliers,
+
+    total: {
+      ...total
+    }
+  };
+}
+async function aggregateInterbranchExchanges({
+  branchId,
+  fromDate,
+  toDate,
+  connection
+}) {
+  const { pool } =
+    await branchContext(
+      branchId,
+      connection
+    );
+
+  const next =
+    new Date(
+      `${toDate}T00:00:00Z`
+    );
+
+  next.setUTCDate(
+    next.getUTCDate() + 1
+  );
+
+  const toEx =
+    next
+      .toISOString()
+      .slice(0, 10);
+
+  const result =
+    await pool
+      .request()
+      .input(
+        'fromDate',
+        `${fromDate} 00:00:00`
+      )
+      .input(
+        'toDateExclusive',
+        `${toEx} 00:00:00`
+      )
+      .query(`
+        SET NOCOUNT ON;
+
+        SELECT
+          px.ID AS movementId,
+
+          px.zTime AS movementDate,
+
+          px.ExchangeID AS exchangeId,
+
+          LTRIM(
+            RTRIM(
+              COALESCE(
+                e.Name,
+                N'غير محدد'
+              )
+            )
+          ) AS otherBranchName,
+
+          px.SalesReturn,
+
+          COALESCE(
+            px.Total,
+            0
+          ) AS total,
+
+          COALESCE(
+            quantityTotals.packs,
+            0
+          ) AS packs,
+
+          COALESCE(
+            quantityTotals.units,
+            0
+          ) AS units,
+
+          px.TicketType,
+
+          px.PinNumber,
+
+          px.xMemo
+
+        FROM posTicketsX px
+
+        LEFT JOIN Exchange e
+          ON e.ID = px.ExchangeID
+
+        OUTER APPLY (
+          SELECT
+            SUM(
+              COALESCE(
+                pi.Packs,
+                0
+              )
+            ) AS packs,
+
+            SUM(
+              COALESCE(
+                pi.Units,
+                0
+              )
+            ) AS units
+
+          FROM posItemsX pi
+
+          WHERE
+            pi.TicketID =
+              px.ID
+
+        ) quantityTotals
+
+        WHERE
+          px.ExchangeID IS NOT NULL
+
+          AND
+
+          px.zTime >= @fromDate
+
+          AND
+
+          px.zTime < @toDateExclusive
+
+        ORDER BY
+          px.zTime DESC,
+          px.ID DESC;
+      `);
+
+  const rows =
+    result.recordset || [];
+
+  const counterpartMap =
+    new Map();
+
+  let outgoingTotal = 0;
+  let incomingTotal = 0;
+
+  let outgoingCount = 0;
+  let incomingCount = 0;
+
+  let outgoingPacks = 0;
+  let incomingPacks = 0;
+
+  let outgoingUnits = 0;
+  let incomingUnits = 0;
+
+  for (const row of rows) {
+
+    const isOutgoing =
+      Number(row.SalesReturn) === 1;
+
+    const isIncoming =
+      Number(row.SalesReturn) === 2;
+
+    const amount =
+      Math.abs(
+        Number(row.total) || 0
+      );
+
+    const packs =
+      Number(row.packs) || 0;
+
+    const units =
+      Number(row.units) || 0;
+
+    if (isOutgoing) {
+      outgoingTotal += amount;
+      outgoingCount++;
+
+      outgoingPacks += packs;
+      outgoingUnits += units;
+    }
+
+    if (isIncoming) {
+      incomingTotal += amount;
+      incomingCount++;
+
+      incomingPacks += packs;
+      incomingUnits += units;
+    }
+
+    const name =
+      String(
+        row.otherBranchName ||
+        'غير محدد'
+      ).trim();
+
+    const key =
+      name.toLocaleLowerCase(
+        'ar-EG'
+      );
+
+    if (!counterpartMap.has(key)) {
+      counterpartMap.set(
+        key,
+        {
+          branchName:
+            name,
+
+          outgoingTotal:
+            0,
+
+          incomingTotal:
+            0,
+
+          outgoingPacks:
+            0,
+
+          incomingPacks:
+            0,
+
+          outgoingUnits:
+            0,
+
+          incomingUnits:
+            0,
+
+          netTotal:
+            0,
+
+          movements:
+            0
+        }
+      );
+    }
+
+    const target =
+      counterpartMap.get(key);
+
+    target.movements++;
+
+    if (isOutgoing) {
+      target.outgoingTotal += amount;
+      target.outgoingPacks += packs;
+      target.outgoingUnits += units;
+    }
+
+    if (isIncoming) {
+      target.incomingTotal += amount;
+      target.incomingPacks += packs;
+      target.incomingUnits += units;
+    }
+  }
+
+  const counterparties =
+    Array.from(
+      counterpartMap.values()
+    )
+      .map(row => ({
+        branchName:
+          row.branchName,
+
+        outgoingTotal:
+          r(row.outgoingTotal),
+
+        incomingTotal:
+          r(row.incomingTotal),
+
+        outgoingPacks:
+          r(row.outgoingPacks),
+
+        incomingPacks:
+          r(row.incomingPacks),
+
+        outgoingUnits:
+          r(row.outgoingUnits),
+
+        incomingUnits:
+          r(row.incomingUnits),
+
+        netTotal:
+          r(
+            row.outgoingTotal -
+            row.incomingTotal
+          ),
+
+        movements:
+          row.movements
+      }))
+      .sort(
+        (a, b) =>
+          b.outgoingTotal +
+          b.incomingTotal -
+          (
+            a.outgoingTotal +
+            a.incomingTotal
+          )
+      );
+
+  const summary = {
+    movements:
+      rows.length,
+
+    outgoingCount,
+
+    incomingCount,
+
+    outgoingTotal:
+      r(outgoingTotal),
+
+    incomingTotal:
+      r(incomingTotal),
+
+    outgoingPacks:
+      r(outgoingPacks),
+
+    incomingPacks:
+      r(incomingPacks),
+
+    outgoingUnits:
+      r(outgoingUnits),
+
+    incomingUnits:
+      r(incomingUnits),
+
+    netTotal:
+      r(
+        outgoingTotal -
+        incomingTotal
+      ),
+
+    counterparties:
+      counterparties.length
+  };
+
+  return {
+    success: true,
+
+    type:
+      'exchange-overview',
+
+    branchId:
+      id(branchId),
+
+    fromDate,
+
+    toDate,
+
+    summary,
+
+    counterparties,
+
+    rows:
+      rows.map(row => ({
+        movementId:
+          String(
+            row.movementId
+          ),
+
+        movementDate:
+          row.movementDate,
+
+        exchangeId:
+          String(
+            row.exchangeId
+          ),
+
+        otherBranchName:
+          String(
+            row.otherBranchName ||
+            'غير محدد'
+          ),
+
+        salesReturn:
+          n(row.SalesReturn),
+
+        total:
+          r(
+            Math.abs(
+              n(row.total)
+            )
+          ),
+
+        packs:
+          r(row.packs),
+
+        units:
+          r(row.units),
+
+        direction:
+          Number(row.SalesReturn) === 1
+            ? 'outgoing'
+            : 'incoming',
+
+        ticketType:
+          n(row.TicketType),
+
+        pinNumber:
+          row.PinNumber == null
+            ? null
+            : String(
+                row.PinNumber
+              ),
+
+        xMemo:
+          row.xMemo == null
+            ? ''
+            : String(
+                row.xMemo
+              )
+      }))
+  };
+}
+async function aggregateInterbranchExchangesAllBranches({
+  fromDate,
+  toDate
+}) {
+  const connections =
+    getAllSavedConnections()
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(a.branchId || 0) -
+          Number(b.branchId || 0)
+      );
+
+  const branches = [];
+  let failedBranches = 0;
+
+  for (const branch of connections) {
+
+    try {
+
+      const result =
+        await aggregateInterbranchExchanges({
+          branchId:
+            branch.branchId,
+
+          fromDate,
+
+          toDate,
+
+          connection:
+            branch
+        });
+
+      const summary =
+        result?.summary || {};
+
+      branches.push({
+        branchId:
+          Number(
+            branch.branchId
+          ),
+
+        branchName:
+          String(
+            branch.branchName ||
+            `Branch ${branch.branchId}`
+          ),
+
+        movements:
+          n(summary.movements),
+
+        outgoingCount:
+          n(summary.outgoingCount),
+
+        incomingCount:
+          n(summary.incomingCount),
+
+        outgoingTotal:
+          r(summary.outgoingTotal),
+
+        incomingTotal:
+          r(summary.incomingTotal),
+
+        outgoingPacks:
+          r(summary.outgoingPacks),
+
+        incomingPacks:
+          r(summary.incomingPacks),
+
+        outgoingUnits:
+          r(summary.outgoingUnits),
+
+        incomingUnits:
+          r(summary.incomingUnits),
+
+        netTotal:
+          r(summary.netTotal),
+
+        counterparties:
+          n(summary.counterparties)
+      });
+
+    } catch (error) {
+
+      console.error(
+        `[analyticsHub] Interbranch exchange failed for branch ${branch.branchId}:`,
+        error?.message || error
+      );
+
+      failedBranches++;
+    }
+  }
+
+  const total =
+    branches.reduce(
+      (acc, row) => ({
+        movements:
+          acc.movements +
+          n(row.movements),
+
+        outgoingCount:
+          acc.outgoingCount +
+          n(row.outgoingCount),
+
+        incomingCount:
+          acc.incomingCount +
+          n(row.incomingCount),
+
+        outgoingTotal:
+          acc.outgoingTotal +
+          n(row.outgoingTotal),
+
+        incomingTotal:
+          acc.incomingTotal +
+          n(row.incomingTotal),
+
+        outgoingPacks:
+          acc.outgoingPacks +
+          n(row.outgoingPacks),
+
+        incomingPacks:
+          acc.incomingPacks +
+          n(row.incomingPacks),
+
+        outgoingUnits:
+          acc.outgoingUnits +
+          n(row.outgoingUnits),
+
+        incomingUnits:
+          acc.incomingUnits +
+          n(row.incomingUnits),
+
+        netTotal:
+          acc.netTotal +
+          n(row.netTotal)
+      }),
+      {
+        movements: 0,
+        outgoingCount: 0,
+        incomingCount: 0,
+        outgoingTotal: 0,
+        incomingTotal: 0,
+        outgoingPacks: 0,
+        incomingPacks: 0,
+        outgoingUnits: 0,
+        incomingUnits: 0,
+        netTotal: 0
+      }
+    );
+
+  total.outgoingTotal =
+    r(total.outgoingTotal);
+
+  total.incomingTotal =
+    r(total.incomingTotal);
+
+  total.outgoingPacks =
+    r(total.outgoingPacks);
+
+  total.incomingPacks =
+    r(total.incomingPacks);
+
+  total.outgoingUnits =
+    r(total.outgoingUnits);
+
+  total.incomingUnits =
+    r(total.incomingUnits);
+
+  total.netTotal =
+    r(total.netTotal);
+
+  return {
+    success: true,
+
+    type:
+      'exchange-group',
+
+    branchCount:
+      branches.length,
+
+    failedBranches,
+
+    branches,
+
+    total
+  };
+}
+async function aggregatePurchasesAllBranches({
+  fromDate,
+  toDate
+}) {
+  const connections =
+    getAllSavedConnections();
+
+  const branches =
+    connections
+      .filter(
+        branch =>
+          Number.isInteger(
+            Number(branch?.branchId)
+          ) &&
+          Number(branch.branchId) > 0
+      )
+      .sort(
+        (a, b) =>
+          Number(a.branchId) -
+          Number(b.branchId)
+      );
+
+  const rows = await Promise.all(
+    branches.map(
+      async branch => {
+        const result =
+          await aggregatePurchases({
+            branchId:
+              Number(branch.branchId),
+            fromDate,
+            toDate,
+            connection: branch
+          });
+
+        return {
+          branchId:
+            Number(branch.branchId),
+
+          branchName:
+            String(
+              branch.branchName ||
+              `Branch ${branch.branchId}`
+            ),
+
+          invoices:
+            n(result?.invoices),
+
+          purchaseInvoices:
+            n(result?.purchaseInvoices),
+
+          returnInvoices:
+            n(result?.returnInvoices),
+
+          lines:
+            n(result?.lines),
+
+          items:
+            n(result?.items),
+
+          suppliers:
+            n(result?.suppliers),
+
+          purchaseTotal:
+            r(result?.purchaseTotal),
+
+          returnTotal:
+            r(result?.returnTotal),
+
+          netPurchaseCost:
+            r(result?.netPurchaseCost),
+
+          grossPurchaseBeforeDiscount:
+            r(
+              result?.grossPurchaseBeforeDiscount
+            ),
+
+          grossReturnsBeforeDiscount:
+            r(
+              result?.grossReturnsBeforeDiscount
+            ),
+
+          netPurchaseBeforeDiscount:
+            r(
+              result?.netPurchaseBeforeDiscount
+            ),
+
+          purchaseProfit:
+            r(result?.purchaseProfit),
+
+          purchaseMarginPercent:
+            r(
+              result?.purchaseMarginPercent
+            ),
+
+          salesTotal:
+            r(
+              result?.salesTotal
+            ),
+
+          salesProfit:
+            r(
+              result?.salesProfit
+            ),
+
+          salesMarginPercent:
+            r(
+              result?.salesMarginPercent,
+              2
+            )
+        };
+      }
+    )
+  );
+
+  const total =
+    rows.reduce(
+      (acc, row) => ({
+        invoices:
+          acc.invoices +
+          n(row.invoices),
+
+        purchaseInvoices:
+          acc.purchaseInvoices +
+          n(row.purchaseInvoices),
+
+        returnInvoices:
+          acc.returnInvoices +
+          n(row.returnInvoices),
+
+        lines:
+          acc.lines +
+          n(row.lines),
+
+        items:
+          acc.items +
+          n(row.items),
+
+        suppliers:
+          acc.suppliers +
+          n(row.suppliers),
+
+        purchaseTotal:
+          acc.purchaseTotal +
+          n(row.purchaseTotal),
+
+        returnTotal:
+          acc.returnTotal +
+          n(row.returnTotal),
+
+        netPurchaseCost:
+          acc.netPurchaseCost +
+          n(row.netPurchaseCost),
+
+        grossPurchaseBeforeDiscount:
+          acc.grossPurchaseBeforeDiscount +
+          n(
+            row.grossPurchaseBeforeDiscount
+          ),
+
+        grossReturnsBeforeDiscount:
+          acc.grossReturnsBeforeDiscount +
+          n(
+            row.grossReturnsBeforeDiscount
+          ),
+
+        netPurchaseBeforeDiscount:
+          acc.netPurchaseBeforeDiscount +
+          n(
+            row.netPurchaseBeforeDiscount
+          ),
+
+        purchaseProfit:
+          acc.purchaseProfit +
+          n(row.purchaseProfit),
+
+        salesTotal:
+          acc.salesTotal +
+          n(row.salesTotal),
+
+        salesProfit:
+          acc.salesProfit +
+          n(row.salesProfit)
+      }),
+      {
+        invoices: 0,
+        purchaseInvoices: 0,
+        returnInvoices: 0,
+        lines: 0,
+        items: 0,
+        suppliers: 0,
+        purchaseTotal: 0,
+        returnTotal: 0,
+        netPurchaseCost: 0,
+        grossPurchaseBeforeDiscount: 0,
+        grossReturnsBeforeDiscount: 0,
+        netPurchaseBeforeDiscount: 0,
+        purchaseProfit: 0,
+        salesTotal: 0,
+        salesProfit: 0
+      }
+    );
+
+  total.purchaseMarginPercent =
+    total.netPurchaseBeforeDiscount > 0
+      ? r(
+          (
+            total.purchaseProfit /
+            total.netPurchaseBeforeDiscount
+          ) * 100
+        )
+      : 0;
+
+  total.salesMarginPercent =
+    total.salesTotal !== 0
+      ? r(
+          (
+            total.salesProfit /
+            total.salesTotal
+          ) * 100,
+          2
+        )
+      : 0;
+
+  return {
+    success: true,
+    type: 'purchase-group',
+    branchCount: rows.length,
+    branches: rows,
+    total,
+    ...total
+  };
+}
+
+
+export async function getAnalyticsModule({
+  moduleId,
+  branchId,
+  fromDate,
+  toDate,
+  connection
+}) {
+  const branch =
+    branchId === 'all' ||
+    branchId == null
+      ? null
+      : id(branchId);
+
+  switch (moduleId) {
+    case 'overview':
+    case 'sales-overview': {
+      if (!branch) {
+        return getGroupSalesOverview({
+          fromDate,
+          toDate
+        });
+      }
+
+      const [
+        summary,
+        delivery,
+        perf
+      ] =
+        await Promise.all([
+          getSalesSummary({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          }),
+
+          getDeliverySummary({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          }),
+
+          getSalesPerformance({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          })
+        ]);
+
+      return {
+        success: true,
+        type: 'sales',
+        summary,
+        delivery,
+        performance:
+          perf
+      };
+    }
+
+    case 'sales-trend': {
+      if (!branch) {
+        return getGroupSalesOverview({
+          fromDate,
+          toDate
+        });
+      }
+
+      const rows =
+        await getSalesByDay({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success: true,
+        type: 'trend',
+        rows
+      };
+    }
+
+    case 'sales-day-hour': {
+      if (!branch) {
+        return {
+          success: false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظٹظ„ ط§ظ„ظٹظˆظ… ظˆط§ظ„ط³ط§ط¹ط©.'
+        };
+      }
+
+      const rows =
+        await getSales({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      const dayMap =
+        new Map();
+
+      const hourMap =
+        Array.from(
+          {
+            length: 24
+          },
+          (_, h) => ({
+            hour: h,
+            sales: 0,
+            tickets:
+              new Set()
+          })
+        );
+
+      for (
+        const row
+        of rows
+      ) {
+        const d =
+          String(
+            row.date ||
+            ''
+          ).slice(
+            0,
+            10
+          );
+
+        if (d) {
+          if (
+            !dayMap.has(d)
+          ) {
+            dayMap.set(
+              d,
+              {
+                date: d,
+                sales: 0,
+                tickets:
+                  new Set()
+              }
+            );
+          }
+
+          const b =
+            dayMap.get(d);
+
+          const v =
+            row.transactionType ===
+            'RETURN'
+              ? -Math.abs(
+                  n(
+                    row.netLineValue
+                  )
+                )
+              : n(
+                  row.netLineValue
+                );
+
+          b.sales += v;
+
+          b.tickets.add(
+            row.ticketId
+          );
+
+          const h =
+            new Date(
+              row.date
+            ).getHours();
+
+          hourMap[h].sales += v;
+
+          hourMap[h].tickets.add(
+            row.ticketId
+          );
+        }
+      }
+
+      return {
+        success: true,
+        type: 'day-hour',
+
+        days:
+          [
+            ...dayMap.values()
+          ].map(
+            x => ({
+              date:
+                x.date,
+              sales:
+                r(x.sales),
+              tickets:
+                x.tickets.size
+            })
+          ),
+
+        hours:
+          hourMap
+            .map(
+              x => ({
+                hour:
+                  x.hour,
+                sales:
+                  r(x.sales),
+                tickets:
+                  x.tickets.size
+              })
+            )
+            .sort(
+              (a, b) =>
+                b.sales -
+                a.sales
+            )
+      };
+    }
+
+    case 'sales-sellers':
+      return branch
+        ? aggregateStaff({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ط¨ط§ط¦ط¹ظٹظ†.'
+          };
+
+    case 'sales-returns': {
+      if (!branch) {
+        return {
+          success: false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط±طھط¬ط¹ط§طھ.'
+        };
+      }
+
+      const s =
+        await getSalesSummary({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success: true,
+        type: 'returns',
+
+        returns:
+          s.returns,
+
+        returnTickets:
+          s.returnTickets,
+
+        returnLines:
+          s.returnLines,
+
+        returnRate:
+          s.returnRate,
+
+        netSales:
+          s.netSales
+      };
+    }
+
+    case 'product-overview':
+    case 'product-top':
+      return branch
+        ? getTopProducts({
+            branchId:
+              branch,
+            connection,
+            fromDate,
+            toDate,
+            limit:
+              50
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط†طھط¬ط§طھ.'
+          };
+
+    case 'product-profitability':
+      return branch
+        ? getProductProfitability({
+            branchId:
+              branch,
+            connection,
+            fromDate,
+            toDate,
+            limit:
+              50,
+            negativeMarginLimit:
+              20
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ ط±ط¨ط­طظط© ط§ظ„ظ…ط†طھط¬ط§طھ.'
+          };
+
+    case 'product-abc':
+    case 'product-stock':
+      return branch
+        ? getProductMixAnalytics({
+            branchId:
+              branch,
+            connection,
+            fromDate,
+            toDate
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط†طھط¬ط§طھ.'
+          };
+
+    case 'customer-overview':
+    case 'customer-rfm':
+      return branch
+        ? getCustomerRfm({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            limit:
+              50
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ط¹ظ…ظ„ط§ط،.'
+          };
+
+    case 'customer-retention':
+      return branch
+        ? getCustomerRetention({
+            branchId:
+              branch,
+            fromDate,
+            toDate
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ§ط­طھظپط§ط¸.'
+          };
+
+    case 'customer-churn':
+      return branch
+        ? getCustomerInactivity({
+            branchId:
+              branch,
+            toDate,
+            sampleLimit:
+              100
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط¹ط¯ظ… ط§ظ„ظ†ط´ط§ط·.'
+          };
+
+    case 'customer-clv':
+      return branch
+        ? getCustomerClv({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            observationDays:
+              365,
+            limit:
+              50
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ CLV.'
+          };
+
+    case 'customer-cohort':
+      return branch
+        ? getCustomerCohort({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            maxMonths:
+              24
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ ط§ظ„ظ€Cohort.'
+          };
+
+    case 'operations':
+    case 'inventory-overview':
+    case 'inventory-risk':
+    case 'inventory-reorder': {
+      if (!branch) {
+        return {
+          success:
+            false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط®ط²ظˆظ†.'
+        };
+      }
+
+      const rows =
+        await getSales({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      const map =
+        new Map();
+
+      for (
+        const row
+        of rows
+      ) {
+        const k =
+          row.itemId ||
+          'UNKNOWN';
+
+        if (
+          !map.has(k)
+        ) {
+          map.set(
+            k,
+            {
+              itemId:
+                String(k),
+
+              itemName:
+                row.itemName ||
+                'ط؛ظٹط± ظ…ط¹ط±ظˆظپ',
+
+              units:
+                0,
+
+              sales:
+                0,
+
+              tickets:
+                new Set()
+            }
+          );
+        }
+
+        const x =
+          map.get(k);
+
+        x.units +=
+          row.transactionType ===
+          'RETURN'
+            ? -Math.abs(
+                n(
+                  row.baseUnits
+                )
+              )
+            : n(
+                row.baseUnits
+              );
+
+        x.sales +=
+          row.transactionType ===
+          'RETURN'
+            ? -Math.abs(
+                n(
+                  row.netLineValue
+                )
+              )
+            : n(
+                row.netLineValue
+              );
+
+        x.tickets.add(
+          row.ticketId
+        );
+      }
+
+      const items =
+        [...map.values()]
+          .map(
+            x => ({
+              ...x,
+
+              units:
+                r(x.units),
+
+              sales:
+                r(x.sales),
+
+              tickets:
+                x.tickets.size,
+
+              velocity:
+                r(
+                  x.units /
+                  daysBetween(
+                    fromDate,
+                    toDate
+                  ),
+                  2
+                )
+            })
+          )
+          .sort(
+            (a, b) =>
+              b.velocity -
+              a.velocity
+          );
+
+      return {
+        success:
+          true,
+
+        type:
+          'inventory',
+
+        items,
+
+        fastMovers:
+          items.slice(
+            0,
+            20
+          ),
+
+        slowMovers:
+          [...items]
+            .sort(
+              (a, b) =>
+                a.velocity -
+                b.velocity
+            )
+            .slice(
+              0,
+              20
+            )
+      };
+    }
+
+    case 'purchase-overview':
+    case 'purchase-opportunities': {
+      if (!branch) {
+        return aggregatePurchasesAllBranches({
+          fromDate,
+          toDate
+        });
+      }
+
+      return aggregatePurchases({
+        branchId:
+          branch,
+        fromDate,
+        toDate,
+        connection
+      });
+    }
+    case 'interbranch-exchanges': {
+      if (!branch) {
+        return aggregateInterbranchExchangesAllBranches({
+          fromDate,
+          toDate
+        });
+      }
+
+      return aggregateInterbranchExchanges({
+        branchId:
+          branch,
+
+        fromDate,
+        toDate,
+
+        connection
+      });
+    }
+    case 'supplier-performance': {
+      if (!branch) {
+        return aggregateSuppliersAllBranches({
+          fromDate,
+          toDate
+        });
+      }
+
+      return aggregateSuppliers({
+        branchId:
+          branch,
+        fromDate,
+        toDate,
+        connection
+      });
+    }
+
+
+    case 'profit-overview':
+    case 'profit-branch':
+    case 'profit-product':
+    case 'profit-anomalies': {
+      if (!branch) {
+        return getGroupSalesOverview({
+          fromDate,
+          toDate
+        });
+      }
+
+      if (
+        moduleId ===
+        'profit-product'
+      ) {
+        return getProductProfitability({
+          branchId:
+            branch,
+          connection,
+          fromDate,
+          toDate,
+          limit:
+            50,
+          negativeMarginLimit:
+            30
+        });
+      }
+
+      const s =
+        await getSalesSummary({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success:
+          true,
+
+        type:
+          'profit',
+
+        summary:
+          s
+      };
+    }
+
+    case 'branch-overview':
+    case 'branch-comparison':
+    case 'branch-ranking':
+      return getGroupSalesOverview({
+        fromDate,
+        toDate
+      });
+
+    case 'staff-overview':
+    case 'staff-sales':
+    case 'staff-productivity':
+      return branch
+        ? aggregateStaff({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          })
+        : {
+            success:
+              false,
+            message:
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط¸ظپظٹظ†.'
+          };
+
+    case 'forecast-sales':
+    case 'forecast-demand':
+    case 'forecast-inventory': {
+      if (!branch) {
+        return {
+          success:
+            false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„طھط†ط¨ط¤.'
+        };
+      }
+
+      const trend =
+        await getSalesByDay({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success:
+          true,
+
+        type:
+          'forecast',
+
+        forecast:
+          forecastFromTrend(
+            trend
+          )
+      };
+    }
+
+    case 'quality-overview':
+    case 'quality-cost': {
+      if (!branch) {
+        return {
+          success:
+            false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظپط­طµ ط¬ظˆط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ.'
+        };
+      }
+
+      const rows =
+        await getSales({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success:
+          true,
+
+        type:
+          'quality',
+
+        quality:
+          qualityFromRows(
+            rows
+          )
+      };
+    }
+
+    case 'quality-reconciliation': {
+      if (!branch) {
+        return {
+          success:
+            false,
+          message:
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„ظ…ط·ط§ط¨ظ‚ط©.'
+        };
+      }
+
+      const s =
+        await getSalesSummary({
+          branchId:
+            branch,
+          fromDate,
+          toDate,
+          connection
+        });
+
+      return {
+        success:
+          true,
+
+        type:
+          'reconciliation',
+
+        reconciliation:
+          s.reconciliation
+      };
+    }
+
+    case 'performance':
+      return branch
+        ? getSalesPerformance({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          })
+        : getGroupSalesOverview({
+            fromDate,
+            toDate
+          });
+
+    case 'connections':
+      return {
+        success:
+          true,
+        type:
+          'system'
+      };
+
+    case 'cache':
+      return {
+        success:
+          true,
+        type:
+          'system'
+      };
+
+    default:
+      return branch
+        ? getSalesSummary({
+            branchId:
+              branch,
+            fromDate,
+            toDate,
+            connection
+          })
+        : getGroupSalesOverview({
+            fromDate,
+            toDate
+          });
+  }
+}
+
+export default {
+  getAnalyticsModule
+};

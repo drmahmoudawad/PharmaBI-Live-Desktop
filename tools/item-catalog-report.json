@@ -1,0 +1,79 @@
+{
+  "generatedAt": "2026-09-22T13:29:57.895Z",
+  "branchCount": 5,
+  "successfulBranches": 5,
+  "failedBranches": 0,
+  "totalRows": 137948,
+  "report": [
+    {
+      "branchId": 1,
+      "branchName": "أسكوت",
+      "status": "success",
+      "itemCount": 24503,
+      "zeroItemCount": 1,
+      "columns": {
+        "itemId": "ID",
+        "itemCode": null,
+        "name": "name",
+        "barcode": "barcode",
+        "parts": "Parts"
+      }
+    },
+    {
+      "branchId": 2,
+      "branchName": "شارع10",
+      "status": "success",
+      "itemCount": 28042,
+      "zeroItemCount": 0,
+      "columns": {
+        "itemId": "ID",
+        "itemCode": null,
+        "name": "name",
+        "barcode": "barcode",
+        "parts": "Parts"
+      }
+    },
+    {
+      "branchId": 3,
+      "branchName": "المنشية البحرية",
+      "status": "success",
+      "itemCount": 26433,
+      "zeroItemCount": 0,
+      "columns": {
+        "itemId": "ID",
+        "itemCode": null,
+        "name": "name",
+        "barcode": "barcode",
+        "parts": "Parts"
+      }
+    },
+    {
+      "branchId": 4,
+      "branchName": "سيدى بشر قبلي",
+      "status": "success",
+      "itemCount": 26711,
+      "zeroItemCount": 0,
+      "columns": {
+        "itemId": "ID",
+        "itemCode": null,
+        "name": "name",
+        "barcode": "barcode",
+        "parts": "Parts"
+      }
+    },
+    {
+      "branchId": 5,
+      "branchName": "أبوسليمان",
+      "status": "success",
+      "itemCount": 32259,
+      "zeroItemCount": 0,
+      "columns": {
+        "itemId": "ID",
+        "itemCode": null,
+        "name": "name",
+        "barcode": "barcode",
+        "parts": "Parts"
+      }
+    }
+  ]
+}

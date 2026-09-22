@@ -1,0 +1,104 @@
+import {
+    ipcMain
+} from "electron";
+
+
+import {
+    searchMasterItems,
+    resolveItem,
+    getMasterItemById,
+    getMasterItemStats
+} from "../masterItem/masterItemService.js";
+
+
+export function registerMasterItemIpc() {
+
+    ipcMain.handle(
+        "master-item:search",
+        async (
+            _event,
+            payload
+        ) => {
+
+            return {
+
+                success:
+                    true,
+
+                results:
+                    searchMasterItems(
+                        payload?.query,
+                        {
+                            branchId:
+                                payload?.branchId,
+
+                            limit:
+                                payload?.limit
+                        }
+                    )
+
+            };
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "master-item:resolve",
+        async (
+            _event,
+            payload
+        ) => {
+
+            return resolveItem(
+                payload?.query,
+                {
+                    branchId:
+                        payload?.branchId
+                }
+            );
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "master-item:get",
+        async (
+            _event,
+            payload
+        ) => {
+
+            return {
+
+                success:
+                    true,
+
+                item:
+                    getMasterItemById(
+                        payload?.masterItemId
+                    )
+
+            };
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "master-item:stats",
+        async () => {
+
+            return {
+
+                success:
+                    true,
+
+                ...getMasterItemStats()
+
+            };
+
+        }
+    );
+
+}

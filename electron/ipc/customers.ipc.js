@@ -9,6 +9,27 @@ import {
 
 
 import {
+    getCustomerRfmV2
+} from "../pharmfly/customers/customerRfmV2Service.js";
+
+
+import {
+    getCustomer360,
+    searchCustomer360
+} from "../pharmfly/customers/customer360Service.js";
+
+
+import {
+    initializeCrmSchema
+} from "../pharmfly/customers/crm/crmDb.js";
+
+
+import {
+    initializeCrmOperationalSchema
+} from "../pharmfly/customers/crm/crmOperationalSchema.js";
+
+
+import {
     getCustomerIntelligence
 } from "../pharmfly/customers/customerIntelligenceService.js";
 
@@ -52,6 +73,37 @@ export function registerCustomersIpc() {
         true;
 
 
+    /*
+     * =========================================================
+     * CRM DATABASE INITIALIZATION
+     * =========================================================
+     */
+
+    try {
+
+        initializeCrmSchema();
+
+        initializeCrmOperationalSchema();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+            "[CRM] Schema initialization failed:",
+            error
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * LEGACY RFM
+     * =========================================================
+     */
+
     ipcMain.handle(
 
         "customers:rfm",
@@ -82,6 +134,172 @@ export function registerCustomersIpc() {
     );
 
 
+    /*
+     * =========================================================
+     * RFM 2.0
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:rfm-v2",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerRfmV2({
+
+                branchId:
+                    payload?.branchId,
+
+                analysisDate:
+                    (() => {
+                        const raw =
+                            String(
+                                payload?.analysisDate ||
+                                ""
+                            ).trim();
+
+                        if (
+                            /^\d{4}-\d{2}-\d{2}$/.test(
+                                raw
+                            )
+                        ) {
+                            return raw;
+                        }
+
+                        const now =
+                            new Date();
+
+                        const year =
+                            now.getFullYear();
+
+                        const month =
+                            String(
+                                now.getMonth() + 1
+                            ).padStart(
+                                2,
+                                "0"
+                            );
+
+                        const day =
+                            String(
+                                now.getDate()
+                            ).padStart(
+                                2,
+                                "0"
+                            );
+
+                        return `${year}-${month}-${day}`;
+                    })(),
+
+                observationDays:
+                    payload?.observationDays,
+
+                trendDays:
+                    payload?.trendDays,
+
+                minTickets:
+                    payload?.minTickets,
+
+                saveSnapshot:
+                    payload?.saveSnapshot !== false
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CUSTOMER 360
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:360",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomer360({
+
+                branchId:
+                    payload?.branchId,
+
+                customerId:
+                    payload?.customerId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate,
+
+                quick:
+                    payload?.quick === true
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CUSTOMER 360 SEARCH
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:360-search",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return searchCustomer360({
+
+                branchId:
+                    payload?.branchId,
+
+                search:
+                    payload?.search,
+
+                segmentCode:
+                    payload?.segmentCode,
+
+                lifecycleStage:
+                    payload?.lifecycleStage,
+
+                priorityLevel:
+                    payload?.priorityLevel,
+
+                limit:
+                    payload?.limit
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CUSTOMER INTELLIGENCE
+     * =========================================================
+     */
+
     ipcMain.handle(
 
         "customers:intelligence",
@@ -108,6 +326,12 @@ export function registerCustomersIpc() {
 
     );
 
+
+    /*
+     * =========================================================
+     * RETENTION
+     * =========================================================
+     */
 
     ipcMain.handle(
 
@@ -136,6 +360,12 @@ export function registerCustomersIpc() {
     );
 
 
+    /*
+     * =========================================================
+     * INACTIVITY
+     * =========================================================
+     */
+
     ipcMain.handle(
 
         "customers:inactivity",
@@ -162,6 +392,12 @@ export function registerCustomersIpc() {
 
     );
 
+
+    /*
+     * =========================================================
+     * CLV
+     * =========================================================
+     */
 
     ipcMain.handle(
 
@@ -196,6 +432,12 @@ export function registerCustomersIpc() {
     );
 
 
+    /*
+     * =========================================================
+     * COHORT
+     * =========================================================
+     */
+
     ipcMain.handle(
 
         "customers:cohort",
@@ -223,6 +465,11 @@ export function registerCustomersIpc() {
 
         }
 
+    );
+
+
+    console.log(
+        "[Customers IPC] Legacy + RFM 2.0 + Customer 360 + CRM operational handlers registered."
     );
 
 }

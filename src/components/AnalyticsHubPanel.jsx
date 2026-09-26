@@ -1,7 +1,8 @@
-import PurchaseOverviewPanel from './analytics/purchases/PurchaseOverviewPanel.jsx';
+﻿import PurchaseOverviewPanel from './analytics/purchases/PurchaseOverviewPanel.jsx';
 import SupplierPerformancePanel from './analytics/suppliers/SupplierPerformancePanel.jsx';
 import React, { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
+import CustomerAnalyticsModulePanel from './CustomerAnalyticsModulePanel.jsx';
 import BranchPerformancePanel from './BranchPerformancePanel.jsx';
 
 function n(v) {
@@ -80,7 +81,7 @@ const TITLES = {
     'sales-returns': 'المرتجعات',
 
     'customer-overview': 'نظرة عامة على العملاء',
-    'customer-rfm': 'تحليل RFM',
+    'customer-rfm': 'تحليل سلوك العملاء',
     'customer-retention': 'الاحتفاظ بالعملاء',
     'customer-churn': 'التوقف / عدم النشاط',
     'customer-clv': 'القيمة العمرية للعميل',
@@ -253,7 +254,7 @@ const buttonStyle = {
     fontFamily: 'inherit'
 };
 
-function exportSellersToExcel({
+function exportالبائعونToExcel({
     rows,
     fromDate,
     toDate,
@@ -311,7 +312,7 @@ function exportSellersToExcel({
         ],
 
         [
-            'ط¥ظ„ظ‰',
+            'إلى',
             toDate
         ],
 
@@ -821,8 +822,8 @@ function Overlay({
 
 function sellerScoreLabel(score) {
     if (n(score) >= 90) return 'ممتاز';
-    if (n(score) >= 75) return 'ط¬ظٹط¯ ط¬ط¯ط§ظ‹';
-    if (n(score) >= 60) return 'ط¬ظٹط¯';
+    if (n(score) >= 75) return 'جيد جداً';
+    if (n(score) >= 60) return 'جيد';
 
     return 'يحتاج متابعة';
 }
@@ -1817,7 +1818,7 @@ function CustomerProfile({
     );
 }
 
-function SellersTable({
+function البائعونTable({
     rows,
     fromDate,
     toDate,
@@ -1885,7 +1886,7 @@ function SellersTable({
                 <button
                     type="button"
                     onClick={() =>
-                        exportSellersToExcel({
+                        exportالبائعونToExcel({
                             rows,
                             fromDate,
                             toDate,
@@ -2284,7 +2285,7 @@ function CacheCoveragePanel(
                 <div className="kpi-card">
 
                     <span>
-                        Saved Branches
+                        الفروع المحفوظة
                     </span>
 
                     <strong>
@@ -2299,7 +2300,7 @@ function CacheCoveragePanel(
                 <div className="kpi-card">
 
                     <span>
-                        Active Connections
+                        الاتصالات النشطة
                     </span>
 
                     <strong>
@@ -2327,7 +2328,7 @@ function CacheCoveragePanel(
                 <div className="kpi-card">
 
                     <span>
-                        Data Coverage
+                        تغطية البيانات
                     </span>
 
                     <strong>
@@ -2619,14 +2620,33 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                 setError('');
 
                 try {
-                    const result =
-                        await window.pharmaBI.analytics.module({
-                            moduleId,
-                            branchId,
-                            connection,
-                            fromDate,
-                            toDate
-                        });
+                                        if (
+                        moduleId.startsWith(
+                            'customer'
+                        )
+                    ) {
+                        if (!cancelled) {
+                            setLoading(false);
+                        }
+
+                        return;
+                    }
+
+                    const result = moduleId === 'sales-sellers'
+                            ? await window.pharmaBI.dashboard.overview({
+                                action: 'seller-overview',
+                                branchId,
+                                connection,
+                                fromDate,
+                                toDate
+                            })
+                            : await window.pharmaBI.analytics.module({
+                                moduleId,
+                                branchId,
+                                connection,
+                                fromDate,
+                                toDate
+                            });
 
 
                     if (!cancelled) {
@@ -2789,7 +2809,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
 
                         {
                             label:
-                                'Net Profit',
+                                'صافي الربح',
                             value:
                                 money(
                                     data?.summary?.netProfit
@@ -2951,7 +2971,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
 
                         {
                             label:
-                                'Missing Cost',
+                                'تكلفة مفقودة',
                             value:
                                 num(
                                     data?.quality?.missingCost
@@ -2960,7 +2980,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
 
                         {
                             label:
-                                'Zero Cost',
+                                'تكلفة صفرية',
                             value:
                                 num(
                                     data?.quality?.zeroCost
@@ -3027,6 +3047,36 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
             },
             [data, moduleId]
         );
+
+    if (
+        moduleId.startsWith(
+            'customer'
+        )
+    ) {
+        return (
+            <CustomerAnalyticsModulePanel
+                moduleId={
+                    moduleId
+                }
+
+                branchId={
+                    branchId
+                }
+
+                connection={
+                    connection
+                }
+
+                fromDate={
+                    fromDate
+                }
+
+                toDate={
+                    toDate
+                }
+            />
+        );
+    }
 
     if (loading) {
         return (
@@ -3316,7 +3366,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
 
                     {
                         key: 'netSales',
-                        label: 'طµط§ظپظٹ',
+                        label: 'صافي',
                         render:
                             row =>
                                 money(
@@ -3410,7 +3460,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
         'sales-sellers'
     ) {
         body = (
-            <SellersTable
+            <البائعونTable
                 rows={sellerRows}
                 fromDate={fromDate}
                 toDate={toDate}
@@ -4373,7 +4423,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                 <div className="page-header">
                     <div>
                         <div className="page-eyebrow">
-                            PharmaBI Analytics
+                            تحليلات فارما بي آي
                         </div>
 
                         <h2>
@@ -4552,4 +4602,7 @@ export default function AnalyticsHubPanel(props){
         />
     );
 }
+
+
+
 

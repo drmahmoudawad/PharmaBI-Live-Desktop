@@ -1,4 +1,7 @@
 ﻿import {
+    getSalesRows as getLocalSalesRows
+} from "../../localdb/localSalesDb.js";
+import {
     getBranchPool
 } from "../../connection/connectionManager.js";
 
@@ -61,7 +64,7 @@ const SALES_CACHE_GROUP =
  * This is required for the legacy/working delivery logic.
  */
 
-const SALES_CACHE_VERSION = "sales-v11";
+const SALES_CACHE_VERSION = "sales-v13";
 
 
 const salesCache =
@@ -71,6 +74,9 @@ const salesCache =
 const salesInFlight =
     new Map();
 
+
+
+const localFirstInFlight = new Map();
 
 const monthlyInFlight =
     new Map();
@@ -2250,6 +2256,11 @@ function normalizeSaleRow(
             row.customer_name ||
             null,
 
+        isDeliveryCustomer:
+            Boolean(
+                row.is_delivery_customer
+            ),
+
 
         date:
             normalizeDate(
@@ -2437,6 +2448,10 @@ async function runSalesDiagnostic(
 
     if (
         !ENABLE_SALES_DIAGNOSTIC
+        ||
+        Number(branchId) !== 5
+        ||
+        !String(fromDate).startsWith("2026-09-")
     ) {
 
         return;
@@ -2494,7 +2509,36 @@ async function runSalesDiagnostic(
                 .query(`
                     SET NOCOUNT ON;
 
-                    SELECT COUNT_BIG(*) AS row_count
+                    SELECT
+                        COUNT_BIG(*) AS line_count,
+                        COUNT(DISTINCT t.ID) AS invoice_count,
+
+                        SUM(
+                            CASE
+                                WHEN t.SalesReturn = 1
+                                THEN ISNULL(t.Total, 0)
+                                ELSE 0
+                            END
+                        ) AS sales_total,
+
+                        SUM(
+                            CASE
+                                WHEN t.SalesReturn = 2
+                                THEN ISNULL(t.Total, 0)
+                                ELSE 0
+                            END
+                        ) AS returns_total,
+
+                        SUM(
+                            CASE
+                                WHEN t.SalesReturn = 1
+                                THEN ISNULL(t.Total, 0)
+                                WHEN t.SalesReturn = 2
+                                THEN -ABS(ISNULL(t.Total, 0))
+                                ELSE 0
+                            END
+                        ) AS net_total
+
                     FROM posTickets t
                     INNER JOIN posItems pi
                         ON pi.TicketID = t.ID
@@ -2506,14 +2550,105 @@ async function runSalesDiagnostic(
         let elapsed =
             Date.now() - started;
 
+        const stage1 = salesBaseResult?.recordset?.[0] || {};
+
         const salesRows =
-            Number(
-                salesBaseResult?.recordset?.[0]?.row_count
-            ) || 0;
+            Number(stage1?.line_count) || 0;
 
         console.log(
-            `[salesDiagnostic] STAGE1 SalesBase rows=${salesRows} ms=${elapsed}`
+            `[salesDiagnostic] STAGE1 ` +
+            `lines=${salesRows} ` +
+            `invoices=${Number(stage1?.invoice_count) || 0} ` +
+            `sales=${Number(stage1?.sales_total) || 0} ` +
+            `returns=${Number(stage1?.returns_total) || 0} ` +
+            `net=${Number(stage1?.net_total) || 0} ` +
+            `ms=${elapsed}`
         );
+
+
+        /*
+         * STAGE 1B: SALES BY STORE ID
+         * Read directly from posTickets.
+         * Do NOT join posItems here because t.Total
+         * would be repeated once per item line.
+         */
+
+        const storeResult =
+            await pool
+                .request()
+                .input(
+                    "fromDate",
+                    fromDateSql
+                )
+                .input(
+                    "toDateExclusive",
+                    toDateExclusiveSql
+                )
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT
+                        ISNULL(
+                            CONVERT(varchar(50), t.StoreID),
+                            'NULL'
+                        ) AS store_id,
+
+                        COUNT_BIG(*) AS invoice_count,
+
+                        SUM(
+                            CASE
+                                WHEN t.SalesReturn = 1
+                                THEN ISNULL(t.Total, 0)
+                                ELSE 0
+                            END
+                        ) AS sales_total,
+
+                        SUM(
+                            CASE
+                                WHEN t.SalesReturn = 2
+                                THEN ABS(ISNULL(t.Total, 0))
+                                ELSE 0
+                            END
+                        ) AS returns_total
+
+                    FROM posTickets t
+
+                    WHERE
+                        t.ztime >= @fromDate
+                        AND t.ztime < @toDateExclusive
+
+                    GROUP BY
+                        ISNULL(
+                            CONVERT(varchar(50), t.StoreID),
+                            'NULL'
+                        )
+
+                    ORDER BY
+                        invoice_count DESC;
+                `);
+
+
+        for (
+            const row
+            of storeResult?.recordset || []
+        ) {
+
+            const storeSales =
+                Number(row?.sales_total) || 0;
+
+            const storeReturns =
+                Number(row?.returns_total) || 0;
+
+            console.log(
+                `[salesDiagnostic] STORE ` +
+                `storeId=${row?.store_id} ` +
+                `invoices=${Number(row?.invoice_count) || 0} ` +
+                `sales=${storeSales} ` +
+                `returns=${storeReturns} ` +
+                `net=${storeSales - storeReturns}`
+            );
+
+        }
 
 
         /*
@@ -2793,6 +2928,9 @@ function buildOptimizedSalesQuery() {
 
             t.SalesRepID
                 AS sales_rep_id,
+
+            t.PinNumber
+                AS pin_number,
 
 
             pi.ID
@@ -3100,9 +3238,31 @@ LEFT JOIN Items i
          * =====================================================
          */
 
-        SELECT
-
-            s.ticket_id,
+        ;WITH CurrentPurchase AS (
+    SELECT
+        s.ticket_id,
+        s.line_id,
+        p.purchase_cost,
+        p.purchase_date,
+        p.purchase_invoice_id,
+        p.purchase_invoice_code,
+        p.purchase_vendor_id,
+        p.purchase_item_id,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                s.ticket_id,
+                s.line_id
+            ORDER BY
+                p.purchase_date DESC,
+                p.purchase_invoice_id DESC,
+                p.purchase_item_id DESC
+        ) AS rn
+    FROM #SalesBase s
+    INNER JOIN #Purchases p
+        ON p.item_id = s.item_id
+       AND p.purchase_date <= s.ticket_ztime
+)
+SELECT s.ticket_id,
 
             s.ticket_ztime,
 
@@ -3116,7 +3276,7 @@ LEFT JOIN Items i
             s.ticket_store_id,
 
             s.sales_rep_id,
-
+            s.pin_number,
             s.line_id,
 
             s.item_id,
@@ -3146,20 +3306,40 @@ LEFT JOIN Items i
             s.line_store_id,
 
 
-            latestPurchase.purchase_cost
-                AS last_purchase_cost,
+            CASE
+    WHEN currentPurchase.purchase_item_id IS NOT NULL
+    THEN currentPurchase.purchase_cost
+    ELSE previousPurchase.purchase_cost
+END
+    AS last_purchase_cost,
 
-            latestPurchase.purchase_date
-                AS last_purchase_date,
+CASE
+    WHEN currentPurchase.purchase_item_id IS NOT NULL
+    THEN currentPurchase.purchase_date
+    ELSE previousPurchase.purchase_date
+END
+    AS last_purchase_date,
 
-            latestPurchase.purchase_invoice_id
-                AS last_purchase_invoice_id,
+CASE
+    WHEN currentPurchase.purchase_item_id IS NOT NULL
+    THEN currentPurchase.purchase_invoice_id
+    ELSE previousPurchase.purchase_invoice_id
+END
+    AS last_purchase_invoice_id,
 
-            latestPurchase.purchase_invoice_code
-                AS last_purchase_invoice_code,
+CASE
+    WHEN currentPurchase.purchase_item_id IS NOT NULL
+    THEN currentPurchase.purchase_invoice_code
+    ELSE previousPurchase.purchase_invoice_code
+END
+    AS last_purchase_invoice_code,
 
-            latestPurchase.purchase_vendor_id
-                AS last_purchase_vendor_id,
+CASE
+    WHEN currentPurchase.purchase_item_id IS NOT NULL
+    THEN currentPurchase.purchase_vendor_id
+    ELSE previousPurchase.purchase_vendor_id
+END
+    AS last_purchase_vendor_id,
 
 
             s.item_parts
@@ -3169,108 +3349,14 @@ LEFT JOIN Items i
         FROM #SalesBase s
 
 
-        OUTER APPLY (
+        LEFT JOIN #PreviousPurchases previousPurchase
 
-            SELECT TOP 1
-
-                p.purchase_cost,
-
-                p.purchase_date,
-
-                p.purchase_invoice_id,
-
-                p.purchase_invoice_code,
-
-                p.purchase_vendor_id,
-
-                p.purchase_item_id
-
-
-            FROM (
-
-                SELECT
-
-                    purchase_cost,
-
-                    purchase_date,
-
-                    purchase_invoice_id,
-
-                    purchase_invoice_code,
-
-                    purchase_vendor_id,
-
-                    purchase_item_id
-
-                FROM #Purchases
-
-                WHERE
-
-                    item_id =
-                        s.item_id
-
-                AND
-
-                    purchase_date <=
-                        s.ticket_ztime
-
-
-                UNION ALL
-
-
-                SELECT
-
-                    purchase_cost,
-
-                    purchase_date,
-
-                    purchase_invoice_id,
-
-                    purchase_invoice_code,
-
-                    purchase_vendor_id,
-
-                    purchase_item_id
-
-                FROM #PreviousPurchases
-
-                WHERE
-
-                    item_id =
-                        s.item_id
-
-                AND
-
-                    NOT EXISTS (
-
-                        SELECT 1
-
-                        FROM #Purchases currentPurchase
-
-                        WHERE
-
-                            currentPurchase.item_id =
-                                s.item_id
-
-                        AND
-
-                            currentPurchase.purchase_date <=
-                                s.ticket_ztime
-
-                    )
-
-            ) p
-
-
-            ORDER BY
-
-                p.purchase_date DESC,
-
-                p.purchase_invoice_id DESC,
-
-                p.purchase_item_id DESC
-
-        ) latestPurchase;
+            ON previousPurchase.item_id =
+               s.item_id
+        LEFT JOIN CurrentPurchase currentPurchase
+            ON currentPurchase.ticket_id = s.ticket_id
+           AND currentPurchase.line_id = s.line_id
+           AND currentPurchase.rn = 1;
 
 
     `;
@@ -3347,7 +3433,8 @@ async function loadCustomerNameMap(
 
                     SELECT
                         Id,
-                        Name
+                        Name,
+                        IsHDCustomer
                     FROM dbo.Cards
                     WHERE Id IS NOT NULL;
                 `);
@@ -3355,6 +3442,9 @@ async function loadCustomerNameMap(
 
         const map =
             new Map();
+
+        const deliveryCustomerIds =
+            new Set();
 
 
         for (
@@ -3367,7 +3457,25 @@ async function loadCustomerNameMap(
                 row.Name ?? null
             );
 
+            if (
+                row.IsHDCustomer === true ||
+                row.IsHDCustomer === 1 ||
+                String(
+                    row.IsHDCustomer
+                ).toLowerCase() === "true"
+            ) {
+                deliveryCustomerIds.add(
+                    String(
+                        row.Id
+                    )
+                );
+            }
+
         }
+
+
+        map.deliveryCustomerIds =
+            deliveryCustomerIds;
 
 
         customerNameCache.set(
@@ -3540,6 +3648,16 @@ async function queryPharmaFlySales(
                     ) ?? null
                 );
 
+        row.is_delivery_customer =
+            Boolean(
+                customerId !== null &&
+                customerId !== undefined &&
+                customerNameById.deliveryCustomerIds instanceof Set &&
+                customerNameById.deliveryCustomerIds.has(
+                    String(customerId)
+                )
+            );
+
     }
 
     const rows =
@@ -3629,6 +3747,750 @@ function savePersistentSalesRange(
  * =========================================================
  */
 
+/* LOCAL-FIRST SALES STRATEGY */
+
+function getTodayUtcDate() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function getPreviousDate(dateString) {
+    const date = new Date(`${dateString}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - 1);
+    return date.toISOString().slice(0, 10);
+}
+
+function maxSalesDate(a, b) {
+    return a > b ? a : b;
+}
+
+function minSalesDate(a, b) {
+    return a < b ? a : b;
+}
+
+function normalizeLocalSaleRow(
+    row
+) {
+
+    const normalized =
+        normalizeSaleRow({
+
+            ticket_id:
+                row.ticket_id,
+
+            line_id:
+                row.line_id,
+
+            item_id:
+                row.item_id,
+
+            item_name:
+                row.item_name,
+
+            customer_id:
+                row.customer_id,
+
+            customer_name:
+                row.customer_name,
+
+            ticket_ztime:
+                row.date,
+
+            sales_return:
+                row.sales_return,
+
+            transaction_type:
+                row.transaction_type,
+
+            ticket_total:
+                row.ticket_total,
+
+            packs:
+                row.packs,
+
+            units:
+                row.units,
+
+            line_parts:
+                row.parts,
+
+            item_parts:
+                row.parts,
+
+            bonus:
+                row.bonus,
+
+            line_sales_price:
+                row.sales_price,
+
+            line_discount:
+                row.discount,
+
+            line_extra_discount:
+                row.extra_discount,
+
+            last_purchase_cost:
+                row.purchase_cost,
+
+            last_purchase_date:
+                row.purchase_date,
+
+            last_purchase_invoice_id:
+                row.purchase_invoice_id,
+
+            last_purchase_invoice_code:
+                row.purchase_invoice_code,
+
+            last_purchase_vendor_id:
+                row.purchase_vendor_id,
+
+            last_purchase_parts:
+                row.purchase_parts,
+
+            line_cost:
+                row.source_pos_item_cost,
+
+            line_store_id:
+                row.store_id,
+
+            ticket_store_id:
+                row.store_id,
+
+            sales_rep_id:
+                row.sales_rep_id,
+
+            pin_number:
+                row.pin_number,
+
+            is_content:
+                row.is_content
+        });
+
+
+    normalized.pinNumber =
+        row.pin_number === null ||
+        row.pin_number === undefined
+
+            ? null
+
+            : String(
+                row.pin_number
+            );
+
+    return normalized;
+
+}
+
+async function getSalesFromLocalFirstStrategy({
+    branchId,
+    fromDate,
+    toDate,
+    connection,
+    forceRefresh = false
+}) {
+    if (forceRefresh) {
+        return null;
+    }
+
+    const today = getTodayUtcDate();
+
+    const completedToDate =
+        minSalesDate(
+            toDate,
+            today
+        );
+
+    const currentFromDate =
+        maxSalesDate(
+            fromDate,
+            today
+        );
+
+    let covered = false;
+
+    let localRows = [];
+
+    let currentDayRows = [];
+
+    /*
+     * COMPLETED DAYS
+     * Read directly from local SQLite.
+     */
+    if (fromDate < completedToDate) {
+
+        const startedAt =
+            Date.now();
+
+        const rows =
+            await getLocalSalesRows({
+                branchId,
+                fromDate,
+                toDate: completedToDate
+            });
+
+        localRows =
+            Array.isArray(rows)
+                ? rows.map(normalizeLocalSaleRow)
+                : [];
+
+        console.log(
+            `[salesService] LOCAL SQLITE READ branch=${branchId} ${fromDate} -> ${completedToDate} rows=${localRows.length} in ${Date.now() - startedAt} ms`
+        );
+
+        if (localRows.length > 0) {
+            covered = true;
+        }
+        else {
+            console.log(
+                `[salesService] LOCAL SQLITE EMPTY -> SQL FALLBACK branch=${branchId} ${fromDate} -> ${completedToDate}`
+            );
+        }
+    }
+
+    /*
+     * CURRENT UTC DAY
+     * Keep SQL Server for live/fresh data.
+     */
+
+    /*
+     * =====================================================
+     * LOCAL CUSTOMER NAME ENRICHMENT
+     * =====================================================
+     *
+     * Historical sales come from SQLite for speed.
+     * Resolve only missing customer names from Cards.
+     */
+
+    const customerIdsNeedingNames = [
+
+        ...new Set(
+
+            localRows
+
+                .filter(
+
+                    row =>
+
+                        row &&
+
+                        row.customerId != null &&
+
+                        String(
+                            row.customerName || ""
+                        ).trim() === ""
+
+                )
+
+                .map(
+
+                    row =>
+                        String(
+                            row.customerId
+                        ).trim()
+
+                )
+
+                .filter(
+
+                    id =>
+                        id !== "" &&
+                        id !== "0"
+
+                )
+
+        )
+
+    ];
+
+
+    if (
+        customerIdsNeedingNames.length > 0
+    ) {
+
+        try {
+
+            const customerPool =
+                await getBranchPool(
+                    Number(branchId),
+                    connection
+                );
+
+
+            const customerNameById =
+                new Map();
+
+
+            const chunkSize = 500;
+
+
+            for (
+                let start = 0;
+                start < customerIdsNeedingNames.length;
+                start += chunkSize
+            ) {
+
+                const chunk =
+                    customerIdsNeedingNames.slice(
+                        start,
+                        start + chunkSize
+                    );
+
+
+                const request =
+                    customerPool.request();
+
+
+                const placeholders =
+                    chunk.map(
+                        (id, index) => {
+
+                            const parameterName =
+                                "localCustomerId" +
+                                index;
+
+                            request.input(
+                                parameterName,
+                                Number(id)
+                            );
+
+                            return "@" +
+                                parameterName;
+
+                        }
+                    );
+
+
+                const sql =
+
+                    "SET NOCOUNT ON; " +
+
+                    "SELECT ID, Name " +
+
+                    "FROM dbo.Cards " +
+
+                    "WHERE ID IN (" +
+
+                    placeholders.join(", ") +
+
+                    ");";
+
+
+                const result =
+                    await request.query(
+                        sql
+                    );
+
+
+                for (
+                    const card
+                    of result?.recordset || []
+                ) {
+
+                    if (
+                        card?.ID === null ||
+                        card?.ID === undefined
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    const id =
+                        String(
+                            card.ID
+                        ).trim();
+
+
+                    const name =
+                        String(
+                            card.Name || ""
+                        ).trim();
+
+
+                    if (
+                        id &&
+                        name
+                    ) {
+
+                        customerNameById.set(
+                            id,
+                            name
+                        );
+
+                    }
+
+                }
+
+            }
+
+
+            let enrichedRows = 0;
+
+
+            for (
+                const row
+                of localRows
+            ) {
+
+                const customerId =
+                    row?.customerId == null
+                        ? ""
+                        : String(
+                            row.customerId
+                        ).trim();
+
+
+                if (
+                    !customerId ||
+                    customerId === "0"
+                ) {
+
+                    continue;
+
+                }
+
+
+                if (
+                    String(
+                        row.customerName || ""
+                    ).trim() !== ""
+                ) {
+
+                    continue;
+
+                }
+
+
+                const customerName =
+                    customerNameById.get(
+                        customerId
+                    ) || null;
+
+
+                if (
+                    customerName
+                ) {
+
+                    row.customerName =
+                        customerName;
+
+                    enrichedRows += 1;
+
+                }
+
+            }
+
+
+            console.log(
+                "[salesService] LOCAL CUSTOMER NAME ENRICH " +
+                "branch=" + branchId +
+                " ids=" +
+                customerIdsNeedingNames.length +
+                " rows=" +
+                enrichedRows
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+                "[salesService] local customer name enrichment failed " +
+                "branch=" + branchId + ":",
+                error?.message || error
+            );
+
+        }
+
+    }
+
+    /*
+     * APPLY AUTHORITATIVE DELIVERY CUSTOMER FLAG
+     * TO LOCAL SQLITE ROWS.
+     */
+    if (
+        localRows.length > 0
+    ) {
+
+        try {
+
+            const customerPool =
+                await getBranchPool(
+                    Number(branchId),
+                    connection
+                );
+
+            const customerNameMap =
+                await loadCustomerNameMap({
+                    branchId:
+                        Number(branchId),
+                    pool:
+                        customerPool,
+                    connection
+                });
+
+            const deliveryCustomerIds =
+                customerNameMap?.deliveryCustomerIds instanceof Set
+                    ? customerNameMap.deliveryCustomerIds
+                    : new Set();
+
+            for (
+                const row
+                of localRows
+            ) {
+
+                const customerId =
+                    row?.customerId === null ||
+                    row?.customerId === undefined
+                        ? ""
+                        : String(
+                            row.customerId
+                        ).trim();
+
+                row.isDeliveryCustomer =
+                    Boolean(
+                        customerId &&
+                        customerId !== "0" &&
+                        deliveryCustomerIds.has(
+                            customerId
+                        )
+                    );
+
+            }
+
+            console.log(
+                "[salesService] LOCAL DELIVERY FLAG APPLIED " +
+                "branch=" +
+                branchId +
+                " rows=" +
+                localRows.length
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+                "[salesService] local delivery flag failed " +
+                "branch=" +
+                branchId +
+                ":",
+                error?.message ||
+                error
+            );
+
+            for (
+                const row
+                of localRows
+            ) {
+
+                row.isDeliveryCustomer =
+                    false;
+
+            }
+
+        }
+
+    }
+
+    /*
+     * CURRENT DAY
+     * toDate is inclusive at the application level.
+     * SQL Server receives an exclusive upper bound.
+     */
+
+    const includesCurrentDay =
+        currentFromDate <= today &&
+        toDate >= today;
+
+    if (includesCurrentDay) {
+
+        covered = true;
+
+        const nextDay = new Date(
+            today + "T00:00:00Z"
+        );
+
+        nextDay.setUTCDate(
+            nextDay.getUTCDate() + 1
+        );
+
+        const currentDayToDate =
+            toDate === today
+                ? nextDay.toISOString().slice(0, 10)
+                : toDate;
+
+        const currentDayKey =
+            [
+                branchId,
+                currentFromDate,
+                currentDayToDate
+            ].join("|");
+
+        let currentDayLoaded = false;
+
+        const now = Date.now();
+
+        if (!forceRefresh) {
+
+            const cachedCurrentDay =
+                currentDayResultCache.get(
+                    currentDayKey
+                );
+
+            if (
+                cachedCurrentDay &&
+                now - cachedCurrentDay.timestamp <
+                    CURRENT_DAY_CACHE_TTL_MS
+            ) {
+
+                currentDayRows =
+                    cachedCurrentDay.rows;
+
+                currentDayLoaded = true;
+
+                console.log(
+                    "[salesService] CURRENT DAY CACHE HIT branch=" +
+                    branchId +
+                    " " + currentFromDate +
+                    " -> " + currentDayToDate +
+                    " rows=" + currentDayRows.length
+                );
+
+            }
+
+        }
+
+        if (!currentDayLoaded) {
+
+            let request =
+                currentDayInFlight.get(
+                    currentDayKey
+                );
+
+            if (!request) {
+
+                const startedAt = Date.now();
+
+                console.log(
+                    "[salesService] CURRENT DAY SQL START branch=" +
+                    branchId +
+                    " " + currentFromDate +
+                    " -> " + currentDayToDate
+                );
+
+                request =
+                    queryPharmaFlySales({
+                        branchId,
+                        fromDate: currentFromDate,
+                        toDate: currentDayToDate,
+                        connection
+                    })
+                    .then(
+                        rows => {
+
+                            if (!forceRefresh) {
+                                currentDayResultCache.set(
+                                    currentDayKey,
+                                    {
+                                        rows,
+                                        timestamp: Date.now()
+                                    }
+                                );
+                            }
+
+                            console.log(
+                                "[salesService] CURRENT DAY SQL branch=" +
+                                branchId +
+                                " " + currentFromDate +
+                                " -> " + currentDayToDate +
+                                " rows=" + rows.length +
+                                " in " +
+                                (Date.now() - startedAt) +
+                                " ms"
+                            );
+
+                            return rows;
+                        }
+                    )
+                    .finally(
+                        () => {
+                            currentDayInFlight.delete(
+                                currentDayKey
+                            );
+                        }
+                    );
+
+                currentDayInFlight.set(
+                    currentDayKey,
+                    request
+                );
+
+            }
+            else {
+
+                console.log(
+                    "[salesService] CURRENT DAY SINGLE-FLIGHT JOIN branch=" +
+                    branchId +
+                    " " + currentFromDate +
+                    " -> " + currentDayToDate
+                );
+
+            }
+
+            currentDayRows =
+                await request;
+
+        }
+
+    }
+
+        if (!covered) {
+        return null;
+    }
+
+    const combinedRows = [
+        ...localRows,
+        ...currentDayRows
+    ];
+
+    combinedRows.sort(
+        (a, b) => {
+            const dateCompare =
+                String(a.date || "").localeCompare(
+                    String(b.date || "")
+                );
+
+            if (dateCompare !== 0) {
+                return dateCompare;
+            }
+
+            const ticketCompare =
+                Number(a.ticketId || 0) -
+                Number(b.ticketId || 0);
+
+            if (ticketCompare !== 0) {
+                return ticketCompare;
+            }
+
+            return (
+                Number(a.lineId || 0) -
+                Number(b.lineId || 0)
+            );
+        }
+    );
+
+    return combinedRows;
+}
+
+const CURRENT_DAY_CACHE_TTL_MS = 5000;
+
+const currentDayInFlight = new Map();
+
+const currentDayResultCache = new Map();
+
 export async function getSales(
     {
         branchId,
@@ -3663,6 +4525,25 @@ export async function getSales(
         dateRange.toDate;
 
 
+    /*
+     * TEMPORARY DIRECT PHARMAFLY TEST
+     * Branch 5 / 2026-09-01 only
+     */
+    if (
+        numericBranchId === 5 &&
+        normalizedFromDate === "2026-09-01" &&
+        normalizedToDate === "2026-09-02"
+    ) {
+
+        forceRefresh = true;
+
+        console.log(
+            "[salesService] DIRECT PHARMAFLY TEST ENABLED branch=5 date=2026-09-01"
+        );
+
+    }
+
+
     const key =
         buildSalesCacheKey({
 
@@ -3685,11 +4566,7 @@ export async function getSales(
      */
 
     if (
-        !forceRefresh &&
-        !rangeTouchesCurrentMonth(
-            normalizedFromDate,
-            normalizedToDate
-        )
+        !forceRefresh
     ) {
 
         const cachedRows =
@@ -3790,7 +4667,156 @@ export async function getSales(
     }
 
 
-    /*
+        /*
+     * =====================================================
+     * LOCAL-FIRST GET
+     * =====================================================
+     *
+     * Completed dates:
+     *     LOCAL SQLITE
+     *
+     * Current UTC date:
+     *     SQL SERVER
+     *
+     * This block runs before MONTHLY STRATEGY so that
+     * local SQLite is the primary source for history.
+     */
+
+    if (
+        !forceRefresh
+    ) {
+
+        try {
+
+            const localFirstKey =
+    key + "|local-first";
+
+let localFirstRequest =
+    localFirstInFlight.get(
+        localFirstKey
+    );
+
+if (localFirstRequest) {
+
+    console.log(
+        "[salesService] LOCAL-FIRST IN-FLIGHT JOIN " +
+        key
+    );
+
+}
+else {
+
+    console.log(
+        "[salesService] LOCAL-FIRST IN-FLIGHT LEADER " +
+        key
+    );
+
+    localFirstRequest =
+        getSalesFromLocalFirstStrategy({
+            branchId:
+                numericBranchId,
+            fromDate:
+                normalizedFromDate,
+            toDate:
+                normalizedToDate,
+            connection,
+            forceRefresh:
+                false
+        })
+        .finally(() => {
+
+            if (
+                localFirstInFlight.get(
+                    localFirstKey
+                ) ===
+                localFirstRequest
+            ) {
+
+                localFirstInFlight.delete(
+                    localFirstKey
+                );
+
+            }
+
+        });
+
+    localFirstInFlight.set(
+        localFirstKey,
+        localFirstRequest
+    );
+
+}
+
+const localFirstRows =
+    await localFirstRequest;
+
+
+            if (
+                Array.isArray(
+                    localFirstRows
+                )
+            ) {
+
+                setCachedSales(
+
+                    key,
+
+                    localFirstRows
+
+                );
+
+
+                if (
+                    !isFullCalendarMonth(
+
+                        normalizedFromDate,
+
+                        normalizedToDate
+
+                    )
+                ) {
+
+                    savePersistentSalesRange({
+
+                        key,
+
+                        rows:
+                            localFirstRows
+
+                    });
+
+                }
+
+
+                console.log(
+
+                    `[salesService] LOCAL-FIRST RESULT ${key} -> ${localFirstRows.length} rows`
+
+                );
+
+
+                return localFirstRows;
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                `[salesService] local-first strategy failed ${key}:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+/*
      * =====================================================
      * MONTHLY STRATEGY
      * =====================================================
@@ -5158,3 +6184,18 @@ export default {
     getSalesCacheStats
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

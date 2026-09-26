@@ -120,7 +120,7 @@ export default function ProductProfitabilityPanel(
         ) {
 
             console.error(
-                "[UI] Product Profitability failed:",
+                "[UI] ربحية المنتجات failed:",
                 requestError
             );
 
@@ -152,7 +152,7 @@ export default function ProductProfitabilityPanel(
         <section className="analysis-section">
 
             <div className="section-title">
-                Product Profitability
+                ربحية المنتجات
             </div>
 
 
@@ -169,7 +169,7 @@ export default function ProductProfitabilityPanel(
                 {
                     loading
                         ? "جاري التحليل..."
-                        : "تحليل Product Profitability"
+                        : "تحليل ربحية المنتجات"
                 }
 
             </button>
@@ -200,7 +200,7 @@ export default function ProductProfitabilityPanel(
                             <div className="metric">
 
                                 <span>
-                                    Gross Sales
+                                    إجمالي المبيعات
                                 </span>
 
                                 <strong>
@@ -238,7 +238,7 @@ export default function ProductProfitabilityPanel(
                             <div className="metric">
 
                                 <span>
-                                    Returns
+                                    المرتجعات
                                 </span>
 
                                 <strong>
@@ -337,7 +337,7 @@ export default function ProductProfitabilityPanel(
                             <div className="metric">
 
                                 <span>
-                                    Negative Margin Products
+                                    منتجات بهامش ربح سلبي
                                 </span>
 
                                 <strong>
@@ -360,7 +360,7 @@ export default function ProductProfitabilityPanel(
                             <div className="result-header">
 
                                 <strong>
-                                    Most Profitable Products
+                                    أكثر المنتجات ربحية
                                 </strong>
 
                                 <span>

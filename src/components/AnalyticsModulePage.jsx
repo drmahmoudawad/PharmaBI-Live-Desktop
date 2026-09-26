@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 
 function num(v){const n=Number(v);return Number.isFinite(n)?n:0;}
 function fmt(v,type='number'){
@@ -23,13 +23,22 @@ export default function AnalyticsModulePage({moduleId,activeModuleDefinition,sel
         async function load(){
             try{
                 setLoading(true);setError('');setData(null);
-                const result=await window.pharmaBI.analytics.module({
-                    moduleId,
-                    branchId:selectedBranchId === 'all' ? 'all' : Number(selectedBranchId),
-                    selectedBranchId,
-                    connection:selectedConnection||null,
-                    fromDate,toDate
-                });
+                const result =
+                    moduleId === 'sales-sellers'
+                        ? await window.pharmaBI.dashboard.overview({
+                            action:'seller-overview',
+                            branchId:selectedBranchId === 'all' ? 'all' : Number(selectedBranchId),
+                            connection:selectedConnection||null,
+                            fromDate,
+                            toDate
+                        })
+                        : await window.pharmaBI.analytics.module({
+                            moduleId,
+                            branchId:selectedBranchId === 'all' ? 'all' : Number(selectedBranchId),
+                            selectedBranchId,
+                            connection:selectedConnection||null,
+                            fromDate,toDate
+                        });
                 if(!cancelled) setData(result);
             }catch(e){
                 if(!cancelled) setError(e?.message||'تعذر تحميل التحليل.');
@@ -48,8 +57,8 @@ export default function AnalyticsModulePage({moduleId,activeModuleDefinition,sel
 
     return <section className="page-card">
         <div className="page-header">
-            <div><div className="page-eyebrow">PHARMABI ANALYTICS</div><h2>{data.title}</h2><p>{data.subtitle}</p></div>
-            <div className="period-chip">{fromDate}<span>→</span>{toDate}</div>
+            <div><div className="page-eyebrow">تحليلات فارما بي آي</div><h2>{data.title}</h2><p>{data.subtitle}</p></div>
+            <div className="period-chip">{fromDate}<span>إلى</span>{toDate}</div>
         </div>
 
         <div className="kpi-grid">
@@ -85,3 +94,4 @@ function AnalyticsTable({section}){
         </div>
     </div>;
 }
+

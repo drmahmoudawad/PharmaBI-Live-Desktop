@@ -20,7 +20,7 @@ export default function ProductsPage(
                 <div>
 
                     <h1>
-                        Products Analytics
+                        تحليلات المنتجات
                     </h1>
 
                     <p>

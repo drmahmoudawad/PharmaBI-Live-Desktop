@@ -224,7 +224,7 @@ export default function TicketReconciliation(
                                                     </th>
 
                                                     <th>
-                                                        Header Total
+                                                        الإجمالي
                                                     </th>
 
                                                     <th>

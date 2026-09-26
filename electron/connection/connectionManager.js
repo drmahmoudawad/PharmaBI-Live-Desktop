@@ -1,6 +1,5 @@
 import sql from "mssql";
 
-
 import {
     validatePharmaFlyConnection
 } from "./pharmaflyValidator.js";
@@ -10,12 +9,25 @@ const pools =
     new Map();
 
 
+const connectingPools =
+    new Map();
+
+
 const SQL_CONNECTION_TIMEOUT_MS =
-    30000;
+    5000;
 
 
 const SQL_REQUEST_TIMEOUT_MS =
     120000;
+
+
+/*
+ * Keep SQL connections warm longer.
+ * The pool itself remains available even when an individual
+ * idle socket is recycled by the pool implementation.
+ */
+const SQL_IDLE_TIMEOUT_MS =
+    300000;
 
 
 function normalizeBranchId(
@@ -173,10 +185,10 @@ function buildConfig(
                 10,
 
             min:
-                0,
+                1,
 
             idleTimeoutMillis:
-                30000
+                SQL_IDLE_TIMEOUT_MS
 
         },
 
@@ -191,12 +203,55 @@ function buildConfig(
 
     console.log(
 
-        `[connectionManager] SQL config server=${server} database=${database} requestTimeout=${SQL_REQUEST_TIMEOUT_MS}ms`
+        `[connectionManager] SQL config branch server=${server} database=${database} requestTimeout=${SQL_REQUEST_TIMEOUT_MS}ms idleTimeout=${SQL_IDLE_TIMEOUT_MS}ms`
 
     );
 
 
     return config;
+
+}
+
+
+/*
+ * =========================================================
+ * SAFE CLOSE
+ * =========================================================
+ */
+
+async function safeClosePool(
+    pool,
+    branchId
+) {
+
+    if (
+        !pool
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        await pool.close();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.warn(
+
+            `[connectionManager] Branch ${branchId} stale pool close ignored:`,
+
+            error?.message ||
+            error
+
+        );
+
+    }
 
 }
 
@@ -218,6 +273,12 @@ export async function getBranchPool(
         );
 
 
+    /*
+     * -----------------------------------------------------
+     * Existing healthy pool
+     * -----------------------------------------------------
+     */
+
     const existing =
         pools.get(
             id
@@ -233,6 +294,36 @@ export async function getBranchPool(
     }
 
 
+    /*
+     * -----------------------------------------------------
+     * Existing connection attempt
+     *
+     * This is critical:
+     * only ONE connection attempt is allowed per branch.
+     * -----------------------------------------------------
+     */
+
+    const pending =
+        connectingPools.get(
+            id
+        );
+
+
+    if (
+        pending
+    ) {
+
+        return pending;
+
+    }
+
+
+    /*
+     * -----------------------------------------------------
+     * Remove stale pool
+     * -----------------------------------------------------
+     */
+
     if (
         existing
     ) {
@@ -242,90 +333,145 @@ export async function getBranchPool(
         );
 
 
-        try {
-
-            await existing.close();
-
-        }
-        catch {
-            // Ignore stale pool close failures.
-        }
+        void safeClosePool(
+            existing,
+            id
+        );
 
     }
 
 
-    const config =
-        buildConfig(
-            connection
-        );
+    /*
+     * -----------------------------------------------------
+     * Create exactly one new connection attempt
+     * -----------------------------------------------------
+     */
+
+    const task =
+        (async () => {
+
+            const config =
+                buildConfig(
+                    connection
+                );
 
 
-    const pool =
-        new sql.ConnectionPool(
-            config
-        );
+            const pool =
+                new sql.ConnectionPool(
+                    config
+                );
+
+
+            try {
+
+                await pool.connect();
+
+
+                /*
+                 * Pool errors mean this pool must be
+                 * discarded. A future request will create
+                 * a fresh pool.
+                 */
+
+                pool.on(
+
+                    "error",
+
+                    error => {
+
+                        console.error(
+
+                            `[connectionManager] Branch ${id} pool error:`,
+
+                            error
+
+                        );
+
+
+                        if (
+                            pools.get(
+                                id
+                            ) === pool
+                        ) {
+
+                            pools.delete(
+                                id
+                            );
+
+                        }
+
+
+                        void safeClosePool(
+                            pool,
+                            id
+                        );
+
+                    }
+
+                );
+
+
+                /*
+                 * Store only after successful connect.
+                 */
+
+                pools.set(
+                    id,
+                    pool
+                );
+
+
+                console.log(
+
+                    `[connectionManager] Branch ${id} connected requestTimeout=${SQL_REQUEST_TIMEOUT_MS}ms`
+
+                );
+
+
+                return pool;
+
+            }
+            catch (
+                error
+            ) {
+
+                await safeClosePool(
+                    pool,
+                    id
+                );
+
+
+                throw error;
+
+            }
+
+        })();
+
+
+    connectingPools.set(
+        id,
+        task
+    );
 
 
     try {
 
-        await pool.connect();
-
-
-        pool.on(
-
-            "error",
-
-            error => {
-
-                console.error(
-
-                    `[connectionManager] Branch ${id} pool error:`,
-
-                    error
-
-                );
-
-
-                pools.delete(
-                    id
-                );
-
-            }
-
-        );
-
-
-        pools.set(
-            id,
-            pool
-        );
-
-
-        console.log(
-
-            `[connectionManager] Branch ${id} connected requestTimeout=${SQL_REQUEST_TIMEOUT_MS}ms`
-
-        );
-
-
-        return pool;
+        return await task;
 
     }
-    catch (
-        error
-    ) {
+    finally {
 
-        try {
+        if (
+            connectingPools.get(
+                id
+            ) === task
+        ) {
 
-            await pool.close();
+            connectingPools.delete(
+                id
+            );
 
         }
-        catch {
-            // Ignore close failures.
-        }
-
-
-        throw error;
 
     }
 
@@ -351,11 +497,8 @@ export async function testBranchConnection(
 
     const pool =
         await getBranchPool(
-
             id,
-
             connection
-
         );
 
 
@@ -390,14 +533,6 @@ export async function testBranchConnection(
  * =========================================================
  * INSPECT posTickets COLUMNS
  * =========================================================
- *
- * Temporary diagnostic helper.
- *
- * It uses the SAME active connection used by PharmaBI.
- *
- * This lets us identify the REAL delivery-related column
- * in PharmaFly without using sqlcmd or another connection.
- *
  */
 
 export async function inspectTableColumns(
@@ -413,11 +548,8 @@ export async function inspectTableColumns(
 
     const pool =
         await getBranchPool(
-
             id,
-
             connection
-
         );
 
 
@@ -425,6 +557,8 @@ export async function inspectTableColumns(
         await pool
             .request()
             .query(`
+
+                SET NOCOUNT ON;
 
                 SELECT
 
@@ -502,10 +636,44 @@ export async function closeBranchConnection(
         );
 
 
+    const pending =
+        connectingPools.get(
+            id
+        );
+
+
+    if (
+        pending
+    ) {
+
+        try {
+
+            await pending;
+
+        }
+        catch {
+
+            // Ignore connection-attempt failures.
+
+        }
+
+    }
+
+
     const pool =
         pools.get(
             id
         );
+
+
+    pools.delete(
+        id
+    );
+
+
+    connectingPools.delete(
+        id
+    );
 
 
     if (
@@ -517,26 +685,17 @@ export async function closeBranchConnection(
     }
 
 
-    pools.delete(
+    await safeClosePool(
+        pool,
         id
     );
 
 
-    try {
+    console.log(
 
-        await pool.close();
+        `[connectionManager] Branch ${id} disconnected.`
 
-
-        console.log(
-
-            `[connectionManager] Branch ${id} disconnected.`
-
-        );
-
-    }
-    catch {
-        // Ignore close failures.
-    }
+    );
 
 }
 
@@ -551,27 +710,31 @@ export async function closeAllConnections() {
 
     const activePools =
         Array.from(
-            pools.values()
+            pools.entries()
         );
 
 
     pools.clear();
 
 
+    connectingPools.clear();
+
+
     await Promise.all(
 
         activePools.map(
 
-            async pool => {
+            async (
+                [
+                    branchId,
+                    pool
+                ]
+            ) => {
 
-                try {
-
-                    await pool.close();
-
-                }
-                catch {
-                    // Ignore close failures.
-                }
+                await safeClosePool(
+                    pool,
+                    branchId
+                );
 
             }
 
@@ -596,6 +759,12 @@ export function getActiveBranchConnections() {
 
 }
 
+
+/*
+ * =========================================================
+ * DEFAULT
+ * =========================================================
+ */
 
 export default {
 

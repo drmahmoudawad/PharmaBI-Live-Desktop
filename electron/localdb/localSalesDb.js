@@ -293,6 +293,23 @@ function createSchema() {
 
     `);
 
+    const salesHistoryColumns =
+        db.prepare(
+            "PRAGMA table_info(sales_history)"
+        ).all();
+
+    if (
+        !salesHistoryColumns.some(
+            column => column.name === "pin_number"
+        )
+    ) {
+
+        db.exec(
+            "ALTER TABLE sales_history ADD COLUMN pin_number TEXT"
+        );
+
+    }
+
 }
 
 
@@ -351,6 +368,7 @@ function getStatements() {
                     is_content,
                     store_id,
                     sales_rep_id,
+                    pin_number,
                     updated_at
 
                 )
@@ -393,6 +411,7 @@ function getStatements() {
                     @is_content,
                     @store_id,
                     @sales_rep_id,
+                    @pin_number,
                     CURRENT_TIMESTAMP
 
                 )
@@ -508,8 +527,79 @@ function getStatements() {
                     sales_rep_id =
                         excluded.sales_rep_id,
 
+                    pin_number =
+                        excluded.pin_number,
+
                     updated_at =
                         CURRENT_TIMESTAMP
+
+            `),
+
+
+        getSalesRange:
+            db.prepare(`
+
+                SELECT
+
+                    branch_id,
+                    ticket_id,
+                    line_id,
+                    item_id,
+                    item_name,
+                    customer_id,
+                    customer_name,
+                    date,
+                    sales_return,
+                    transaction_type,
+                    ticket_total,
+                    packs,
+                    units,
+                    parts,
+                    base_units,
+                    bonus,
+                    sales_price,
+                    unit_price,
+                    gross_line_value,
+                    discount,
+                    extra_discount,
+                    net_line_value,
+                    cost_price,
+                    unit_cost,
+                    line_cost,
+                    purchase_cost,
+                    purchase_unit_cost,
+                    purchase_date,
+                    purchase_invoice_id,
+                    purchase_invoice_code,
+                    purchase_vendor_id,
+                    purchase_parts,
+                    source_pos_item_cost,
+                    is_content,
+                    store_id,
+                    sales_rep_id
+                    pin_number
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                AND
+
+                    date >= ?
+
+                AND
+
+                    date < ?
+
+                ORDER BY
+
+                    date ASC,
+
+                    ticket_id ASC,
+
+                    line_id ASC
 
             `),
 
@@ -679,6 +769,91 @@ function getStatements() {
             `)
 
     };
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE HELPERS
+ * =========================================================
+ */
+
+function getExclusiveDate(
+
+    value
+
+) {
+
+    const normalized =
+        String(
+            value ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            normalized
+        )
+    ) {
+
+        throw new Error(
+            "Invalid date. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const [
+        year,
+        month,
+        day
+    ] =
+        normalized
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const next =
+        new Date(
+
+            Date.UTC(
+
+                year,
+                month - 1,
+                day + 1
+
+            )
+
+        );
+
+
+    return [
+
+        next.getUTCFullYear(),
+
+        String(
+            next.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        String(
+            next.getUTCDate()
+        ).padStart(
+            2,
+            "0"
+        )
+
+    ].join(
+        "-"
+    );
 
 }
 
@@ -937,6 +1112,11 @@ function normalizeRow(
         sales_rep_id:
             toNullableString(
                 row?.salesRepId
+            ),
+
+        pin_number:
+            toNullableString(
+                row?.pinNumber
             )
 
     };
@@ -1111,6 +1291,121 @@ export function saveSalesRows(
         processed
 
     };
+
+}
+
+
+/*
+ * =========================================================
+ * GET SALES RANGE
+ * =========================================================
+ */
+
+export function getSalesRows(
+    {
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    const from =
+        String(
+            fromDate ||
+            ""
+        ).trim();
+
+
+    const to =
+        String(
+            toDate ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            from
+        )
+    ) {
+
+        throw new Error(
+            "Invalid fromDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            to
+        )
+    ) {
+
+        throw new Error(
+            "Invalid toDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const toExclusive =
+        getExclusiveDate(
+            to
+        );
+
+
+    const startedAt =
+        Date.now();
+
+
+    const rows =
+        getStatements()
+            .getSalesRange
+            .all(
+
+                id,
+
+                `${from}T00:00:00.000Z`,
+
+                `${toExclusive}T00:00:00.000Z`
+
+            );
+
+
+    const elapsed =
+        Date.now() -
+        startedAt;
+
+
+    console.log(
+
+        `[localSalesDb] READ branch=${id} range=${from}|${to} rows=${rows.length} in ${elapsed} ms`
+
+    );
+
+
+    return rows;
 
 }
 
@@ -1646,6 +1941,8 @@ export default {
 
     getLocalSalesDatabase,
 
+    getSalesRows,
+
     saveSalesRows,
 
     saveSalesMonth,
@@ -1667,3 +1964,4 @@ export default {
     closeLocalSalesDatabase
 
 };
+

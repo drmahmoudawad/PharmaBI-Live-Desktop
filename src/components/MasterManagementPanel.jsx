@@ -863,7 +863,7 @@ export default function MasterManagementPanel() {
 
                             }
                         }
-                        placeholder="ابحث باسم الـMaster أو الكود"
+                        placeholder="ابحث باسم الصنف الرئيسي أو الكود"
                         style={{
                             flex:
                                 1,

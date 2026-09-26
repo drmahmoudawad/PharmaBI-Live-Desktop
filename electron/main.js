@@ -16,7 +16,8 @@ import {
 
 
 import {
-    registerConnectionIpc
+    registerConnectionIpc,
+    syncCrmPhonesForBranch
 } from "./ipc/connection.ipc.js";
 
 
@@ -62,7 +63,6 @@ import {
 
 
 import {
-    startAllBranchesWarmup,
     refreshCurrentMonthAllBranches
 } from "./cache/cacheWarmupService.js";
 
@@ -92,10 +92,6 @@ const __dirname =
 
 let mainWindow =
     null;
-
-
-const WARMUP_START_DELAY_AFTER_CONNECT_MS =
-    6000;
 
 
 const DEV_SERVER =
@@ -381,10 +377,10 @@ async function autoConnectSavedBranches() {
                             () =>
                                 reject(
                                     new Error(
-                                        `Auto-connect timeout after 15000ms for branch ${branchId}`
+                                        `Auto-connect timeout after 300000ms for branch ${branchId}`
                                     )
                                 ),
-                            15000
+                            300000
                         );
                     }
                 );
@@ -452,38 +448,46 @@ let currentMonthRefreshTimer =
     null;
 
 
-function startBackgroundWarmup() {
-    (async () => {
+async function startBackgroundWarmup() {
 
-        try {
+    console.log(
+        "[Electron] Initial current-month warmup delayed 300000ms to prioritize UI loading."
+    );
 
-            const result =
-                await refreshCurrentMonthAllBranches({
+    await new Promise(
+        resolve =>
+            setTimeout(
+                resolve,
+                300000
+            )
+    );
 
-                    maxRetries:
-                        2
+    try {
 
-                });
+        const result =
+            await refreshCurrentMonthAllBranches({
 
-            console.log(
-                "[Electron] Initial current-month refresh result:",
-                result
-            );
+                maxRetries:
+                    2
 
-        }
-        catch (
+            });
+
+        console.log(
+            "[Electron] Initial current-month refresh result:",
+            result
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+            "[Electron] Initial current-month refresh failed:",
             error
-        ) {
+        );
 
-            console.error(
-                "[Electron] Initial current-month refresh failed:",
-                error
-            );
-
-        }
-
-    })();
-
+    }
 
     if (
         !currentMonthRefreshTimer
@@ -502,7 +506,6 @@ function startBackgroundWarmup() {
                                     2
 
                             });
-
 
                         console.log(
                             "[Electron] 10-minute current-month refresh result:",
@@ -527,69 +530,151 @@ function startBackgroundWarmup() {
                 1000
             );
 
-
         console.log(
             "[Electron] Current-month auto-refresh scheduled every 10 minutes."
         );
 
     }
 
-    console.log(
-
-        `[Electron] Warm-up will start ${WARMUP_START_DELAY_AFTER_CONNECT_MS}ms after auto-connect completes.`
-
-    );
-
-
-    setTimeout(
-
-        () => {
-
-            try {
-
-                const result =
-                    startAllBranchesWarmup({
-
-                        delayMs:
-                            750,
-
-                        maxRetries:
-                            2
-
-                    });
-
-
-                console.log(
-
-                    "[Electron] Full historical cache warm-up started:",
-
-                    result
-
-                );
-
-            }
-            catch (
-                error
-            ) {
-
-                console.error(
-
-                    "[Electron] Cache warm-up startup failed:",
-
-                    error
-
-                );
-
-            }
-
-        },
-
-        WARMUP_START_DELAY_AFTER_CONNECT_MS
-
-    );
-
 }
 
+let crmPhoneSyncTimer =
+    null;
+
+let crmPhoneSyncRunning =
+    false;
+
+
+async function runCrmPhoneAutoSync() {
+
+    if (
+        crmPhoneSyncRunning
+    ) {
+        return;
+    }
+
+    crmPhoneSyncRunning =
+        true;
+
+    try {
+
+        const branches =
+            await getAllSavedConnections();
+
+        if (
+            !Array.isArray(
+                branches
+            )
+        ) {
+            return;
+        }
+
+        const results =
+            await Promise.allSettled(
+                branches.map(
+                    async branch => {
+
+                        const branchId =
+                            Number(
+                                branch?.branchId
+                            );
+
+                        if (
+                            !Number.isInteger(
+                                branchId
+                            ) ||
+                            branchId <= 0
+                        ) {
+                            return null;
+                        }
+
+                        try {
+
+                            return await syncCrmPhonesForBranch(
+                                branchId
+                            );
+
+                        } catch (
+                            error
+                        ) {
+
+                            console.warn(
+                                `[CRM Phone AutoSync] Branch ${branchId} unavailable: ${error?.message || error}`
+                            );
+
+                            return null;
+                        }
+                    }
+                )
+            );
+
+        const successful =
+            results
+                .filter(
+                    result =>
+                        result.status ===
+                        "fulfilled" &&
+                        result.value
+                )
+                .map(
+                    result =>
+                        result.value
+                );
+
+        if (
+            successful.length > 0
+        ) {
+
+            console.log(
+                "[CRM Phone AutoSync] Completed:",
+                successful
+            );
+        }
+
+    } catch (
+        error
+    ) {
+
+        console.warn(
+            "[CRM Phone AutoSync] General error:",
+            error?.message || error
+        );
+
+    } finally {
+
+        crmPhoneSyncRunning =
+            false;
+    }
+}
+
+
+function startCrmPhoneAutoSync() {
+
+    if (
+        crmPhoneSyncTimer
+    ) {
+        return;
+    }
+
+    console.log(
+        "[CRM Phone AutoSync] Started. Interval = 120000 ms."
+    );
+
+    setTimeout(
+        () => {
+            void runCrmPhoneAutoSync();
+        },
+        30000
+    );
+
+    crmPhoneSyncTimer =
+        setInterval(
+            () => {
+                void runCrmPhoneAutoSync();
+            },
+            120000
+        );
+}
 
 app.whenReady()
     .then(
@@ -640,9 +725,8 @@ app.whenReady()
 
             registerAnalyticsHubIpc();
             registerMasterItemIpc();
-
-
-            console.log(
+            startCrmPhoneAutoSync();
+console.log(
                 "[Electron] IPC handlers registered."
             );
 
@@ -844,5 +928,3 @@ app.on(
     }
 
 );
-
-

@@ -212,7 +212,7 @@ export default function CustomerClvPanel(
                             <div className="metric">
 
                                 <span>
-                                    Observed Net Sales
+                                    صافي المبيعات الفعلية
                                 </span>
 
                                 <strong>
@@ -355,7 +355,7 @@ export default function CustomerClvPanel(
                             <div className="result-header">
 
                                 <strong>
-                                    Top Customers by Observed Value
+                                    أعلى العملاء حسب القيمة الفعلية
                                 </strong>
 
                                 <span>

@@ -1,3 +1,4 @@
+﻿import { getSellerOverviewFast } from "../pharmfly/sellerOverviewFastService.js";
 import {
     ipcMain
 } from "electron";
@@ -11,6 +12,10 @@ import {
 import {
     getSellerPerformance
 } from "../pharmfly/sellerPerformanceService.js";
+
+import {
+    getSellerOverview
+} from "../pharmfly/sellerOverviewService.js";
 
 
 import {
@@ -63,6 +68,21 @@ export function registerDashboardIpc() {
              * SELLER PERFORMANCE
              * =====================================================
              */
+            /*
+             * =====================================================
+             * SELLER OVERVIEW
+             * =====================================================
+             */
+
+            if (payload?.action === "seller-overview") {
+    return getSellerOverviewFast({
+        branchId: payload?.branchId,
+        fromDate: payload?.fromDate,
+        toDate: payload?.toDate,
+        connection: payload?.connection || null
+    });
+}
+
 
             if (
                 payload?.action ===
@@ -353,3 +373,6 @@ export function registerDashboardIpc() {
 export default {
     registerDashboardIpc
 };
+
+
+

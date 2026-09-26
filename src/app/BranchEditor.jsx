@@ -252,7 +252,7 @@ export default function BranchEditor({
                                     )
                                 }
 
-                                placeholder="SERVER\\INSTANCE أو IP"
+                                placeholder="اسم الخادم أو عنوان الكمبيوتر"
 
                             />
 

@@ -15,6 +15,15 @@ const SELLER_PERFORMANCE_CACHE_TTL_MS =
     1000;
 
 
+const SELLER_AGGREGATION_CACHE_TTL_MS =
+    5 * 60 * 1000;
+
+const sellerAggregationCache =
+    new Map();
+
+const sellerAggregationInFlight =
+    new Map();
+
 const sellerPerformanceCache =
     new Map();
 
@@ -687,7 +696,7 @@ function setCachedSellerPerformance(
  * No purchase-history lookup is needed for seller evaluation.
  *
  */
-async function loadSellerMonthlyAggregation(
+async function loadSellerMonthlyAggregationCore(
     {
         branchId,
         connection,
@@ -955,6 +964,103 @@ async function loadSellerMonthlyAggregation(
 
 }
 
+
+
+async function loadSellerMonthlyAggregation(
+    {
+        branchId,
+        connection,
+        fromDate,
+        toDate
+    }
+) {
+
+    const key =
+        [
+            Number(branchId),
+            String(fromDate),
+            String(toDate)
+        ].join("|");
+
+    const now =
+        Date.now();
+
+    const cached =
+        sellerAggregationCache.get(
+            key
+        );
+
+    if (
+        cached &&
+        now - cached.createdAt <=
+            SELLER_AGGREGATION_CACHE_TTL_MS
+    ) {
+
+        console.log(
+            "[sellerPerformanceService] AGGREGATION CACHE HIT " +
+            key
+        );
+
+        return cached.data;
+    }
+
+    const existing =
+        sellerAggregationInFlight.get(
+            key
+        );
+
+    if (existing) {
+
+        console.log(
+            "[sellerPerformanceService] AGGREGATION IN-FLIGHT JOIN " +
+            key
+        );
+
+        return existing;
+    }
+
+    const request =
+        loadSellerMonthlyAggregationCore({
+            branchId,
+            connection,
+            fromDate,
+            toDate
+        });
+
+    sellerAggregationInFlight.set(
+        key,
+        request
+    );
+
+    try {
+
+        const data =
+            await request;
+
+        sellerAggregationCache.set(
+            key,
+            {
+                createdAt:
+                    Date.now(),
+                data
+            }
+        );
+
+        console.log(
+            "[sellerPerformanceService] AGGREGATION CACHE SET " +
+            key
+        );
+
+        return data;
+
+    }
+    finally {
+
+        sellerAggregationInFlight.delete(
+            key
+        );
+    }
+}
 
 async function loadSellerName(
     {

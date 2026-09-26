@@ -1,4 +1,4 @@
-import {
+﻿import {
     getAllSavedConnections
 } from "../settings/connectionStore.js";
 
@@ -120,7 +120,7 @@ function repairEmployeeName(value) {
         return "";
     }
 
-    if (!text.includes("ط") && !text.includes("ظ")) {
+    if (!text.includes("ط·") && !text.includes("ط¸")) {
         return text;
     }
 
@@ -425,9 +425,9 @@ async function loadEmployeeNames(
      * database:
      *
      *     posTickets.PinNumber
-     *             â†“
+     *             أ¢â€ â€œ
      *     Cards.ID
-     *             â†“
+     *             أ¢â€ â€œ
      *     Cards.Name
      *
      * We explicitly DO NOT use Users here because Users.login
@@ -576,7 +576,7 @@ async function loadEmployeeNames(
      *
      *     PinNumber 7520
      *         -> Cards.ID 7520
-     *         -> Cards.Name "ط¯ / ط§ط­ظ…ط¯ ط¹ظ„ظ‰"
+     *         -> Cards.Name "د / احمد على"
      *         -> IsEmployee = 1
      */
 
@@ -843,6 +843,51 @@ function aggregateRows(
             row.customerName || ""
         ).trim();
 
+        const isDelivery =
+            row?.isDeliveryCustomer === true;
+
+        /*
+         * DELIVERY KPI
+         * Delivery is determined by Cards.IsHDCustomer
+         * through row.isDeliveryCustomer.
+         */
+        if (isDelivery) {
+
+            deliverySales += salesValue;
+
+            if (ticketId) {
+                deliveryTickets.add(ticketId);
+            }
+
+            if (!deliverySalesByDay.has(dateText)) {
+                deliverySalesByDay.set(
+                    dateText,
+                    0
+                );
+            }
+
+            deliverySalesByDay.set(
+                dateText,
+                deliverySalesByDay.get(
+                    dateText
+                ) + salesValue
+            );
+
+            if (!deliveryTicketsByDay.has(dateText)) {
+                deliveryTicketsByDay.set(
+                    dateText,
+                    new Set()
+                );
+            }
+
+            if (ticketId) {
+                deliveryTicketsByDay
+                    .get(dateText)
+                    .add(ticketId);
+            }
+
+        }
+
         if (!daily.has(dateText)) {
             daily.set(dateText, newDailyBucket(dateText));
         }
@@ -856,20 +901,29 @@ function aggregateRows(
             allTickets.add(ticketId);
         }
 
-        if (customerId && customerId !== "0" && !isReturn) {
+        if (
+            customerId &&
+            customerId !== "0" &&
+            !isReturn &&
+            isDelivery
+        ) {
             day.customers.add(customerId);
         }
 
         totalSales += salesValue;
 
-        if (customerId && customerId !== "0") {
+        if (
+            customerId &&
+            customerId !== "0" &&
+            isDelivery
+        ) {
 
             const key = customerId;
 
             if (!customers.has(key)) {
                 customers.set(key, {
                     customerId: key,
-                    customerName: customerName || key,
+                    customerName: "",
                     sales: 0,
                     invoices: new Set()
                 });
@@ -883,8 +937,10 @@ function aggregateRows(
                 customer.invoices.add(ticketId);
             }
 
-            if (customerName && !customer.customerName) {
+            if (customerName) {
+
                 customer.customerName = customerName;
+
             }
 
         }
@@ -948,10 +1004,10 @@ function aggregateRows(
                 employeeId,
                 employeeName:
                     employeeId === "UNASSIGNED"
-                        ? "ط؛ظٹط± ظ…ط­ط¯ط¯"
+                        ? "غير محدد"
                         : (
                             employeeNames.get(employeeId) ||
-                            `ظ…ظˆط¸ظپ ط؛ظٹط± ظ…ط¹ط±ظˆظپ (${employeeId})`
+                            `موظف غير معروف (${employeeId})`
                         ),
                 sales: 0,
                 invoices: new Set(),
@@ -973,158 +1029,47 @@ function aggregateRows(
         }
 
 
-        if (!isReturn && customerId && customerId !== "0") {
-
-            employee.customers.add(customerId);
-
-        }
-        else if (!isReturn && customerName) {
-
-            employee.customers.add(`name:${customerName}`);
-
-        }
-
-    }
-
-    /*
-     * =========================================================
-     * AUTHORITATIVE CUSTOMER / DELIVERY DAILY FACTS
-     * =========================================================
-     *
-     * These values come from dbo.posTickets directly.
-     * This prevents the KPI from depending on seller PinNumber
-     * or on line-level CustomerName heuristics.
-     */
-
-    for (
-        const [
-            dateText,
-            customerIds
-        ]
-        of customerIdsByDay.entries()
-    ) {
-
-        if (!daily.has(dateText)) {
-
-            daily.set(
-                dateText,
-                newDailyBucket(dateText)
-            );
-
-        }
-
-
-        const day =
-            daily.get(dateText);
-
-
-        day.customers.clear();
-
-
-        for (
-            const customerId
-            of customerIds
+        if (
+            !isReturn &&
+            isDelivery &&
+            customerId &&
+            customerId !== "0"
         ) {
 
-            day.customers.add(
+            employee.customers.add(
                 customerId
             );
 
         }
-
-    }
-
-
-    /*
-     * Replace any previous line-level delivery inference.
-     */
-
-    for (
-        const day
-        of daily.values()
-    ) {
-
-        day.deliverySales = 0;
-
-        day.deliveryTickets.clear();
-
-    }
-
-
-    deliveryTickets.clear();
-
-
-    for (
-        const [
-            dateText,
-            ticketIds
-        ]
-        of deliveryTicketsByDay.entries()
-    ) {
-
-        if (!daily.has(dateText)) {
-
-            daily.set(
-                dateText,
-                newDailyBucket(dateText)
-            );
-
-        }
-
-
-        const day =
-            daily.get(dateText);
-
-
-        for (
-            const ticketId
-            of ticketIds
+        else if (
+            !isReturn &&
+            isDelivery &&
+            customerName
         ) {
 
-            day.deliveryTickets.add(
-                ticketId
-            );
-
-            deliveryTickets.add(
-                ticketId
+            employee.customers.add(
+                `name:${customerName}`
             );
 
         }
 
     }
 
-
-    for (
-        const [
-            dateText,
-            salesValue
-        ]
-        of deliverySalesByDay.entries()
-    ) {
-
-        if (!daily.has(dateText)) {
-
-            daily.set(
-                dateText,
-                newDailyBucket(dateText)
-            );
-
-        }
-
-
-        daily
-            .get(dateText)
-            .deliverySales =
-                number(salesValue);
-
-    }
-
-
-    deliverySales =
-        number(
-            deliveryTotalSales
-        );
-
+    /*
+     * =========================================================
+     * OLD DAILY CUSTOMER / DELIVERY RECONCILIATION DISABLED
+     * =========================================================
+     *
+     * Customer KPI now comes from:
+     *     row.isDeliveryCustomer
+     *
+     * Delivery KPI now comes from:
+     *     row.isDeliveryCustomer
+     *
+     * The previous posTickets-based reconciliation used
+     * DeliveryBoyId / raw CustomerID and could reintroduce
+     * non-delivery customers.
+     */
 
     const numberOfDays = daysInclusive(fromDate, toDate);
 
@@ -1154,7 +1099,7 @@ function aggregateRows(
     const topCustomers = [...customers.values()]
         .map(item => ({
             customerId: item.customerId,
-            customerName: item.customerName,
+            customerName: item.customerName || item.customerId,
             sales: round(item.sales),
             invoices: item.invoices.size,
             averageInvoice: round(
@@ -1372,7 +1317,7 @@ export async function getDashboardOverview({
                 const key = `${branch.branchId}:${item.customerId}`;
                 customerMap.set(key, {
                     ...item,
-                    customerName: item.customerName,
+                    customerName: item.customerName || item.customerId,
                     branchId: branch.branchId,
                     branchName: branch.branchName
                 });
@@ -1484,4 +1429,8 @@ export async function getDashboardOverview({
 export default {
     getDashboardOverview
 };
+
+
+
+
 

@@ -1,4 +1,5 @@
 import React, {
+    useMemo,
     useState
 } from "react";
 
@@ -40,6 +41,123 @@ function number(
 }
 
 
+function customerBelongsToSegment(
+    customer,
+    segment
+) {
+
+    if (
+        !customer ||
+        !segment
+    ) {
+
+        return false;
+
+    }
+
+
+    const selectedCode =
+        String(
+            segment.code || ""
+        )
+            .trim()
+            .toLowerCase();
+
+
+    const selectedName =
+        String(
+            segment.name || ""
+        )
+            .trim()
+            .toLowerCase();
+
+
+    const customerSegmentCode =
+        String(
+            customer.segmentCode ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
+
+    const customerSegment =
+        String(
+            customer.segment ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
+
+    const customerSegmentName =
+        String(
+            customer.segmentName ||
+            ""
+        )
+            .trim()
+            .toLowerCase();
+
+
+    return (
+        (
+            selectedCode &&
+            customerSegmentCode &&
+            selectedCode ===
+                customerSegmentCode
+        ) ||
+
+        (
+            selectedCode &&
+            customerSegment &&
+            selectedCode ===
+                customerSegment
+        ) ||
+
+        (
+            selectedName &&
+            customerSegment &&
+            selectedName ===
+                customerSegment
+        ) ||
+
+        (
+            selectedName &&
+            customerSegmentName &&
+            selectedName ===
+                customerSegmentName
+        )
+    );
+
+}
+
+
+function getSegmentColor(
+    index
+) {
+
+    const colors = [
+        "#2563eb",
+        "#16a34a",
+        "#9333ea",
+        "#ea580c",
+        "#dc2626",
+        "#0891b2",
+        "#ca8a04",
+        "#4f46e5",
+        "#be123c",
+        "#0f766e"
+    ];
+
+
+    return colors[
+        index %
+        colors.length
+    ];
+
+}
+
+
 export default function CustomerRfmPanel(
     {
         connectionPayload,
@@ -75,6 +193,15 @@ export default function CustomerRfmPanel(
         );
 
 
+    const [
+        selectedSegmentCode,
+        setSelectedSegmentCode
+    ] =
+        useState(
+            ""
+        );
+
+
     async function run() {
 
         try {
@@ -85,6 +212,11 @@ export default function CustomerRfmPanel(
 
 
             setError(
+                ""
+            );
+
+
+            setSelectedSegmentCode(
                 ""
             );
 
@@ -102,7 +234,7 @@ export default function CustomerRfmPanel(
                         toDate,
 
                         limit:
-                            100
+                            1000
 
                     });
 
@@ -129,7 +261,7 @@ export default function CustomerRfmPanel(
 
             setError(
                 requestError?.message ||
-                "فشل تحليل Customer RFM."
+                "تعذر تحليل سلوك العمملاء."
             );
 
         }
@@ -142,6 +274,59 @@ export default function CustomerRfmPanel(
         }
 
     }
+
+
+    const segments =
+        result?.summary?.segments ||
+        [];
+
+
+    const selectedSegment =
+        segments.find(
+            segment =>
+                String(
+                    segment.code || ""
+                ) ===
+                String(
+                    selectedSegmentCode
+                )
+        ) ||
+        null;
+
+
+    const filteredCustomers =
+        useMemo(
+            () => {
+
+                const customers =
+                    result?.customers ||
+                    [];
+
+
+                if (
+                    !selectedSegmentCode
+                ) {
+
+                    return customers;
+
+                }
+
+
+                return customers.filter(
+                    customer =>
+                        customerBelongsToSegment(
+                            customer,
+                            selectedSegment
+                        )
+                );
+
+            },
+            [
+                result,
+                selectedSegmentCode,
+                selectedSegment
+            ]
+        );
 
 
     return (
@@ -165,8 +350,8 @@ export default function CustomerRfmPanel(
 
                 {
                     loading
-                        ? "جاري التحليل..."
-                        : "تحليل Customer RFM"
+                        ? "جارٍ التحليل..."
+                        : "تحليل سلوك العملاء"
                 }
 
             </button>
@@ -204,8 +389,8 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .customers
+                                                ?.summary
+                                                ?.customers
                                         )
                                     }
                                 </strong>
@@ -223,8 +408,8 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .averageRecencyDays
+                                                ?.summary
+                                                ?.averageRecencyDays
                                         )
                                     }
                                     {" days"}
@@ -243,8 +428,8 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .averageFrequency
+                                                ?.summary
+                                                ?.averageFrequency
                                         )
                                     }
                                 </strong>
@@ -262,8 +447,8 @@ export default function CustomerRfmPanel(
                                     {
                                         money(
                                             result
-                                                .summary
-                                                .averageMonetary
+                                                ?.summary
+                                                ?.averageMonetary
                                         )
                                     }
                                 </strong>
@@ -281,10 +466,10 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .customerIntelligence
-                                                .champions
-                                                .customers
+                                                ?.summary
+                                                ?.customerIntelligence
+                                                ?.champions
+                                                ?.customers
                                         )
                                     }
                                 </strong>
@@ -302,10 +487,10 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .customerIntelligence
-                                                .atRisk
-                                                .customers
+                                                ?.summary
+                                                ?.customerIntelligence
+                                                ?.atRisk
+                                                ?.customers
                                         )
                                     }
                                 </strong>
@@ -323,10 +508,10 @@ export default function CustomerRfmPanel(
                                     {
                                         number(
                                             result
-                                                .summary
-                                                .customerIntelligence
-                                                .dormant
-                                                .customers
+                                                ?.summary
+                                                ?.customerIntelligence
+                                                ?.dormant
+                                                ?.customers
                                         )
                                     }
                                 </strong>
@@ -344,10 +529,10 @@ export default function CustomerRfmPanel(
                                     {
                                         money(
                                             result
-                                                .summary
-                                                .customerIntelligence
-                                                .reactivationOpportunity
-                                                .netSales
+                                                ?.summary
+                                                ?.customerIntelligence
+                                                ?.reactivationOpportunity
+                                                ?.netSales
                                         )
                                     }
                                 </strong>
@@ -362,17 +547,197 @@ export default function CustomerRfmPanel(
                             <div className="result-header">
 
                                 <strong>
-                                    Customer Segments
+                                    فئات العملاء - اختر الفئة
                                 </strong>
 
                                 <span>
                                     {
-                                        result
-                                            .summary
-                                            .segments
-                                            .length
+                                        selectedSegment
+                                            ? selectedSegment.name
+                                            : "كل العملاء"
                                     }
                                 </span>
+
+                            </div>
+
+
+                            <div
+                                style={{
+                                    display:
+                                        "grid",
+
+                                    gridTemplateColumns:
+                                        "repeat(auto-fit, minmax(180px, 1fr))",
+
+                                    gap:
+                                        "10px",
+
+                                    marginBottom:
+                                        "16px"
+                                }}
+                            >
+
+                                <button
+                                    type="button"
+                                    onClick={
+                                        () =>
+                                            setSelectedSegmentCode(
+                                                ""
+                                            )
+                                    }
+                                    style={{
+                                        padding:
+                                            "14px",
+
+                                        borderRadius:
+                                            "10px",
+
+                                        border:
+                                            selectedSegmentCode ===
+                                            ""
+                                                ? "2px solid #2563eb"
+                                                : "1px solid #d1d5db",
+
+                                        background:
+                                            selectedSegmentCode ===
+                                            ""
+                                                ? "#eff6ff"
+                                                : "#fff",
+
+                                        cursor:
+                                            "pointer",
+
+                                        textAlign:
+                                            "right"
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                700,
+
+                                            marginBottom:
+                                                "6px"
+                                        }}
+                                    >
+                                        جميع فئات العملاء
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            fontSize:
+                                                "13px",
+
+                                            opacity:
+                                                0.75
+                                        }}
+                                    >
+                                        {
+                                            number(
+                                                result
+                                                    ?.summary
+                                                    ?.customers
+                                            )
+                                        }
+                                        {" عميل"}
+                                    </div>
+
+                                </button>
+
+
+                                {
+                                    segments.map(
+                                        (
+                                            segment,
+                                            index
+                                        ) => {
+
+                                            const isSelected =
+                                                String(
+                                                    selectedSegmentCode
+                                                ) ===
+                                                String(
+                                                    segment.code
+                                                );
+
+
+                                            return (
+
+                                                <button
+                                                    key={
+                                                        segment.code
+                                                    }
+                                                    type="button"
+                                                    onClick={
+                                                        () =>
+                                                            setSelectedSegmentCode(
+                                                                segment.code
+                                                            )
+                                                    }
+                                                    style={{
+                                                        padding:
+                                                            "14px",
+
+                                                        borderRadius:
+                                                            "10px",
+
+                                                        border:
+                                                            isSelected
+                                                                ? `2px solid ${getSegmentColor(index)}`
+                                                                : "1px solid #d1d5db",
+
+                                                        background:
+                                                            isSelected
+                                                                ? "#f8fafc"
+                                                                : "#fff",
+
+                                                        cursor:
+                                                            "pointer",
+
+                                                        textAlign:
+                                                            "right"
+                                                    }}
+                                                >
+
+                                                    <div
+                                                        style={{
+                                                            fontWeight:
+                                                                700,
+
+                                                            marginBottom:
+                                                                "6px"
+                                                        }}
+                                                    >
+                                                        {
+                                                            segment.name
+                                                        }
+                                                    </div>
+
+                                                    <div
+                                                        style={{
+                                                            fontSize:
+                                                                "13px",
+
+                                                            opacity:
+                                                                0.75
+                                                        }}
+                                                    >
+                                                        {
+                                                            number(
+                                                                segment.customers
+                                                            )
+                                                        }
+                                                        {" عميل"}
+                                                    </div>
+
+                                                </button>
+
+                                            );
+
+                                        }
+                                    )
+                                }
 
                             </div>
 
@@ -409,23 +774,88 @@ export default function CustomerRfmPanel(
                                     <tbody>
 
                                         {
-                                            result
-                                                .summary
-                                                .segments
-                                                .map(
-                                                    segment => (
+                                            segments.map(
+                                                segment => {
+
+                                                    const isSelected =
+                                                        String(
+                                                            selectedSegmentCode
+                                                        ) ===
+                                                        String(
+                                                            segment.code
+                                                        );
+
+
+                                                    return (
 
                                                         <tr
                                                             key={
                                                                 segment.code
                                                             }
+                                                            onClick={
+                                                                () =>
+                                                                    setSelectedSegmentCode(
+                                                                        isSelected
+                                                                            ? ""
+                                                                            : segment.code
+                                                                    )
+                                                            }
+                                                            style={{
+                                                                cursor:
+                                                                    "pointer",
+
+                                                                background:
+                                                                    isSelected
+                                                                        ? "#eff6ff"
+                                                                        : undefined
+                                                            }}
                                                         >
 
                                                             <td>
-                                                                {
-                                                                    segment.name
-                                                                }
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={
+                                                                        event => {
+
+                                                                            event.stopPropagation();
+
+                                                                            setSelectedSegmentCode(
+                                                                                isSelected
+                                                                                    ? ""
+                                                                                    : segment.code
+                                                                            );
+
+                                                                        }
+                                                                    }
+                                                                    style={{
+                                                                        border:
+                                                                            "none",
+
+                                                                        background:
+                                                                            "transparent",
+
+                                                                        padding:
+                                                                            0,
+
+                                                                        cursor:
+                                                                            "pointer",
+
+                                                                        fontWeight:
+                                                                            isSelected
+                                                                                ? 700
+                                                                                : 500
+                                                                    }}
+                                                                >
+
+                                                                    {
+                                                                        segment.name
+                                                                    }
+
+                                                                </button>
+
                                                             </td>
+
 
                                                             <td>
                                                                 {
@@ -435,6 +865,7 @@ export default function CustomerRfmPanel(
                                                                 }
                                                             </td>
 
+
                                                             <td>
                                                                 {
                                                                     money(
@@ -442,6 +873,7 @@ export default function CustomerRfmPanel(
                                                                     )
                                                                 }
                                                             </td>
+
 
                                                             <td>
                                                                 {
@@ -451,8 +883,10 @@ export default function CustomerRfmPanel(
 
                                                         </tr>
 
-                                                    )
-                                                )
+                                                    );
+
+                                                }
+                                            )
                                         }
 
                                     </tbody>
@@ -469,11 +903,21 @@ export default function CustomerRfmPanel(
                             <div className="result-header">
 
                                 <strong>
-                                    Priority Customers
+                                    {
+                                        selectedSegment
+                                            ? `عملاء فئة: ${selectedSegment.name}`
+                                            : "العملاء ذوو الأولوية"
+                                    }
                                 </strong>
 
                                 <span>
-                                    Top {result.customers.length}
+
+                                    {
+                                        selectedSegment
+                                            ? `${number(filteredCustomers.length)} عميل`
+                                            : `Top ${result?.customers?.length || 0}`
+                                    }
+
                                 </span>
 
                             </div>
@@ -531,76 +975,102 @@ export default function CustomerRfmPanel(
                                     <tbody>
 
                                         {
-                                            result
-                                                .customers
-                                                .map(
-                                                    customer => (
+                                            filteredCustomers.length ===
+                                                0
+                                                ? (
 
-                                                        <tr
-                                                            key={
-                                                                customer.customerId
+                                                    <tr>
+
+                                                        <td
+                                                            colSpan={
+                                                                9
                                                             }
+                                                            style={{
+                                                                textAlign:
+                                                                    "center",
+
+                                                                padding:
+                                                                    "24px"
+                                                            }}
                                                         >
+                                                            لا يوجد عملاء ظاهرون لهذه الفئة ضمن البيانات المستحضرة.
+                                                        </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.customerName
+                                                    </tr>
+
+                                                )
+                                                : (
+
+                                                    filteredCustomers.map(
+                                                        customer => (
+
+                                                            <tr
+                                                                key={
+                                                                    customer.customerId
                                                                 }
-                                                            </td>
+                                                            >
 
-                                                            <td>
-                                                                {
-                                                                    customer.rfmScore
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.customerName
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.segment
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.rfmScore
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    money(
-                                                                        customer.netSales
-                                                                    )
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.segment
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.r
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        money(
+                                                                            customer.netSales
+                                                                        )
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.f
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.r
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.m
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.f
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.priorityLevel
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.m
+                                                                    }
+                                                                </td>
 
-                                                            <td>
-                                                                {
-                                                                    customer.urgencyScore
-                                                                }
-                                                            </td>
+                                                                <td>
+                                                                    {
+                                                                        customer.priorityLevel
+                                                                    }
+                                                                </td>
 
-                                                        </tr>
+                                                                <td>
+                                                                    {
+                                                                        customer.urgencyScore
+                                                                    }
+                                                                </td>
 
+                                                            </tr>
+
+                                                        )
                                                     )
+
                                                 )
                                         }
 

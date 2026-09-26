@@ -1,10 +1,11 @@
-﻿import {
+import {
     getSales
 } from "../pharmfly/sales/salesService.js";
 
 
 import {
-    getBranchPool
+    getBranchPool,
+    getActiveBranchConnections
 } from "../connection/connectionManager.js";
 
 
@@ -26,6 +27,27 @@ import {
     updateSalesSyncState
 } from "../localdb/localSalesDb.js";
 
+
+import { getCustomerRfmV2 } from "../pharmfly/customers/customerRfmV2Service.js";
+
+function getActiveSavedConnections() {
+
+    const activeBranchIds =
+        new Set(
+            getActiveBranchConnections()
+        );
+
+    return getAllSavedConnections()
+        .filter(
+            branch =>
+                activeBranchIds.has(
+                    normalizeBranchId(
+                        branch?.branchId
+                    )
+                )
+        );
+
+}
 
 const DEFAULT_MONTHS =
     null;
@@ -53,6 +75,8 @@ const warmupState =
     new Map();
 
 
+let currentMonthRefreshPromise = null;
+
 /*
  * =========================================================
  * ROUND-ROBIN ENGINE
@@ -61,14 +85,103 @@ const warmupState =
  * Only ONE warm-up worker is allowed.
  *
  * A newly added branch can be inserted into the running
- * engine through refreshWarmupQueue().
  *
  * The existing warm-up keeps running.
  * =========================================================
  */
 
-let roundRobinEngine =
-    null;
+
+/*
+ * =========================================================
+ * SHARED MONTH SINGLE-FLIGHT
+ * =========================================================
+ */
+
+const WARMUP_BRANCH_CONCURRENCY =
+    3;
+
+const activeMonthWork =
+    new Map();
+
+function getCurrentUtcMonth() {
+
+    const now =
+        new Date();
+
+    return [
+        now.getUTCFullYear(),
+        String(now.getUTCMonth() + 1).padStart(2, "0")
+    ].join("-");
+
+}
+
+function monthWorkKey({ branchId, month }) {
+
+    return String(
+        normalizeBranchId(branchId)
+    ) + "|" + String(month);
+
+}
+
+function runMonthOnce({ branchId, month }, task) {
+
+    const key =
+        monthWorkKey({ branchId, month });
+
+    const existing =
+        activeMonthWork.get(key);
+
+    if (existing) {
+
+        console.log(
+            "[cacheWarmup] SINGLE-FLIGHT JOIN branch=" +
+            String(branchId) +
+            " month=" +
+            String(month)
+        );
+
+        return existing.promise;
+
+    }
+
+    const promise =
+        Promise.resolve()
+            .then(() => task())
+            .finally(() => {
+
+                if (
+                    activeMonthWork.get(key)?.promise ===
+                    promise
+                ) {
+
+                    activeMonthWork.delete(key);
+
+                }
+
+            });
+
+    activeMonthWork.set(
+        key,
+        { promise }
+    );
+
+    return promise;
+
+}
+
+function warmMonthOnce(args) {
+
+    return runMonthOnce(
+        {
+            branchId: args.branchId,
+            month: args.month
+        },
+        () => warmMonth(args)
+    );
+
+}
+
+
 
 
 /*
@@ -1205,268 +1318,6 @@ async function warmMonth(
 
 /*
  * =========================================================
- * DISCOVER AND ADD BRANCH TO RUNNING ENGINE
- * =========================================================
- */
-
-async function buildBranchPlan(
-    {
-        branchId,
-        connection,
-        months,
-        resetState = true
-    }
-) {
-
-    const id =
-        normalizeBranchId(
-            branchId
-        );
-
-
-    const savedConnection =
-        connection ||
-        getBranchConnection(
-            id
-        );
-
-
-    if (
-        !savedConnection
-    ) {
-
-        throw new Error(
-            `No saved connection for branch ${id}`
-        );
-
-    }
-
-
-    console.log(
-
-        `[cacheWarmup] DISCOVER HISTORY branch=${id}`
-
-    );
-
-
-    const historyRange =
-        await getSalesHistoryRange({
-
-            branchId:
-                id,
-
-            connection:
-                savedConnection
-
-        });
-
-
-    if (
-        !historyRange.hasData
-    ) {
-
-        console.log(
-
-            `[cacheWarmup] NO SALES DATA branch=${id}`
-
-        );
-
-
-        return null;
-
-    }
-
-
-    const monthsList =
-        resolveMonthList({
-
-            historyRange,
-
-            months
-
-        });
-
-
-    const state =
-        resetState
-
-            ? initializeBranchState(
-
-                id,
-
-                historyRange,
-
-                monthsList
-
-            )
-
-            : getState(
-                id
-            );
-
-
-    return {
-
-        branchId:
-            id,
-
-        branch:
-            savedConnection,
-
-        historyRange,
-
-        monthsList,
-
-        state,
-
-        nextMonthIndex:
-            0,
-
-        addedDynamically:
-            false
-
-    };
-
-}
-
-
-/*
- * =========================================================
- * PROCESS BRANCH MONTH
- * =========================================================
- */
-
-async function processPlanMonth(
-    {
-        plan,
-        month,
-        delayMs,
-        maxRetries,
-        forceRefresh = false
-    }
-) {
-
-    const {
-        branchId,
-        branch,
-        state
-    } =
-        plan;
-
-
-    state.currentMonth =
-        month;
-
-
-    await sleep(
-        delayMs
-    );
-
-
-    await yieldToEventLoop();
-
-
-    try {
-
-        const result =
-            await warmMonth({
-
-                branchId,
-
-                month,
-
-                connection:
-                    branch,
-
-                maxRetries,
-
-                state,
-
-                forceRefresh
-
-            });
-
-
-        if (
-            result.status ===
-                "LOCAL_HIT" ||
-            result.status ===
-                "CACHE_HIT"
-        ) {
-
-            state.skippedMonths +=
-                1;
-
-        }
-        else {
-
-            state.completedMonths +=
-                1;
-
-        }
-
-
-        state.totalHistoricalRows +=
-
-            Number(
-                result.rowCount
-            ) || 0;
-
-    }
-    catch (
-        error
-    ) {
-
-        state.failedMonths +=
-            1;
-
-
-        state.error =
-            error?.message ||
-            String(
-                error
-            );
-
-
-        console.error(
-
-            `[cacheWarmup] ROUND FAILED branch=${branchId} month=${month}:`,
-
-            error
-
-        );
-
-
-        updateSalesSyncState({
-
-            branchId,
-
-            status:
-                "ERROR",
-
-            rows:
-                state.localRows,
-
-            errorMessage:
-                state.error
-
-        });
-
-    }
-
-
-    await yieldToEventLoop();
-
-
-    await sleep(
-        YIELD_DELAY_MS
-    );
-
-}
-
-
-/*
- * =========================================================
  * FINALIZE BRANCH
  * =========================================================
  */
@@ -1533,7 +1384,97 @@ function finalizePlan(
     }
 
 
-    console.log(
+                    /*
+                 * =================================================
+                 * CUSTOMER ANALYTICS AUTO-REFRESH
+                 * =================================================
+                 *
+                 * Runs once after the complete branch warm-up
+                 * succeeds.
+                 *
+                 * RFM V2 refreshes:
+                 *   - crm_rfm_snapshots
+                 *   - crm_rfm_customer_scores
+                 *   - crm_customer_profiles
+                 *
+                 * Promise-based intentionally because this
+                 * finalize callback is not an async function.
+                 */
+
+                if (
+                    state.failedMonths === 0
+                ) {
+
+                    getCustomerRfmV2({
+
+                        branchId,
+
+                        analysisDate:
+                            new Date()
+                                .toISOString()
+                                .slice(
+                                    0,
+                                    10
+                                ),
+
+                        observationDays:
+                            365,
+
+                        trendDays:
+                            90,
+
+                        minTickets:
+                            1,
+
+                        saveSnapshot:
+                            true
+
+                    })
+                    .then(
+                        refreshResult => {
+
+                            const refreshedCustomers =
+                                Array.isArray(
+                                    refreshResult?.customers
+                                )
+                                    ? refreshResult.customers.length
+                                    : (
+                                        Number(
+                                            refreshResult?.summary?.customers
+                                        ) || 0
+                                    );
+
+                            const refreshedSnapshotId =
+                                refreshResult?.snapshotId ??
+                                null;
+
+                            console.log(
+
+                                `[cacheWarmup] CUSTOMER ANALYTICS AUTO-REFRESH branch=${branchId} snapshot=${refreshedSnapshotId ?? "n/a"} customers=${refreshedCustomers}`
+
+                            );
+
+                        }
+                    )
+                    .catch(
+                        analyticsError => {
+
+                            console.error(
+
+                                `[cacheWarmup] CUSTOMER ANALYTICS AUTO-REFRESH FAILED branch=${branchId}:`,
+
+                                analyticsError?.message ||
+                                analyticsError
+
+                            );
+
+                        }
+                    );
+
+                }
+
+
+console.log(
 
         `[cacheWarmup] COMPLETE branch=${branchId} loaded=${state.completedMonths} skipped=${state.skippedMonths} failed=${state.failedMonths} rows=${state.totalHistoricalRows} localRows=${state.localRows}`
 
@@ -1544,301 +1485,124 @@ function finalizePlan(
 
 /*
  * =========================================================
- * ROUND-ROBIN WORKER
- * =========================================================
- */
-
-async function runRoundRobinEngine(
-    engine
-) {
-
-    let roundIndex =
-        0;
-
-
-    while (
-        true
-    ) {
-
-        /*
-         * -------------------------------------------------
-         * Add dynamically discovered branches.
-         * -------------------------------------------------
-         */
-
-        if (
-            engine.pendingBranches.length >
-            0
-        ) {
-
-            const pending =
-                engine.pendingBranches.splice(
-
-                    0,
-
-                    engine.pendingBranches.length
-
-                );
-
-
-            for (
-                const plan
-                of pending
-            ) {
-
-                if (
-                    !engine.branchPlans.has(
-                        plan.branchId
-                    )
-                ) {
-
-                    plan.addedDynamically =
-                        true;
-
-
-                    plan.nextMonthIndex =
-                        0;
-
-
-                    engine.branchPlans.set(
-
-                        plan.branchId,
-
-                        plan
-
-                    );
-
-
-                    console.log(
-
-                        `[cacheWarmup] QUEUE REFRESH ADDED branch=${plan.branchId} newest=${plan.monthsList[0] || "N/A"} months=${plan.monthsList.length}`
-
-                    );
-
-                }
-
-            }
-
-        }
-
-
-        const activePlans =
-            Array.from(
-                engine.branchPlans.values()
-            )
-            .filter(
-
-                plan =>
-
-                    plan.nextMonthIndex <
-                    plan.monthsList.length
-
-            );
-
-
-        if (
-            activePlans.length ===
-            0
-        ) {
-
-            if (
-                engine.pendingBranches.length ===
-                0
-            ) {
-
-                break;
-
-            }
-
-
-            await yieldToEventLoop();
-
-            continue;
-
-        }
-
-
-        /*
-         * -------------------------------------------------
-         * Current round.
-         *
-         * Existing branches use the current round index.
-         *
-         * A dynamically added branch starts at month index 0
-         * the first time it enters the running engine.
-         *
-         * -------------------------------------------------
-         */
-
-        const roundPlans =
-            [];
-
-
-        for (
-            const plan
-            of activePlans
-        ) {
-
-            const month =
-                plan.monthsList[
-                    plan.nextMonthIndex
-                ];
-
-
-            if (
-                month
-            ) {
-
-                roundPlans.push({
-
-                    plan,
-
-                    month
-
-                });
-
-            }
-
-        }
-
-
-        if (
-            roundPlans.length ===
-            0
-        ) {
-
-            break;
-
-        }
-
-
-        console.log(
-
-            `[cacheWarmup] ROUND ${roundIndex + 1} month=${roundPlans[0]?.month || "N/A"} branches=${roundPlans.length}`
-
-        );
-
-
-        /*
-         * -------------------------------------------------
-         * Process all currently queued branches.
-         * -------------------------------------------------
-         */
-
-        for (
-            const entry
-            of roundPlans
-        ) {
-
-            const {
-                plan,
-                month
-            } =
-                entry;
-
-
-            /*
-             * A newly added branch joins immediately from its
-             * newest month.
-             *
-             * Existing branches continue from their current
-             * historical position.
-             */
-
-            await processPlanMonth({
-
-                plan,
-
-                month,
-
-                delayMs:
-                    engine.delayMs,
-
-                maxRetries:
-                    engine.maxRetries
-
-            });
-
-
-            plan.nextMonthIndex +=
-                1;
-
-        }
-
-
-        /*
-         * -------------------------------------------------
-         * Newly saved branches can now be picked up without
-         * restarting Electron.
-         * -------------------------------------------------
-         */
-
-        await yieldToEventLoop();
-
-
-        roundIndex +=
-            1;
-
-    }
-
-
-    /*
-     * -------------------------------------------------------
-     * Finalize all branches.
-     * -------------------------------------------------------
-     */
-
-    for (
-        const plan
-        of engine.branchPlans.values()
-    ) {
-
-        if (
-            plan.nextMonthIndex >=
-            plan.monthsList.length
-        ) {
-
-            finalizePlan(
-                plan
-            );
-
-        }
-
-    }
-
-
-    engine.running =
-        false;
-
-
-    roundRobinEngine =
-        null;
-
-
-    console.log(
-
-        "[cacheWarmup] ROUND-ROBIN FULL HISTORY WARM-UP COMPLETE."
-
-    );
-
-}
-
-
-/*
- * =========================================================
- * START ALL BRANCHES
- * =========================================================
- */
-
-let currentMonthRefreshRunning =
-    false;
-
-
-/*
- * =========================================================
  * REFRESH CURRENT MONTH FOR ALL BRANCHES
  * =========================================================
  */
+
+
+/*
+ * =========================================================
+ * AUTO CUSTOMER ANALYTICS AFTER CURRENT-MONTH SALES SYNC
+ * =========================================================
+ *
+ * Runs after the current-month sales for a branch have
+ * been successfully stored in local SQLite.
+ *
+ * RFM V2 updates:
+ *   - crm_rfm_snapshots
+ *   - crm_rfm_customer_scores
+ *   - crm_customer_profiles
+ */
+
+async function refreshCustomerRfmAfterSalesSync(
+    branchId
+) {
+
+    const analysisDate =
+        new Date()
+            .toISOString()
+            .slice(
+                0,
+                10
+            );
+
+    try {
+
+        const result =
+            await getCustomerRfmV2({
+
+                branchId,
+
+                analysisDate,
+
+                observationDays:
+                    365,
+
+                trendDays:
+                    90,
+
+                minTickets:
+                    1,
+
+                saveSnapshot:
+                    true
+
+            });
+
+        const customerCount =
+            Array.isArray(
+                result?.customers
+            )
+                ? result.customers.length
+                : (
+                    Number(
+                        result?.summary?.customers
+                    ) || 0
+                );
+
+        console.log(
+
+            `[cacheWarmup] CUSTOMER RFM REFRESHED branch=${branchId} analysisDate=${analysisDate} snapshot=${result?.snapshotId ?? "n/a"} customers=${customerCount}`
+
+        );
+
+        return {
+
+            success:
+                true,
+
+            branchId,
+
+            snapshotId:
+                result?.snapshotId ?? null,
+
+            customerCount
+
+        };
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[cacheWarmup] CUSTOMER RFM REFRESH FAILED branch=${branchId}:`,
+
+            error?.message ||
+            error
+
+        );
+
+        return {
+
+            success:
+                false,
+
+            branchId,
+
+            error:
+                error?.message ||
+                String(
+                    error
+                )
+
+        };
+
+    }
+
+}
+
 
 export async function refreshCurrentMonthAllBranches(
     {
@@ -1847,989 +1611,205 @@ export async function refreshCurrentMonthAllBranches(
 ) {
 
     if (
-        currentMonthRefreshRunning
+        currentMonthRefreshPromise
     ) {
 
         console.log(
-            "[cacheWarmup] CURRENT MONTH REFRESH ALREADY RUNNING -> SKIP"
+            "[cacheWarmup] CURRENT MONTH REFRESH ALREADY RUNNING -> JOIN"
         );
 
-        return {
-
-            success:
-                true,
-
-            skipped:
-                true
-
-        };
+        return currentMonthRefreshPromise;
 
     }
 
+    currentMonthRefreshPromise =
+        (async () => {
 
-    currentMonthRefreshRunning =
-        true;
+            const month =
+                getCurrentUtcMonth();
 
+            const connections =
+                getActiveSavedConnections();
 
-    const now =
-        new Date();
+            console.log(
+                "[cacheWarmup] CURRENT MONTH AUTO-REFRESH START month=" +
+                String(month) +
+                " branches=" +
+                String(connections.length) +
+                " concurrency=" +
+                String(
+                    Math.min(
+                        WARMUP_BRANCH_CONCURRENCY,
+                        connections.length
+                    )
+                )
+            );
 
+            let refreshed =
+                0;
 
-    const month =
-        [
-            now.getUTCFullYear(),
-            String(
-                now.getUTCMonth() + 1
-            ).padStart(
-                2,
-                "0"
-            )
-        ].join(
-            "-"
-        );
+            let failed =
+                0;
 
+            let customerRefreshFailed =
+                0;
 
-    const connections =
-        getAllSavedConnections();
+            for (
+                let offset = 0;
+                offset < connections.length;
+                offset += WARMUP_BRANCH_CONCURRENCY
+            ) {
 
+                const batch =
+                    connections.slice(
+                        offset,
+                        offset +
+                            WARMUP_BRANCH_CONCURRENCY
+                    );
 
-    let refreshed =
-        0;
+                const results =
+                    await Promise.all(
+                        batch.map(
+                            async branch => {
 
+                                const branchId =
+                                    normalizeBranchId(
+                                        branch?.branchId
+                                    );
 
-    let failed =
-        0;
+                                const state = {
+                                    localRows: 0
+                                };
 
+                                try {
 
-    console.log(
-        `[cacheWarmup] CURRENT MONTH AUTO-REFRESH START month=${month} branches=${connections.length}`
-    );
+                                    const result =
+                                        await warmMonthOnce({
 
+                                            branchId,
+                                            month,
+                                            connection: branch,
+                                            maxRetries,
+                                            state,
+                                            forceRefresh: true
 
-    try {
+                                        });
 
-        for (
-            const branch
-            of connections
-        ) {
+                                    console.log(
+                                        "[cacheWarmup] CURRENT MONTH REFRESHED branch=" +
+                                        String(branchId) +
+                                        " month=" +
+                                        String(month) +
+                                        " rows=" +
+                                        String(result?.rowCount || 0)
+                                    );
 
-            const branchId =
-                normalizeBranchId(
-                    branch?.branchId
-                );
+                                    return {
+                                        success: true,
+                                        branchId
+                                    };
 
+                                }
+                                catch (
+                                    error
+                                ) {
 
-            const state = {
+                                    console.error(
+                                        "[cacheWarmup] CURRENT MONTH REFRESH FAILED branch=" +
+                                        String(branchId) +
+                                        " month=" +
+                                        String(month) + ":",
+                                        error
+                                    );
 
-                localRows:
-                    0
+                                    return {
+                                        success: false,
+                                        branchId
+                                    };
+
+                                }
+
+                            }
+                        )
+                    );
+
+                for (
+                    const result
+                    of results
+                ) {
+
+                    if (
+                        result?.success
+                    ) {
+
+                        refreshed +=
+                            1;
+
+                        const customerRefresh =
+                            await refreshCustomerRfmAfterSalesSync(
+                                result.branchId
+                            );
+
+                        if (
+                            !customerRefresh?.success
+                        ) {
+
+                            customerRefreshFailed +=
+                                1;
+
+                        }
+
+                    }
+                    else {
+
+                        failed +=
+                            1;
+
+                    }
+
+                }
+
+                await yieldToEventLoop();
+
+            }
+
+            console.log(
+                "[cacheWarmup] CURRENT MONTH AUTO-REFRESH COMPLETE month=" +
+                String(month) +
+                " refreshed=" +
+                String(refreshed) +
+                " failed=" +
+                String(failed)
+            );
+
+            return {
+
+                success:
+                    failed === 0 &&
+                    customerRefreshFailed === 0,
+
+                month,
+
+                refreshed,
+
+                failed,
+
+                customerRefreshFailed
 
             };
 
+        })().finally(
+            () => {
 
-            try {
-
-                const result =
-                    await warmMonth({
-
-                        branchId,
-
-                        month,
-
-                        connection:
-                            branch,
-
-                        maxRetries,
-
-                        state,
-
-                        forceRefresh:
-                            true
-
-                    });
-
-
-                refreshed +=
-                    1;
-
-
-                console.log(
-                    `[cacheWarmup] CURRENT MONTH REFRESHED branch=${branchId} month=${month} rows=${result.rowCount || 0}`
-                );
-
-            }
-            catch (
-                error
-            ) {
-
-                failed +=
-                    1;
-
-
-                console.error(
-                    `[cacheWarmup] CURRENT MONTH REFRESH FAILED branch=${branchId} month=${month}:`,
-                    error
-                );
-
-            }
-
-        }
-
-
-        console.log(
-            `[cacheWarmup] CURRENT MONTH AUTO-REFRESH COMPLETE month=${month} refreshed=${refreshed} failed=${failed}`
-        );
-
-
-        return {
-
-            success:
-                failed === 0,
-
-            month,
-
-            refreshed,
-
-            failed
-
-        };
-
-    }
-    finally {
-
-        currentMonthRefreshRunning =
-            false;
-
-    }
-
-}
-
-export function startAllBranchesWarmup(
-    {
-        months = DEFAULT_MONTHS,
-        delayMs = DEFAULT_DELAY_MS,
-        maxRetries = DEFAULT_MAX_RETRIES
-    } = {}
-) {
-
-    /*
-     * -------------------------------------------------
-     * If already running, refresh instead of starting
-     * another worker.
-     * -------------------------------------------------
-     */
-
-    if (
-        roundRobinEngine?.running
-    ) {
-
-        console.log(
-
-            "[cacheWarmup] ENGINE ALREADY RUNNING -> REFRESH QUEUE"
-
-        );
-
-
-        refreshWarmupQueue({
-
-            months,
-
-            delayMs,
-
-            maxRetries
-
-        })
-        .catch(
-
-            error => {
-
-                console.error(
-
-                    "[cacheWarmup] automatic queue refresh failed:",
-
-                    error
-
-                );
-
-            }
-
-        );
-
-
-        return {
-
-            started:
-                true,
-
-            alreadyRunning:
-                true,
-
-            refreshed:
-                true,
-
-            branches:
-                roundRobinEngine.branchPlans.size,
-
-            mode:
-                "ROUND_ROBIN"
-
-        };
-
-    }
-
-
-    const connections =
-        getAllSavedConnections();
-
-
-    if (
-        !Array.isArray(
-            connections
-        ) ||
-        connections.length ===
-        0
-    ) {
-
-        console.log(
-
-            "[cacheWarmup] No saved branch connections."
-
-        );
-
-
-        return {
-
-            started:
-                false,
-
-            branches:
-                0,
-
-            mode:
-                "ROUND_ROBIN"
-
-        };
-
-    }
-
-
-    const requestedMonthLimit =
-
-        months === null ||
-        months === undefined
-
-            ? null
-
-            : Number(
-                months
-            );
-
-
-    const requestedDelay =
-        Number(
-            delayMs
-        );
-
-
-    const requestedRetries =
-        Number(
-            maxRetries
-        );
-
-
-    const normalizedDelay =
-        Number.isFinite(
-            requestedDelay
-        ) &&
-        requestedDelay >= 0
-
-            ? requestedDelay
-
-            : DEFAULT_DELAY_MS;
-
-
-    const normalizedRetries =
-        Number.isInteger(
-            requestedRetries
-        ) &&
-        requestedRetries >= 0
-
-            ? Math.min(
-                requestedRetries,
-                5
-            )
-
-            : DEFAULT_MAX_RETRIES;
-
-
-    const engine = {
-
-        running:
-            true,
-
-        branchPlans:
-            new Map(),
-
-        pendingBranches:
-            [],
-
-        months:
-            requestedMonthLimit,
-
-        delayMs:
-            normalizedDelay,
-
-        maxRetries:
-            normalizedRetries
-
-    };
-
-
-    roundRobinEngine =
-        engine;
-
-
-    console.log(
-
-        `[cacheWarmup] QUEUED ${connections.length} branch(es) for ROUND-ROBIN ${
-            requestedMonthLimit === null
-                ? "FULL HISTORY"
-                : "LIMITED HISTORY"
-        } warm-up.`
-
-    );
-
-
-    (async () => {
-
-        /*
-         * Discover all initial branches before the worker
-         * starts processing months.
-         */
-
-        for (
-            const branch
-            of connections
-        ) {
-
-            const branchId =
-                normalizeBranchId(
-                    branch.branchId
-                );
-
-
-            try {
-
-                const plan =
-                    await buildBranchPlan({
-
-                        branchId,
-
-                        connection:
-                            branch,
-
-                        months:
-                            requestedMonthLimit,
-
-                        resetState:
-                            true
-
-                    });
-
-
-                if (
-                    plan
-                ) {
-
-                    engine.branchPlans.set(
-
-                        branchId,
-
-                        plan
-
-                    );
-
-
-                    console.log(
-
-                        `[cacheWarmup] PLAN branch=${branchId} mode=${requestedMonthLimit === null ? "FULL_HISTORY" : "LIMITED"} months=${plan.monthsList.length} newest=${plan.monthsList[0]} oldest=${plan.monthsList[plan.monthsList.length - 1]} tickets=${plan.historyRange.ticketCount}`
-
-                    );
-
-                }
-
-            }
-            catch (
-                error
-            ) {
-
-                const state =
-                    getState(
-                        branchId
-                    );
-
-
-                state.running =
-                    false;
-
-
-                state.failedMonths =
-                    1;
-
-
-                state.error =
-                    error?.message ||
-                    String(
-                        error
-                    );
-
-
-                state.finishedAt =
-                    new Date().toISOString();
-
-
-                console.error(
-
-                    `[cacheWarmup] HISTORY DISCOVERY FAILED branch=${branchId}:`,
-
-                    error
-
-                );
-
-
-                updateSalesSyncState({
-
-                    branchId,
-
-                    status:
-                        "ERROR",
-
-                    rows:
-                        0,
-
-                    errorMessage:
-                        state.error
-
-                });
-
-            }
-
-
-            await yieldToEventLoop();
-
-        }
-
-
-        if (
-            engine.branchPlans.size ===
-            0
-        ) {
-
-            engine.running =
-                false;
-
-
-            roundRobinEngine =
-                null;
-
-
-            console.log(
-
-                "[cacheWarmup] NOTHING TO WARM."
-
-            );
-
-
-            return;
-
-        }
-
-
-        /*
-         * Start the single worker.
-         */
-
-        await runRoundRobinEngine(
-            engine
-        );
-
-    })()
-    .catch(
-
-        error => {
-
-            engine.running =
-                false;
-
-
-            if (
-                roundRobinEngine ===
-                engine
-            ) {
-
-                roundRobinEngine =
+                currentMonthRefreshPromise =
                     null;
 
             }
+        );
 
-
-            console.error(
-
-                "[cacheWarmup] unexpected round-robin failure:",
-
-                error
-
-            );
-
-        }
-
-    );
-
-
-    return {
-
-        started:
-            true,
-
-        branches:
-            connections.length,
-
-        mode:
-            requestedMonthLimit === null
-                ? "FULL_HISTORY_ROUND_ROBIN"
-                : "LIMITED_ROUND_ROBIN"
-
-    };
+    return currentMonthRefreshPromise;
 
 }
-
-
-/*
- * =========================================================
- * REFRESH WARM-UP QUEUE
- * =========================================================
- *
- * Can be called while the application is running.
- *
- * Typical flow:
- *
- * Save Branch
- *      â†“
- * Connect Branch
- *      â†“
- * refreshWarmupQueue()
- *      â†“
- * Branch starts from newest month
- *
- * Electron restart is NOT required.
- * =========================================================
- */
-
-export async function refreshWarmupQueue(
-    {
-        months = null,
-        delayMs = null,
-        maxRetries = null,
-        branchId = null
-    } = {}
-) {
-
-    /*
-     * -----------------------------------------------------
-     * No active engine.
-     *
-     * Start a fresh round-robin using all saved branches.
-     * -----------------------------------------------------
-     */
-
-    if (
-        !roundRobinEngine?.running
-    ) {
-
-        const result =
-            startAllBranchesWarmup({
-
-                months,
-
-                delayMs:
-                    delayMs === null
-                        ? DEFAULT_DELAY_MS
-                        : delayMs,
-
-                maxRetries:
-                    maxRetries === null
-                        ? DEFAULT_MAX_RETRIES
-                        : maxRetries
-
-            });
-
-
-        return {
-
-            success:
-                true,
-
-            mode:
-                "STARTED_NEW_ENGINE",
-
-            result
-
-        };
-
-    }
-
-
-    const connections =
-        getAllSavedConnections();
-
-
-    if (
-        !Array.isArray(
-            connections
-        )
-    ) {
-
-        return {
-
-            success:
-                false,
-
-            mode:
-                "NO_CONNECTIONS"
-
-        };
-
-    }
-
-
-    const existingIds =
-        new Set(
-
-            Array.from(
-
-                roundRobinEngine
-                    .branchPlans
-                    .keys()
-
-            )
-
-        );
-
-
-    const pendingIds =
-        new Set(
-
-            roundRobinEngine
-                .pendingBranches
-                .map(
-                    plan =>
-                        plan.branchId
-                )
-
-        );
-
-
-    const targetConnections =
-
-        branchId === null
-
-            ? connections.filter(
-
-                connection => {
-
-                    const id =
-                        Number(
-                            connection?.branchId
-                        );
-
-
-                    return (
-
-                        Number.isInteger(
-                            id
-                        ) &&
-
-                        id > 0 &&
-
-                        !existingIds.has(
-                            id
-                        ) &&
-
-                        !pendingIds.has(
-                            id
-                        )
-
-                    );
-
-                }
-
-            )
-
-            : connections.filter(
-
-                connection =>
-
-                    Number(
-                        connection?.branchId
-                    ) ===
-                    Number(
-                        branchId
-                    )
-
-            );
-
-
-    /*
-     * If the requested branch is already in the engine,
-     * nothing needs to be re-added.
-     */
-
-    if (
-        targetConnections.length ===
-        0
-    ) {
-
-        console.log(
-
-            branchId === null
-
-                ? "[cacheWarmup] REFRESH QUEUE -> no new branches."
-
-                : `[cacheWarmup] REFRESH QUEUE -> branch ${branchId} already queued/running.`
-
-        );
-
-
-        return {
-
-            success:
-                true,
-
-            mode:
-                "NO_NEW_BRANCHES",
-
-            branches:
-                roundRobinEngine
-                    .branchPlans
-                    .size
-
-        };
-
-    }
-
-
-    const effectiveMonths =
-
-        months === null
-
-            ? roundRobinEngine.months
-
-            : months;
-
-
-    const effectiveDelay =
-
-        delayMs === null
-
-            ? roundRobinEngine.delayMs
-
-            : Math.max(
-
-                0,
-
-                Number(
-                    delayMs
-                ) || 0
-
-            );
-
-
-    const effectiveRetries =
-
-        maxRetries === null
-
-            ? roundRobinEngine.maxRetries
-
-            : Math.max(
-
-                0,
-
-                Math.min(
-
-                    5,
-
-                    Number(
-                        maxRetries
-                    ) || 0
-
-                )
-
-            );
-
-
-    for (
-        const branch
-        of targetConnections
-    ) {
-
-        const id =
-            normalizeBranchId(
-                branch.branchId
-            );
-
-
-        try {
-
-            const plan =
-                await buildBranchPlan({
-
-                    branchId:
-                        id,
-
-                    connection:
-                        branch,
-
-                    months:
-                        effectiveMonths,
-
-                    resetState:
-                        true
-
-                });
-
-
-            if (
-                !plan
-            ) {
-
-                continue;
-
-            }
-
-
-            plan.addedDynamically =
-                true;
-
-
-            /*
-             * Force the branch to be picked up immediately
-             * at the next scheduler round.
-             */
-
-            plan.nextMonthIndex =
-                0;
-
-
-            roundRobinEngine
-                .pendingBranches
-                .push(
-                    plan
-                );
-
-
-            console.log(
-
-                `[cacheWarmup] REFRESH QUEUE ADDED branch=${id} newest=${plan.monthsList[0] || "N/A"} oldest=${plan.monthsList[plan.monthsList.length - 1] || "N/A"} months=${plan.monthsList.length}`
-
-            );
-
-        }
-        catch (
-            error
-        ) {
-
-            const state =
-                getState(
-                    id
-                );
-
-
-            state.running =
-                false;
-
-
-            state.failedMonths =
-                1;
-
-
-            state.error =
-                error?.message ||
-                String(
-                    error
-                );
-
-
-            state.finishedAt =
-                new Date().toISOString();
-
-
-            updateSalesSyncState({
-
-                branchId:
-                    id,
-
-                status:
-                    "ERROR",
-
-                rows:
-                    0,
-
-                errorMessage:
-                    state.error
-
-            });
-
-
-            console.error(
-
-                `[cacheWarmup] REFRESH QUEUE DISCOVERY FAILED branch=${id}:`,
-
-                error
-
-            );
-
-        }
-
-    }
-
-
-    /*
-     * Update engine defaults for future added branches.
-     */
-
-    roundRobinEngine.delayMs =
-        effectiveDelay;
-
-
-    roundRobinEngine.maxRetries =
-        effectiveRetries;
-
-
-    console.log(
-
-        `[cacheWarmup] REFRESH QUEUE COMPLETE added=${roundRobinEngine.pendingBranches.length} active=${roundRobinEngine.branchPlans.size}`
-
-    );
-
-
-    return {
-
-        success:
-            true,
-
-        mode:
-            "QUEUE_REFRESHED",
-
-        added:
-            roundRobinEngine.pendingBranches.length,
-
-        active:
-            roundRobinEngine.branchPlans.size
-
-    };
-
-}
-
 
 /*
  * =========================================================
@@ -3034,7 +2014,7 @@ export async function warmupBranchCache(
             try {
 
                 const result =
-                    await warmMonth({
+                    await warmMonthOnce({
 
                         branchId:
                             id,
@@ -3382,10 +2362,8 @@ export default {
 
     warmupBranchCache,
 
-    startAllBranchesWarmup,
 
     refreshCurrentMonthAllBranches,
-    refreshWarmupQueue,
 
     startBranchWarmup,
 
@@ -3396,4 +2374,3 @@ export default {
     isWarmupRunning
 
 };
-

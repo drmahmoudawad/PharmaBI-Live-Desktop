@@ -27,7 +27,7 @@ export const NAVIGATION = [
         label: "العملاء",
         children: [
             { id: "customer-overview", label: "نظرة عامة على العملاء", sectionId: "customers" },
-            { id: "customer-rfm", label: "تحليل RFM", sectionId: "customers" },
+            { id: "customer-rfm", label: "تحليل سلوك العملاء", sectionId: "customers" },
             { id: "customer-retention", label: "الاحتفاظ بالعملاء", sectionId: "customers" },
             { id: "customer-churn", label: "التوقف / عدم النشاط", sectionId: "customers" },
             { id: "customer-clv", label: "القيمة العمرية للعميل", sectionId: "customers" },

@@ -164,7 +164,7 @@ export default function ProductMixPanel(
         ) {
 
             console.error(
-                "[UI] Product Mix failed:",
+                "[UI] مزيج المنتجات failed:",
                 requestError
             );
 
@@ -177,7 +177,7 @@ export default function ProductMixPanel(
             setError(
 
                 requestError?.message ||
-                "فشل تحليل Product Mix."
+                "فشل تحليل مزيج المنتجات."
 
             );
 
@@ -198,7 +198,7 @@ export default function ProductMixPanel(
         <section className="analysis-section">
 
             <div className="section-title">
-                Product Mix Analytics
+                تحليلات مزيج المنتجات
             </div>
 
 
@@ -215,7 +215,7 @@ export default function ProductMixPanel(
                 {
                     loading
                         ? "جاري التحليل..."
-                        : "تحليل Product Mix"
+                        : "تحليل مزيج المنتجات"
                 }
 
             </button>
@@ -246,7 +246,7 @@ export default function ProductMixPanel(
                             <div className="metric">
 
                                 <span>
-                                    Current Sales
+                                    المبيعات الحالية
                                 </span>
 
                                 <strong>
@@ -263,7 +263,7 @@ export default function ProductMixPanel(
                             <div className="metric">
 
                                 <span>
-                                    Last Year Sales
+                                    مبيعات العام الماضي
                                 </span>
 
                                 <strong>
@@ -280,7 +280,7 @@ export default function ProductMixPanel(
                             <div className="metric">
 
                                 <span>
-                                    YoY Sales
+                                    المبيعات مقارنة بالعام الماضي
                                 </span>
 
                                 <strong
@@ -303,7 +303,7 @@ export default function ProductMixPanel(
                             <div className="metric">
 
                                 <span>
-                                    Product Mix Change
+                                    مزيج المنتجات Change
                                 </span>
 
                                 <strong
@@ -330,7 +330,7 @@ export default function ProductMixPanel(
                             <div className="metric">
 
                                 <span>
-                                    Current Products
+                                    المنتجات الحالية
                                 </span>
 
                                 <strong>

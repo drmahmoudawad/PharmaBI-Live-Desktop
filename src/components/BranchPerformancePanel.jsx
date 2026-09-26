@@ -970,30 +970,24 @@ function ForecastCards({
             <Card
                 label="توقع البرنامج الأساسي للشهر"
                 value={money(monthlyForecast)}
-                note={
-                    `${num(days)} يوم`
-                }
+                note={`\${num(days)} \u064a\u0648\u0645`}
             />
 
-            <Card
-                label="تنبؤ البرنامج A / يوم"
+            <Cardlabel="تنبؤ البرنامج A / يوم"
                 value={money(programA)}
                 note="الرقم الأول"
             />
 
-            <Card
-                label="تنبؤ البرنامج B / يوم"
+            <Cardlabel="تنبؤ البرنامج B / يوم"
                 value={money(programB)}
                 note="الرقم الثاني"
             />
 
-            <Card
-                label="تنبؤ البرنامج A للشهر"
+            <Cardlabel="تنبؤ البرنامج A للشهر"
                 value={money(programAMonth)}
             />
 
-            <Card
-                label="تنبؤ البرنامج B للشهر"
+            <Cardlabel="تنبؤ البرنامج B للشهر"
                 value={money(programBMonth)}
             />
 
@@ -2337,7 +2331,7 @@ export default function BranchPerformancePanel({
                 <div className="page-header">
                     <div>
                         <div className="page-eyebrow">
-                            PharmaBI Analytics
+                            تحليلات فارما بي آي
                         </div>
 
                         <h2>
@@ -2479,7 +2473,7 @@ export default function BranchPerformancePanel({
                 <div className="page-header">
                     <div>
                         <div className="page-eyebrow">
-                            PharmaBI Analytics
+                            تحليلات فارما بي آي
                         </div>
 
                         <h2>
@@ -2643,7 +2637,7 @@ export default function BranchPerformancePanel({
             <div className="page-header">
                 <div>
                     <div className="page-eyebrow">
-                        PharmaBI Analytics
+                        تحليلات فارما بي آي
                     </div>
 
                     <h2>

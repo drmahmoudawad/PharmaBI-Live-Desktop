@@ -1,4 +1,4 @@
-import {
+﻿import {
     contextBridge,
     ipcRenderer
 } from "electron";
@@ -9,35 +9,164 @@ contextBridge.exposeInMainWorld(
     {
 
         connection: {
-            test: payload => ipcRenderer.invoke("connection:test", payload),
-            save: payload => ipcRenderer.invoke("connection:save", payload),
-            rename: payload => ipcRenderer.invoke("connection:rename", payload),
-            getSaved: branchId => ipcRenderer.invoke("connection:get-saved", { branchId }),
-            getAllSaved: () => ipcRenderer.invoke("connection:get-all-saved"),
-            deleteSaved: branchId => ipcRenderer.invoke("connection:delete-saved", { branchId }),
-            connectSaved: branchId => ipcRenderer.invoke("connection:connect-saved", { branchId }),
-            close: branchId => ipcRenderer.invoke("connection:close", { branchId }),
-            active: () => ipcRenderer.invoke("connection:active")
-        },
+
+            test:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:test",
+                        payload
+                    ),
+
+            save:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:save",
+                        payload
+                    ),
+
+            rename:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:rename",
+                        payload
+                    ),
+
+            getSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:get-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            getAllSaved:
+                () =>
+                    ipcRenderer.invoke(
+                        "connection:get-all-saved"
+                    ),
+
+            deleteSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:delete-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            connectSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:connect-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            close:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:close",
+                        {
+                            branchId
+                        }
+                    ),
+
+            active:
+                () =>
+                    ipcRenderer.invoke(
+                        "connection:active"
+                    ),
+
+            syncCrmPhones:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:sync-crm-phones",
+                        payload
+                    ),},
+
 
         sales: {
-            get: payload => ipcRenderer.invoke("sales:get", payload),
-            preview: payload => ipcRenderer.invoke("sales:preview", payload),
-            summary: payload => ipcRenderer.invoke("sales:summary", payload),
-            deliverySummary: payload => ipcRenderer.invoke("sales:delivery-summary", payload),
-            reconciliation: payload => ipcRenderer.invoke("sales:reconciliation", payload),
-            byDay: payload => ipcRenderer.invoke("sales:by-day", payload),
-            byHour: payload => ipcRenderer.invoke("sales:by-hour", payload),
-            performance: payload => ipcRenderer.invoke("sales:performance", payload),
-            cacheClear: payload => ipcRenderer.invoke("sales:cache:clear", payload),
-            cacheStats: () => ipcRenderer.invoke("sales:cache:stats"),
+
+            get:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:get",
+                        payload
+                    ),
+
+            preview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:preview",
+                        payload
+                    ),
+
+            summary:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:summary",
+                        payload
+                    ),
+
+            deliverySummary:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:delivery-summary",
+                        payload
+                    ),
+
+            reconciliation:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:reconciliation",
+                        payload
+                    ),
+
+            byDay:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:by-day",
+                        payload
+                    ),
+
+            byHour:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:by-hour",
+                        payload
+                    ),
+
+            performance:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:performance",
+                        payload
+                    ),
+
+            cacheClear:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:cache:clear",
+                        payload
+                    ),
+
+            cacheStats:
+                () =>
+                    ipcRenderer.invoke(
+                        "sales:cache:stats"
+                    ),
+
             cacheCoverage:
                 payload =>
                     ipcRenderer.invoke(
                         "sales:cache:coverage",
                         payload
                     )
+
         },
+
 
         masterItem: {
 
@@ -62,7 +191,6 @@ contextBridge.exposeInMainWorld(
                         payload
                     ),
 
-
             searchExisting:
                 payload =>
                     ipcRenderer.invoke(
@@ -76,6 +204,7 @@ contextBridge.exposeInMainWorld(
                         "master-item:create-manual",
                         payload
                     ),
+
             reviewQueue:
                 payload =>
                     ipcRenderer.invoke(
@@ -166,31 +295,114 @@ contextBridge.exposeInMainWorld(
                         "master-item:management-cancel",
                         payload
                     ),
+
             stats:
                 () =>
                     ipcRenderer.invoke(
                         "master-item:stats"
                     )
+
         },
 
 
         dashboard: {
-            get: payload => ipcRenderer.invoke("dashboard:get", payload),
-            overview: payload => ipcRenderer.invoke("dashboard:overview", payload)
+
+            get:
+                payload =>
+                    ipcRenderer.invoke(
+                        "dashboard:get",
+                        payload
+                    ),
+
+            overview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "dashboard:overview",
+                        payload
+                    )
+
         },
+
 
         group: {
-            salesOverview: payload => ipcRenderer.invoke("group:sales-overview", payload)
+
+            salesOverview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "group:sales-overview",
+                        payload
+                    )
+
         },
 
+
         customers: {
-            rfm: payload => ipcRenderer.invoke("customers:rfm", payload),
-            intelligence: payload => ipcRenderer.invoke("customers:intelligence", payload),
-            retention: payload => ipcRenderer.invoke("customers:retention", payload),
-            inactivity: payload => ipcRenderer.invoke("customers:inactivity", payload),
-            clv: payload => ipcRenderer.invoke("customers:clv", payload),
-            cohort: payload => ipcRenderer.invoke("customers:cohort", payload)
+
+            rfm:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:rfm",
+                        payload
+                    ),
+
+            rfmV2:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:rfm-v2",
+                        payload
+                    ),
+
+            customer360:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:360",
+                        payload
+                    ),
+
+            searchCustomer360:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:360-search",
+                        payload
+                    ),
+
+            intelligence:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:intelligence",
+                        payload
+                    ),
+
+            retention:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:retention",
+                        payload
+                    ),
+
+            inactivity:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:inactivity",
+                        payload
+                    ),
+
+            clv:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:clv",
+                        payload
+                    ),
+
+            cohort:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:cohort",
+                        payload
+                    )
+
         },
+
 
         analytics: {
 
@@ -205,9 +417,31 @@ contextBridge.exposeInMainWorld(
 
 
         products: {
-            overview: payload => ipcRenderer.invoke("products:overview", payload),
-            top: payload => ipcRenderer.invoke("products:top", payload),
-            profitability: payload => ipcRenderer.invoke("products:profitability", payload)
+
+            overview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:overview",
+                        payload
+                    ),
+
+            top:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:top",
+                        payload
+                    ),
+
+            profitability:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:profitability",
+                        payload
+                    )
+
         }
+
     }
 );
+
+

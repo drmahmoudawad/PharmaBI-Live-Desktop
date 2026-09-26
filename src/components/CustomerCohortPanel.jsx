@@ -306,7 +306,7 @@ export default function CustomerCohortPanel(
                             <div className="metric">
 
                                 <span>
-                                    Initial Cohort Sales
+                                    مبيعات الشريحة عند البداية
                                 </span>
 
                                 <strong>
@@ -325,7 +325,7 @@ export default function CustomerCohortPanel(
                             <div className="metric">
 
                                 <span>
-                                    Observed Cohort Sales
+                                    مبيعات الشريحة الفعلية
                                 </span>
 
                                 <strong>
@@ -412,11 +412,11 @@ export default function CustomerCohortPanel(
                                             </th>
 
                                             <th>
-                                                Initial Sales
+                                                المبيعات عند البداية
                                             </th>
 
                                             <th>
-                                                Observed Sales
+                                                المبيعات الفعلية
                                             </th>
 
                                             {
@@ -526,7 +526,7 @@ export default function CustomerCohortPanel(
                                 </strong>
 
                                 <span>
-                                    Sales / Active Customer
+                                    المبيعات لكل عميل نشط
                                 </span>
 
                             </div>

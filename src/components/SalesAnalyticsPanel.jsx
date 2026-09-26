@@ -133,20 +133,20 @@ function getModuleTitle(
     ) {
 
         case "sales-trend":
-            return "Sales Trend";
+            return "اتجاه المبيعات";
 
         case "sales-day-hour":
             return "Day / Hour";
 
         case "sales-sellers":
-            return "Sellers";
+            return "البائعون";
 
         case "sales-returns":
-            return "Returns";
+            return "المرتجعات";
 
         case "sales-overview":
         default:
-            return "Sales Overview";
+            return "نظرة عامة على المبيعات";
 
     }
 
@@ -596,7 +596,7 @@ export default function SalesAnalyticsPanel(
             setError(
 
                 requestError?.message ||
-                "فشل تحميل Sales Overview."
+                "فشل تحميل نظرة عامة على المبيعات."
 
             );
 
@@ -666,7 +666,7 @@ export default function SalesAnalyticsPanel(
             setError(
 
                 requestError?.message ||
-                "فشل تحميل Sales Trend."
+                "فشل تحميل اتجاه المبيعات."
 
             );
 
@@ -785,7 +785,7 @@ export default function SalesAnalyticsPanel(
      * =========================================================
      */
 
-    async function loadReturns() {
+    async function loadالمرتجعات() {
 
         try {
 
@@ -829,7 +829,7 @@ export default function SalesAnalyticsPanel(
             setError(
 
                 requestError?.message ||
-                "فشل تحميل Returns."
+                "فشل تحميل المرتجعات."
 
             );
 
@@ -851,7 +851,7 @@ export default function SalesAnalyticsPanel(
      * =========================================================
      */
 
-    async function loadSellers() {
+    async function loadالبائعون() {
 
         setLoading(
             false
@@ -1552,7 +1552,7 @@ export default function SalesAnalyticsPanel(
                         "sales-returns"
                     ) {
 
-                        await loadReturns();
+                        await loadالمرتجعات();
 
                     }
                     else if (
@@ -1560,7 +1560,7 @@ export default function SalesAnalyticsPanel(
                         "sales-sellers"
                     ) {
 
-                        await loadSellers();
+                        await loadالبائعون();
 
                     }
 
@@ -1780,7 +1780,7 @@ export default function SalesAnalyticsPanel(
 
                         title="لا توجد بيانات"
 
-                        text="لم يتم إرجاع بيانات Sales Summary."
+                        text="لم يتم إرجاع بيانات ملخص المبيعات."
 
                     />
 
@@ -1809,7 +1809,7 @@ export default function SalesAnalyticsPanel(
 
 
                         <h2>
-                            Sales Overview
+                            نظرة عامة على المبيعات
                         </h2>
 
 
@@ -1879,7 +1879,7 @@ export default function SalesAnalyticsPanel(
 
                                     ? "جاري قياس الأداء..."
 
-                                    : "SQL Performance Test"
+                                    : "اختبار أداء قاعدة البيانات"
 
                             }
 
@@ -1958,7 +1958,7 @@ export default function SalesAnalyticsPanel(
                                 <div>
 
                                     <strong>
-                                        SQL Performance Test
+                                        اختبار أداء قاعدة البيانات
                                     </strong>
 
                                     <span>
@@ -1974,7 +1974,7 @@ export default function SalesAnalyticsPanel(
 
                                 <PerformanceResultCard
 
-                                    title="Preview"
+                                    title="معاينة"
 
                                     elapsed={
                                         performanceResult
@@ -1998,7 +1998,7 @@ export default function SalesAnalyticsPanel(
                                         performanceResult
                                             .preview
                                             .error ||
-                                        "Normalized sales path"
+                                        "مسار المبيعات الموحّد"
                                     }
 
                                 />
@@ -2006,7 +2006,7 @@ export default function SalesAnalyticsPanel(
 
                                 <PerformanceResultCard
 
-                                    title="Summary"
+                                    title="الملخص"
 
                                     elapsed={
                                         performanceResult
@@ -2030,7 +2030,7 @@ export default function SalesAnalyticsPanel(
                                         performanceResult
                                             .summary
                                             .error ||
-                                        "Sales + reconciliation"
+                                        "المبيعات + المطابقة"
                                     }
 
                                 />
@@ -2038,7 +2038,7 @@ export default function SalesAnalyticsPanel(
 
                                 <PerformanceResultCard
 
-                                    title="By Day"
+                                    title="حسب اليوم"
 
                                     elapsed={
                                         performanceResult
@@ -2062,7 +2062,7 @@ export default function SalesAnalyticsPanel(
                                         performanceResult
                                             .byDay
                                             .error ||
-                                        "Daily aggregation"
+                                        "تجميع المبيعات حسب اليوم"
                                     }
 
                                 />
@@ -2070,7 +2070,7 @@ export default function SalesAnalyticsPanel(
 
                                 <PerformanceResultCard
 
-                                    title="By Hour"
+                                    title="حسب الساعة"
 
                                     elapsed={
                                         performanceResult
@@ -2103,7 +2103,7 @@ export default function SalesAnalyticsPanel(
                                 <div className="kpi-card">
 
                                     <span>
-                                        Total Test Time
+                                        إجمالي وقت الاختبار
                                     </span>
 
                                     <strong>
@@ -2184,7 +2184,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Gross Sales
+                            إجمالي المبيعات
                         </span>
 
                         <strong>
@@ -2201,7 +2201,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Returns
+                            المرتجعات
                         </span>
 
                         <strong>
@@ -2235,7 +2235,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Net Cost
+                            صافي التكلفة
                         </span>
 
                         <strong>
@@ -2252,7 +2252,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Net Profit
+                            صافي الربح
                         </span>
 
                         <strong>
@@ -2324,7 +2324,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Average Ticket
+                            متوسط الفاتورة
                         </span>
 
                         <strong>
@@ -2529,7 +2529,7 @@ export default function SalesAnalyticsPanel(
                                 <div>
 
                                     <strong>
-                                        Recent Sales Preview
+                                        معاينة أحدث المبيعات
                                     </strong>
 
                                     <span>
@@ -2694,7 +2694,7 @@ export default function SalesAnalyticsPanel(
 
 
                         <h2>
-                            Sales Trend
+                            اتجاه المبيعات
                         </h2>
 
 
@@ -2743,7 +2743,7 @@ export default function SalesAnalyticsPanel(
                                                 </th>
 
                                                 <th>
-                                                    Returns
+                                                    المرتجعات
                                                 </th>
 
                                                 <th>
@@ -2905,7 +2905,7 @@ export default function SalesAnalyticsPanel(
                         <div>
 
                             <strong>
-                                Daily Performance
+                                الأداء اليومي
                             </strong>
 
                         </div>
@@ -3014,7 +3014,7 @@ export default function SalesAnalyticsPanel(
                         <div>
 
                             <strong>
-                                Hourly Performance
+                                الأداء حسب الساعة
                             </strong>
 
                         </div>
@@ -3039,7 +3039,7 @@ export default function SalesAnalyticsPanel(
                                     </th>
 
                                     <th>
-                                        Returns
+                                        المرتجعات
                                     </th>
 
                                     <th>
@@ -3184,7 +3184,7 @@ export default function SalesAnalyticsPanel(
 
 
                         <h2>
-                            Returns
+                            المرتجعات
                         </h2>
 
 
@@ -3202,7 +3202,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Gross Sales
+                            إجمالي المبيعات
                         </span>
 
                         <strong>
@@ -3219,7 +3219,7 @@ export default function SalesAnalyticsPanel(
                     <div className="kpi-card">
 
                         <span>
-                            Returns
+                            المرتجعات
                         </span>
 
                         <strong>
@@ -3297,7 +3297,7 @@ export default function SalesAnalyticsPanel(
                                 <tr>
 
                                     <td>
-                                        Net Sales after Returns
+                                        Net Sales after المرتجعات
                                     </td>
 
                                     <td>
@@ -3331,7 +3331,7 @@ export default function SalesAnalyticsPanel(
                                 <tr>
 
                                     <td>
-                                        Return Cost
+                                        تكلفة المرتجعات
                                     </td>
 
                                     <td>
@@ -3379,7 +3379,7 @@ export default function SalesAnalyticsPanel(
 
 
                     <h2>
-                        Sellers
+                        البائعون
                     </h2>
 
 
@@ -3401,7 +3401,7 @@ export default function SalesAnalyticsPanel(
 
 
                 <h2>
-                    Sellers Analytics
+                    البائعون Analytics
                 </h2>
 
 

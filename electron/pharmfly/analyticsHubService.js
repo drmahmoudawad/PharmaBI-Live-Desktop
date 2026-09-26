@@ -2462,7 +2462,7 @@ export async function getAnalyticsModule({
         return {
           success: false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظٹظ„ ط§ظ„ظٹظˆظ… ظˆط§ظ„ط³ط§ط¹ط©.'
+            'اختر فرعًا ظ„طھط­طظٹظ„ اليوم والساعة.'
         };
       }
 
@@ -2611,7 +2611,7 @@ export async function getAnalyticsModule({
         return {
           success: false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط±طھط¬ط¹ط§طھ.'
+            'اختر فرعًا ظ„طھط­طظظٹظ„ المرتجعات.'
         };
       }
 
@@ -2661,7 +2661,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط†طھط¬ط§طھ.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ الم؆تجات.'
           };
 
     case 'product-profitability':
@@ -2681,7 +2681,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ ط±ط¨ط­طظط© ط§ظ„ظ…ط†طھط¬ط§طھ.'
+              'اختر فرعًا ظ„طھط­طظظيظ„ ط±ط¨ط­طظط© الم؆تجات.'
           };
 
     case 'product-abc':
@@ -2698,7 +2698,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط†طھط¬ط§طھ.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ الم؆تجات.'
           };
 
     case 'customer-overview':
@@ -2716,7 +2716,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ط¹ظ…ظ„ط§ط،.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ العملاء.'
           };
 
     case 'customer-retention':
@@ -2731,7 +2731,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ§ط­طھظپط§ط¸.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ ال٧حتفاظ.'
           };
 
     case 'customer-churn':
@@ -2747,7 +2747,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط¹ط¯ظ… ط§ظ„ظ†ط´ط§ط·.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ عدم النشاط.'
           };
 
     case 'customer-clv':
@@ -2766,7 +2766,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ CLV.'
+              'اختر فرعًا ظ„طھط­طظظيظ„ CLV.'
           };
 
     case 'customer-cohort':
@@ -2783,7 +2783,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظيظ„ ط§ظ„ظ€Cohort.'
+              'اختر فرعًا ظ„طھط­طظظيظ„ الـCohort.'
           };
 
     case 'operations':
@@ -2795,7 +2795,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط®ط²ظˆظ†.'
+            'اختر فرعًا ظ„طھط­طظظٹظ„ المخزون.'
         };
       }
 
@@ -2830,7 +2830,7 @@ export async function getAnalyticsModule({
 
               itemName:
                 row.itemName ||
-                'ط؛ظٹط± ظ…ط¹ط±ظˆظپ',
+                'غير معروف',
 
               units:
                 0,
@@ -3062,7 +3062,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­طظظٹظ„ ط§ظ„ظ…ط¸ظپظٹظ†.'
+              'اختر فرعًا ظ„طھط­طظظٹظ„ المظفين.'
           };
 
     case 'forecast-sales':
@@ -3073,7 +3073,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„طھط†ط¨ط¤.'
+            'اختر فرعًا للت؆بؤ.'
         };
       }
 
@@ -3107,7 +3107,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظپط­طµ ط¬ظˆط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ.'
+            'اختر فرعًا لفحص جودة البيانات.'
         };
       }
 
@@ -3140,7 +3140,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„ظ…ط·ط§ط¨ظ‚ط©.'
+            'اختر فرعًا للمطابقة.'
         };
       }
 

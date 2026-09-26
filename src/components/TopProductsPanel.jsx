@@ -113,7 +113,7 @@ export default function TopProductsPanel(
         ) {
 
             console.error(
-                "[UI] Top Products failed:",
+                "[UI] أفضل المنتجات failed:",
                 requestError
             );
 
@@ -126,7 +126,7 @@ export default function TopProductsPanel(
             setError(
 
                 requestError?.message ||
-                "فشل تحميل Top Products."
+                "فشل تحميل أفضل المنتجات."
 
             );
 
@@ -147,7 +147,7 @@ export default function TopProductsPanel(
         <section className="analysis-section">
 
             <div className="section-title">
-                Top Products
+                أفضل المنتجات
             </div>
 
 
@@ -164,7 +164,7 @@ export default function TopProductsPanel(
                 {
                     loading
                         ? "جاري التحليل..."
-                        : "تحليل Top Products"
+                        : "تحليل أفضل المنتجات"
                 }
 
             </button>
@@ -193,7 +193,7 @@ export default function TopProductsPanel(
                         <div className="result-header">
 
                             <strong>
-                                Top {result.limit} Products
+                                أفضل {result.limit} منتجات
                             </strong>
 
                             <span>

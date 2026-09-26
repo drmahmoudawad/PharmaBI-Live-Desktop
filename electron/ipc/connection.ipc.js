@@ -1,4 +1,4 @@
-import {
+﻿import {
     ipcMain
 } from "electron";
 
@@ -18,6 +18,11 @@ import {
     getAllSavedConnections,
     deleteBranchConnection
 } from "../settings/connectionStore.js";
+
+
+import {
+    initializeCrmSchema
+} from "../pharmfly/customers/crm/crmDb.js";
 
 
 let registered =
@@ -188,6 +193,269 @@ function normalizeConnection(
 
 }
 
+
+
+export async function syncCrmPhonesForBranch(
+    branchIdInput
+) {
+
+    const branchId =
+        normalizeBranchId(
+            branchIdInput
+        );
+
+    const saved =
+        getBranchConnection(
+            branchId
+        );
+
+    if (!saved) {
+        throw new Error(
+            `No saved connection for branch ${branchId}.`
+        );
+    }
+
+    const pool =
+        await getBranchPool(
+            branchId,
+            saved
+        );
+
+    const sourceResult =
+        await pool
+            .request()
+            .query(`
+                SELECT
+                    t.CustomerID,
+                    t.Tel,
+                    t.ID
+                FROM dbo.Telephones t
+                INNER JOIN dbo.Cards c
+                    ON c.Id = t.CustomerID
+                WHERE
+                    c.IsHDCustomer = 1
+                    AND t.Tel IS NOT NULL
+                    AND LTRIM(
+                        RTRIM(
+                            t.Tel
+                        )
+                    ) <> ''
+                ORDER BY
+                    t.CustomerID,
+                    t.ID DESC
+            `);
+
+    function normalizePhone(
+        value
+    ) {
+
+        let digits =
+            String(
+                value ||
+                ""
+            ).replace(
+                /\D/g,
+                ""
+            );
+
+        if (!digits) {
+            return null;
+        }
+
+        if (
+            digits.startsWith("00")
+        ) {
+            digits =
+                digits.slice(2);
+        }
+
+        if (
+            digits.startsWith("20") &&
+            digits.length === 12
+        ) {
+            return digits;
+        }
+
+        if (
+            digits.startsWith("0") &&
+            digits.length === 11
+        ) {
+            return (
+                "20" +
+                digits.slice(1)
+            );
+        }
+
+        if (
+            digits.startsWith("1") &&
+            digits.length === 10
+        ) {
+            return (
+                "20" +
+                digits
+            );
+        }
+
+        return digits;
+    }
+
+    const phoneMap =
+        new Map();
+
+    for (
+        const row
+        of (
+            sourceResult.recordset ||
+            []
+        )
+    ) {
+
+        const customerId =
+            String(
+                row.CustomerID
+            );
+
+        if (
+            phoneMap.has(
+                customerId
+            )
+        ) {
+            continue;
+        }
+
+        const phone =
+            String(
+                row.Tel ||
+                ""
+            ).trim();
+
+        if (!phone) {
+            continue;
+        }
+
+        phoneMap.set(
+            customerId,
+            {
+                phone,
+                normalized:
+                    normalizePhone(
+                        phone
+                    )
+            }
+        );
+    }
+
+    const crmDb =
+        initializeCrmSchema();
+
+    const profiles =
+        crmDb.prepare(`
+            SELECT
+                customer_id,
+                whatsapp_phone,
+                whatsapp_phone_normalized
+            FROM crm_customer_profiles
+            WHERE
+                branch_id = ?
+        `).all(
+            branchId
+        );
+
+    const updateProfile =
+        crmDb.prepare(`
+            UPDATE crm_customer_profiles
+            SET
+                whatsapp_phone = ?,
+                whatsapp_phone_normalized = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE
+                branch_id = ?
+                AND customer_id = ?
+                AND (
+                    COALESCE(
+                        whatsapp_phone,
+                        ''
+                    ) <> ?
+
+                    OR
+
+                    COALESCE(
+                        whatsapp_phone_normalized,
+                        ''
+                    ) <> COALESCE(
+                        ?,
+                        ''
+                    )
+                )
+        `);
+
+    let matchedProfiles = 0;
+    let updatedProfiles = 0;
+
+    const transaction =
+        crmDb.transaction(
+            () => {
+
+                for (
+                    const profile
+                    of profiles
+                ) {
+
+                    const customerId =
+                        String(
+                            profile.customer_id
+                        );
+
+                    const phone =
+                        phoneMap.get(
+                            customerId
+                        );
+
+                    if (!phone) {
+                        continue;
+                    }
+
+                    matchedProfiles++;
+
+                    const result =
+                        updateProfile.run(
+                            phone.phone,
+                            phone.normalized,
+                            branchId,
+                            customerId,
+                            phone.phone,
+                            phone.normalized
+                        );
+
+                    updatedProfiles +=
+                        Number(
+                            result.changes ||
+                            0
+                        );
+                }
+            }
+        );
+
+    transaction();
+
+    const response = {
+        success: true,
+        branchId,
+        sourceDeliveryCustomers:
+            phoneMap.size,
+        existingCrmProfiles:
+            profiles.length,
+        matchedProfiles,
+        updatedProfiles
+    };
+
+    console.log(
+        "[CRM Phone AutoSync]",
+        response
+    );
+
+    return response;
+}
 
 export function registerConnectionIpc() {
 
@@ -614,136 +882,9 @@ export function registerConnectionIpc() {
         }
 
     );
-    /*
-     * =========================================================
-     * TEMP DELIVERY DIAGNOSTIC
-     * =========================================================
-     */
-
-    ipcMain.handle(
-
-        "connection:inspect-delivery",
-
-        async (
-            _event,
-            payload
-        ) => {
-
-            const branchId =
-                normalizeBranchId(
-                    payload?.branchId
-                );
-
-
-            const saved =
-                getBranchConnection(
-                    branchId
-                );
-
-
-            if (
-                !saved
-            ) {
-
-                throw new Error(
-                    `No saved connection for branch ${branchId}.`
-                );
-
-            }
-
-
-            const pool =
-                await getBranchPool(
-
-                    branchId,
-
-                    saved
-
-                );
-
-
-            const result =
-                await pool
-                    .request()
-                    .query(`
-
-                        SELECT
-
-                            COUNT(*) AS total_delivery_lines,
-
-                            COUNT(
-                                DISTINCT
-                                CASE
-                                    WHEN ISNULL(
-                                        t.DeliveryBoyId,
-                                        0
-                                    ) > 0
-                                    THEN t.ID
-                                END
-                            ) AS delivery_tickets,
-
-                            SUM(
-                                CASE
-                                    WHEN
-                                        ISNULL(
-                                            t.DeliveryBoyId,
-                                            0
-                                        ) > 0
-                                    AND
-                                        ISNULL(
-                                            t.SalesReturn,
-                                            0
-                                        ) <> 2
-                                    THEN
-                                        ISNULL(
-                                            t.Total,
-                                            0
-                                        )
-                                    ELSE 0
-                                END
-                            ) AS delivery_sales
-
-                        FROM posTickets t
-
-                        WHERE
-
-                            t.ztime >=
-                            '2026-08-01'
-
-                        AND
-
-                            t.ztime <
-                            '2026-09-01'
-
-                    `);
-
-
-            const row =
-                result?.recordset?.[0] ||
-                {};
-
-
-            console.log(
-
-                `[Delivery Diagnostic] Branch ${branchId}:`,
-
-                row
-
-            );
-
-
-            return {
-
-                success:
-                    true,
-
-                branchId,
-
-                ...row
-
-            };
-
-        }
-
-    );
+    
 }
+
+
+
+

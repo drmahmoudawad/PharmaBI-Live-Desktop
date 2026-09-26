@@ -334,7 +334,7 @@ export default function CustomerAnalyticsPanel(
                             <div className="metric">
 
                                 <span>
-                                    Previous Customers
+                                    العملاء السابقون
                                 </span>
 
                                 <strong>
@@ -410,7 +410,7 @@ export default function CustomerAnalyticsPanel(
                             <div className="metric">
 
                                 <span>
-                                    Current Customers
+                                    العملاء الحاليون
                                 </span>
 
                                 <strong>
@@ -522,7 +522,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="metric">
 
                                     <span>
-                                        Known Customers
+                                        العملاء المسجلون
                                     </span>
 
                                     <strong>
@@ -541,7 +541,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="metric">
 
                                     <span>
-                                        Active ≤ 30 Days
+                                        نشط خلال 30 يومًا أو أقل
                                     </span>
 
                                     <strong>
@@ -560,7 +560,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="metric">
 
                                     <span>
-                                        Inactive ≥ 30 Days
+                                        غير نشط منذ 30 يومًا أو أكثر
                                     </span>
 
                                     <strong>
@@ -579,7 +579,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="metric">
 
                                     <span>
-                                        Inactive ≥ 60 Days
+                                        غير نشط منذ 60 يومًا أو أكثر
                                     </span>
 
                                     <strong>
@@ -598,7 +598,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="metric">
 
                                     <span>
-                                        Inactive ≥ 90 Days
+                                        غير نشط منذ 90 يومًا أو أكثر
                                     </span>
 
                                     <strong>
@@ -678,7 +678,7 @@ export default function CustomerAnalyticsPanel(
                                 <div className="result-header">
 
                                     <strong>
-                                        Inactive 90 Days
+                                        غير نشط منذ 90 يومًا
                                     </strong>
 
                                     <span>

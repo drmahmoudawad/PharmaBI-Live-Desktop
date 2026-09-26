@@ -1,3 +1,5 @@
+const SALES_PAGE_EFFECT_RUN_ID = { value: 0 };
+
 import React, {
     useEffect,
     useMemo,
@@ -727,6 +729,27 @@ export default function SalesOverviewPage({
         );
 
 
+    const connectionSignature =
+        useMemo(
+            () => {
+                if (!selectedConnection) {
+                    return "";
+                }
+
+                return JSON.stringify(
+                    Object.keys(selectedConnection)
+                        .sort()
+                        .map(
+                            key => [
+                                key,
+                                selectedConnection[key]
+                            ]
+                        )
+                );
+            },
+            [selectedConnection]
+        );
+
     useEffect(
 
         () => {
@@ -757,8 +780,63 @@ export default function SalesOverviewPage({
             }
 
 
-            let cancelled =
-                false;
+            let cancelled = false;
+
+
+
+
+            const effectRunId =
+
+
+
+                ++SALES_PAGE_EFFECT_RUN_ID.value;
+
+
+
+
+            console.log(
+
+
+
+                "[SalesPage] EFFECT START",
+
+
+
+                effectRunId,
+
+
+
+                {
+
+
+
+                    selectedBranchId,
+
+
+
+                    fromDate,
+
+
+
+                    toDate,
+
+
+
+                    hasConnection:
+
+
+
+                        Boolean(selectedConnection)
+
+
+
+                }
+
+
+
+            );
+
+
 
 
             async function load() {
@@ -1025,8 +1103,15 @@ export default function SalesOverviewPage({
                 }
                 finally {
 
-                    /* Current-period data controls the page loading state.
-                     * Comparison queries continue in the background. */
+                    if (
+                        !cancelled
+                    ) {
+
+                        setLoading(
+                            false
+                        );
+
+                    }
 
                 }
 
@@ -1038,8 +1123,30 @@ export default function SalesOverviewPage({
 
             return () => {
 
-                cancelled =
-                    true;
+
+
+
+                cancelled = true;
+
+
+
+
+                console.log(
+
+
+
+                    "[SalesPage] EFFECT CLEANUP",
+
+
+
+                    effectRunId
+
+
+
+                );
+
+
+
 
             };
 
@@ -1049,8 +1156,7 @@ export default function SalesOverviewPage({
 
             selectedBranchId,
 
-            selectedConnection,
-
+            connectionSignature,
             fromDate,
 
             toDate,

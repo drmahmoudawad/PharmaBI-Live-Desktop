@@ -17,8 +17,10 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "mssql": "12.7.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "whatsapp-web.js": "github:carlosalaniz/whatsapp-web.js#fix/lid-getchats-crash",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -48,19 +50,27 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PharmaBI Live"
+      "shortcutName": "PharmaBI Live",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "extraResources": [
       {
         "from": "installer-seed",
-        "to": "installer-seed"
+        "to": "installer-seed",
+        "filter": [
+          "**/*",
+          "!persistent-cache/**",
+          "!persistent-data-cache.json"
+        ]
       }
     ]
   }

@@ -1,0 +1,2781 @@
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+const TEMPLATE_OPTIONS = [
+    {
+        id: "payment_reminder",
+        label: "تذكير بسداد",
+        build: ({ customerName, branchName, amount }) =>
+            `مرحباً ${customerName || "عميلنا العزيز"}،
+
+نود تذكيركم بسداد مبلغ ${amount || 0} جنيه.
+
+فرع: ${branchName || ""}
+
+شكراً لثقتكم بنا 🙏`
+    },
+    {
+        id: "refill_reminder",
+        label: "تذكير بتجديد الدواء",
+        build: ({ customerName, branchName, itemName }) =>
+            `مرحباً ${customerName || "عميلنا العزيز"}،
+
+نود تذكيركم بتجديد دواء ${itemName || "الخاص بكم"}.
+
+فرع: ${branchName || ""}
+
+صيدليتكم دائماً في خدمتكم 💊`
+    },
+    {
+        id: "birthday",
+        label: "تهنئة عيد ميلاد",
+        build: ({ customerName, branchName }) =>
+            `كل سنة وأنت طيب يا ${customerName || "عميلنا العزيز"}! 🎉
+
+بمناسبة عيد ميلادك، نتمنى لك يوماً سعيداً.
+
+فرع: ${branchName || ""}`
+    },
+    {
+        id: "offer",
+        label: "عرض",
+        build: ({ customerName, branchName, offerText }) =>
+            `عميلنا العزيز ${customerName || ""}،
+
+${offerText || "لدينا عرض خاص لكم هذا الأسبوع."}
+
+فرع: ${branchName || ""}
+
+لا تفوت الفرصة! 🎁`
+    },
+    {
+        id: "thanks",
+        label: "شكر",
+        build: ({ customerName }) =>
+            `شكراً ${customerName || "عميلنا العزيز"} على ثقتكم بنا 🙏
+
+نتمنى لكم دوام الصحة والعافية.`
+    }
+];
+
+
+function normalizeStatusPayload(
+    payload
+) {
+    if (
+        !payload ||
+        typeof payload !== "object"
+    ) {
+        return {};
+    }
+
+    return payload;
+}
+
+
+function getEventPayload(
+    first,
+    second
+) {
+    return (
+        second !== undefined
+            ? second
+            : first
+    );
+}
+
+
+function statusLabel(
+    status
+) {
+    switch (
+        String(
+            status ||
+            ""
+        ).toLowerCase()
+    ) {
+        case "ready":
+        case "connected":
+            return "متصل";
+
+        case "connecting":
+        case "initializing":
+            return "جارٍ الاتصال";
+
+        case "authenticated":
+            return "تم التحقق";
+
+        case "error":
+        case "auth_failure":
+            return "خطأ";
+
+        case "disconnected":
+        default:
+            return "غير متصل";
+    }
+}
+
+
+function statusTone(
+    status
+) {
+    switch (
+        String(
+            status ||
+            ""
+        ).toLowerCase()
+    ) {
+        case "ready":
+        case "connected":
+            return {
+                background: "rgba(34,197,94,0.12)",
+                border: "rgba(34,197,94,0.35)",
+                color: "#86efac"
+            };
+
+        case "connecting":
+        case "initializing":
+        case "authenticated":
+            return {
+                background: "rgba(56,189,248,0.12)",
+                border: "rgba(56,189,248,0.35)",
+                color: "#7dd3fc"
+            };
+
+        case "error":
+        case "auth_failure":
+            return {
+                background: "rgba(239,68,68,0.12)",
+                border: "rgba(239,68,68,0.35)",
+                color: "#fca5a5"
+            };
+
+        default:
+            return {
+                background: "rgba(148,163,184,0.10)",
+                border: "rgba(148,163,184,0.25)",
+                color: "#cbd5e1"
+            };
+    }
+}
+
+
+export default function WhatsAppPage({
+    selectedBranchId
+}) {
+
+    const [
+        branches,
+        setBranches
+    ] = useState([]);
+
+
+    const [
+        branchId,
+        setBranchId
+    ] = useState(
+        Number(
+            selectedBranchId
+        ) > 0
+            ? String(
+                selectedBranchId
+            )
+            : ""
+    );
+
+
+    const [
+        status,
+        setStatus
+    ] = useState(
+        {
+            status: "disconnected",
+            isReady: false,
+            qr: null
+        }
+    );
+
+
+    const [
+        loading,
+        setLoading
+    ] = useState(false);
+
+
+    const [
+        actionMessage,
+        setActionMessage
+    ] = useState("");
+
+
+    const [
+        actionError,
+        setActionError
+    ] = useState("");
+
+
+    const [
+        phone,
+        setPhone
+    ] = useState("");
+
+
+    const [
+        customerId,
+        setCustomerId
+    ] = useState("");
+
+
+    const [
+        customerName,
+        setCustomerName
+    ] = useState("");
+
+
+    const [
+        templateId,
+        setTemplateId
+    ] = useState(
+        "payment_reminder"
+    );
+
+
+    const [
+        amount,
+        setAmount
+    ] = useState("");
+
+
+    const [
+        itemName,
+        setItemName
+    ] = useState("");
+
+
+    const [
+        offerText,
+        setOfferText
+    ] = useState("");
+
+
+    const [
+        customMessage,
+        setCustomMessage
+    ] = useState("");
+
+
+    const [
+        history,
+        setHistory
+    ] = useState([]);
+
+
+    const [
+        historyLoading,
+        setHistoryLoading
+    ] = useState(false);
+
+
+    const [
+        historyPhone,
+        setHistoryPhone
+    ] = useState("");
+
+
+    const currentBranch =
+        useMemo(
+            () =>
+                branches.find(
+                    branch =>
+                        Number(
+                            branch?.branchId
+                        ) ===
+                        Number(
+                            branchId
+                        )
+                ) ||
+                null,
+            [
+                branches,
+                branchId
+            ]
+        );
+
+
+    const branchName =
+        currentBranch
+            ? (
+                currentBranch.branchName ||
+                currentBranch.branch_name ||
+                currentBranch.name ||
+                `الفرع ${branchId}`
+            )
+            : "";
+
+
+    const currentTemplate =
+        TEMPLATE_OPTIONS.find(
+            item =>
+                item.id ===
+                templateId
+        ) ||
+        TEMPLATE_OPTIONS[0];
+
+
+    const previewMessage =
+        currentTemplate.build(
+            {
+                customerName,
+                branchName,
+                amount,
+                itemName,
+                offerText
+            }
+        );
+
+
+    const effectiveMessage =
+        templateId ===
+        "custom"
+            ? customMessage
+            : previewMessage;
+
+
+    const isReady =
+        status?.isReady === true ||
+        status?.status === "ready" ||
+        status?.status === "connected";
+
+
+    const loadBranches =
+        useCallback(
+            async () => {
+
+                try {
+
+                    const result =
+                        await window
+                            .pharmaBI
+                            ?.connection
+                            ?.getAllSaved?.();
+
+                    const list =
+                        Array.isArray(
+                            result
+                        )
+                            ? result
+                            : (
+                                Array.isArray(
+                                    result?.connections
+                                )
+                                    ? result.connections
+                                    : []
+                            );
+
+                    setBranches(
+                        list
+                    );
+
+                    if (
+                        Number(
+                            selectedBranchId
+                        ) > 0
+                    ) {
+
+                        setBranchId(
+                            String(
+                                selectedBranchId
+                            )
+                        );
+
+                    }
+                    else if (
+                        list.length ===
+                        1
+                    ) {
+
+                        setBranchId(
+                            String(
+                                list[0]?.branchId || ""
+                            )
+                        );
+
+                    }
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] Failed to load branches:",
+                        error
+                    );
+
+                }
+
+            },
+            [
+                selectedBranchId
+            ]
+        );
+
+
+    const refreshStatus =
+        useCallback(
+            async () => {
+
+                try {
+
+                    const result =
+                        await window
+                            .pharmaBI
+                            ?.whatsapp
+                            ?.status?.();
+
+                    const normalized =
+                        normalizeStatusPayload(
+                            result
+                        );
+
+                    setStatus(
+                        current => ({
+                            ...current,
+                            ...normalized
+                        })
+                    );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] Status error:",
+                        error
+                    );
+
+                }
+
+            },
+            []
+        );
+
+
+    const loadHistory =
+        useCallback(
+            async () => {
+
+                if (
+                    !branchId ||
+                    Number(
+                        branchId
+                    ) <= 0
+                ) {
+                    setHistory([]);
+                    return;
+                }
+
+                setHistoryLoading(
+                    true
+                );
+
+                try {
+
+                    const result =
+                        await window
+                            .pharmaBI
+                            ?.whatsapp
+                            ?.history?.({
+                                branchId:
+                                    Number(
+                                        branchId
+                                    ),
+                                phone:
+                                    historyPhone
+                                        .trim() ||
+                                    undefined,
+                                limit:
+                                    100
+                            });
+
+                    const rows =
+                        Array.isArray(
+                            result?.history
+                        )
+                            ? result.history
+                            : Array.isArray(
+                                result
+                            )
+                                ? result
+                                : [];
+
+                    setHistory(
+                        rows
+                    );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] History error:",
+                        error
+                    );
+
+                    setActionError(
+                        error?.message ||
+                        "تعذر تحميل سجل الرسائل."
+                    );
+
+                }
+                finally {
+
+                    setHistoryLoading(
+                        false
+                    );
+
+                }
+
+            },
+            [
+                branchId,
+                historyPhone
+            ]
+        );
+
+
+    useEffect(
+        () => {
+
+            void loadBranches();
+
+        },
+        [
+            loadBranches
+        ]
+    );
+
+
+    useEffect(
+        () => {
+
+            const qrHandler =
+                (
+                    first,
+                    second
+                ) => {
+
+                    const payload =
+                        getEventPayload(
+                            first,
+                            second
+                        );
+
+                    if (
+                        payload &&
+                        typeof payload === "object"
+                    ) {
+
+                        setStatus(
+                            current => ({
+                                ...current,
+                                ...payload,
+                                status:
+                                    payload.status ||
+                                    "connecting"
+                            })
+                        );
+
+                    }
+
+                };
+
+
+            const connectedHandler =
+                (
+                    first,
+                    second
+                ) => {
+
+                    const payload =
+                        getEventPayload(
+                            first,
+                            second
+                        );
+
+                    setStatus(
+                        current => ({
+                            ...current,
+                            ...(payload || {}),
+                            status:
+                                "ready",
+                            isReady:
+                                true,
+                            qr:
+                                null
+                        })
+                    );
+
+                    setActionMessage(
+                        "تم اتصال WhatsApp بنجاح."
+                    );
+
+                };
+
+
+            const genericHandler =
+                (
+                    first,
+                    second
+                ) => {
+
+                    const payload =
+                        getEventPayload(
+                            first,
+                            second
+                        );
+
+                    if (
+                        payload &&
+                        typeof payload === "object"
+                    ) {
+
+                        setStatus(
+                            current => ({
+                                ...current,
+                                ...(payload.status
+                                    ? {
+                                        status:
+                                            payload.status
+                                    }
+                                    : {}),
+                                ...(payload.qr
+                                    ? {
+                                        qr:
+                                            payload.qr
+                                    }
+                                    : {})
+                            })
+                        );
+
+                    }
+
+                };
+
+
+            try {
+
+                window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.onQr?.(
+                        qrHandler
+                    );
+
+                window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.onConnected?.(
+                        connectedHandler
+                    );
+
+                window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.onDisconnected?.(
+                        genericHandler
+                    );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp] Listener setup error:",
+                    error
+                );
+
+            }
+
+
+            void refreshStatus();
+
+
+            const timer =
+                window.setInterval(
+                    () => {
+                        void refreshStatus();
+                    },
+                    2000
+                );
+
+
+            return () => {
+
+                window.clearInterval(
+                    timer
+                );
+
+                try {
+
+                    window
+                        .pharmaBI
+                        ?.whatsapp
+                        ?.offQr?.(
+                            qrHandler
+                        );
+
+                    window
+                        .pharmaBI
+                        ?.whatsapp
+                        ?.offConnected?.(
+                            connectedHandler
+                        );
+
+                    window
+                        .pharmaBI
+                        ?.whatsapp
+                        ?.offDisconnected?.(
+                            genericHandler
+                        );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] Listener cleanup error:",
+                        error
+                    );
+
+                }
+
+            };
+
+        },
+        [
+            refreshStatus
+        ]
+    );
+
+
+    useEffect(
+        () => {
+
+            void loadHistory();
+
+        },
+        [
+            loadHistory
+        ]
+    );
+    useEffect(
+        () => {
+
+            const messageHandler =
+                (
+                    first,
+                    second
+                ) => {
+
+                    const payload =
+                        getEventPayload(
+                            first,
+                            second
+                        );
+
+                    if (
+                        payload &&
+                        typeof payload === "object"
+                    ) {
+
+                        void loadHistory();
+
+                    }
+
+                };
+
+
+            try {
+
+                window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.onMessage?.(
+                        messageHandler
+                    );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.warn(
+                    "[WhatsApp] Message listener setup failed:",
+                    error
+                );
+
+            }
+
+
+            return () => {
+
+                try {
+
+                    window
+                        .pharmaBI
+                        ?.whatsapp
+                        ?.offMessage?.(
+                            messageHandler
+                        );
+
+                }
+                catch {
+                    // Optional cleanup.
+                }
+
+            };
+
+        },
+        [
+            loadHistory
+        ]
+    );
+
+
+    async function initializeWhatsApp() {
+
+        setLoading(
+            true
+        );
+
+        setActionMessage(
+            ""
+        );
+
+        setActionError(
+            ""
+        );
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.init?.();
+
+            const normalized =
+                normalizeStatusPayload(
+                    result
+                );
+
+            setStatus(
+                current => ({
+                    ...current,
+                    ...normalized
+                })
+            );
+
+            if (
+                normalized?.status ===
+                "ready" ||
+                normalized?.status ===
+                "connected"
+            ) {
+
+                setActionMessage(
+                    "WhatsApp متصل بالفعل."
+                );
+
+            }
+            else {
+
+                setActionMessage(
+                    "تم تشغيل اتصال WhatsApp. إذا ظهر QR امسحه من الهاتف."
+                );
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+                "[WhatsApp] Init error:",
+                error
+            );
+
+            setActionError(
+                error?.message ||
+                "تعذر تشغيل WhatsApp."
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+            void refreshStatus();
+
+        }
+
+    }
+
+
+    async function logoutWhatsApp() {
+
+        setLoading(
+            true
+        );
+
+        setActionMessage(
+            ""
+        );
+
+        setActionError(
+            ""
+        );
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.logout?.();
+
+            if (
+                result?.success === false
+            ) {
+
+                throw new Error(
+                    result?.error ||
+                    "تعذر تسجيل الخروج."
+                );
+
+            }
+
+            setStatus(
+                {
+                    status:
+                        "disconnected",
+                    isReady:
+                        false,
+                    qr:
+                        null
+                }
+            );
+
+            setActionMessage(
+                "تم تسجيل الخروج من WhatsApp."
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            setActionError(
+                error?.message ||
+                "تعذر تسجيل الخروج."
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    async function sendSingleMessage() {
+
+        setActionMessage(
+            ""
+        );
+
+        setActionError(
+            ""
+        );
+
+        if (
+            !branchId ||
+            Number(
+                branchId
+            ) <= 0
+        ) {
+
+            setActionError(
+                "اختر الفرع أولاً."
+            );
+
+            return;
+
+        }
+
+        if (
+            !phone.trim()
+        ) {
+
+            setActionError(
+                "أدخل رقم WhatsApp."
+            );
+
+            return;
+
+        }
+
+        if (
+            !isReady
+        ) {
+
+            setActionError(
+                "WhatsApp غير متصل حالياً."
+            );
+
+            return;
+
+        }
+
+        if (
+            !effectiveMessage.trim()
+        ) {
+
+            setActionError(
+                "لا توجد رسالة للإرسال."
+            );
+
+            return;
+
+        }
+
+        setLoading(
+            true
+        );
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    ?.whatsapp
+                    ?.send?.({
+
+                        branchId:
+                            Number(
+                                branchId
+                            ),
+
+                        customerId:
+                            customerId.trim() ||
+                            phone.trim(),
+
+                        phone:
+                            phone.trim(),
+
+                        message:
+                            effectiveMessage,
+
+                        type:
+                            templateId ===
+                            "custom"
+                                ? "text"
+                                : templateId,
+
+                        template:
+                            templateId ===
+                            "custom"
+                                ? undefined
+                                : templateId,
+
+                        customerName:
+                            customerName.trim(),
+
+                        branchName,
+
+                        amount:
+                            amount.trim(),
+
+                        itemName:
+                            itemName.trim(),
+
+                        campaignId:
+                            null,
+
+                        campaignTargetId:
+                            null
+
+                    });
+
+            if (
+                result?.success === false
+            ) {
+
+                throw new Error(
+                    result?.error ||
+                    "فشل إرسال الرسالة."
+                );
+
+            }
+
+            setActionMessage(
+                "تم إرسال الرسالة وتسجيلها في CRM."
+            );
+
+            await loadHistory();
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+                "[WhatsApp] Send error:",
+                error
+            );
+
+            setActionError(
+                error?.message ||
+                "تعذر إرسال الرسالة."
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    function formatDate(
+        value
+    ) {
+
+        if (
+            !value
+        ) {
+            return "—";
+        }
+
+        try {
+
+            return new Date(
+                value
+            ).toLocaleString(
+                "ar-EG"
+            );
+
+        }
+        catch {
+
+            return String(
+                value
+            );
+
+        }
+
+    }
+
+
+    function formatStatus(
+        value
+    ) {
+
+        const raw =
+            String(
+                value ||
+                ""
+            ).toUpperCase();
+
+        switch (
+            raw
+        ) {
+            case "SENT":
+                return "تم الإرسال";
+
+            case "DELIVERED":
+                return "تم التسليم";
+
+            case "READ":
+                return "تمت القراءة";
+
+            case "FAILED":
+                return "فشل";
+
+            case "QUEUED":
+                return "بالانتظار";
+
+            case "INBOUND":
+                return "وارد";
+
+            default:
+                return value || "—";
+        }
+
+    }
+
+
+    return (
+
+        <div
+            dir="rtl"
+            style={{
+                display:
+                    "grid",
+                gap:
+                    18
+            }}
+        >
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            CRM · WhatsApp
+                        </div>
+
+                        <h2>
+                            WhatsApp داخل PharmaBI
+                        </h2>
+
+                        <p>
+                            اتصال WhatsApp الحقيقي، إرسال الرسائل، وتسجيل الحركة داخل CRM.
+                        </p>
+
+                    </div>
+
+                    <div
+                        style={{
+                            display:
+                                "flex",
+                            alignItems:
+                                "center",
+                            gap:
+                                10,
+                            flexWrap:
+                                "wrap"
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                padding:
+                                    "9px 14px",
+                                borderRadius:
+                                    999,
+                                border:
+                                    `1px solid ${statusTone(status?.status).border}`,
+                                background:
+                                    statusTone(status?.status).background,
+                                color:
+                                    statusTone(status?.status).color,
+                                fontWeight:
+                                    800,
+                                fontSize:
+                                    13
+                            }}
+                        >
+                            WhatsApp:{" "}
+                            {statusLabel(
+                                status?.status
+                            )}
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div
+                    style={{
+                        display:
+                            "grid",
+                        gridTemplateColumns:
+                            "repeat(auto-fit,minmax(220px,1fr))",
+                        gap:
+                            14,
+                        marginTop:
+                            16
+                    }}
+                >
+
+                    <div
+                        style={{
+                            background:
+                                "rgba(15,23,42,0.45)",
+                            border:
+                                "1px solid rgba(148,163,184,0.14)",
+                            borderRadius:
+                                14,
+                            padding:
+                                16
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                fontSize:
+                                    12,
+                                color:
+                                    "#94a3b8",
+                                marginBottom:
+                                    8
+                            }}
+                        >
+                            حالة الاتصال
+                        </div>
+
+                        <div
+                            style={{
+                                fontSize:
+                                    23,
+                                fontWeight:
+                                    900,
+                                color:
+                                    isReady
+                                        ? "#86efac"
+                                        : "#f8fafc"
+                            }}
+                        >
+                            {
+                                statusLabel(
+                                    status?.status
+                                )
+                            }
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            background:
+                                "rgba(15,23,42,0.45)",
+                            border:
+                                "1px solid rgba(148,163,184,0.14)",
+                            borderRadius:
+                                14,
+                            padding:
+                                16
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                fontSize:
+                                    12,
+                                color:
+                                    "#94a3b8",
+                                marginBottom:
+                                    8
+                            }}
+                        >
+                            الفرع الحالي للإرسال
+                        </div>
+
+                        <select
+                            value={
+                                branchId
+                            }
+                            onChange={
+                                event =>
+                                    setBranchId(
+                                        event.target.value
+                                    )
+                            }
+                            style={{
+                                width:
+                                    "100%",
+                                padding:
+                                    "11px 12px",
+                                borderRadius:
+                                    10,
+                                border:
+                                    "1px solid rgba(148,163,184,0.22)",
+                                background:
+                                    "#0f172a",
+                                color:
+                                    "#f8fafc",
+                                outline:
+                                    "none"
+                            }}
+                        >
+
+                            <option
+                                value=""
+                            >
+                                اختر الفرع
+                            </option>
+
+                            {
+                                branches.map(
+                                    branch => (
+
+                                        <option
+                                            key={
+                                                branch.branchId
+                                            }
+                                            value={
+                                                branch.branchId
+                                            }
+                                        >
+                                            {
+                                                branch.branchName ||
+                                                branch.branch_name ||
+                                                branch.name ||
+                                                `الفرع ${branch.branchId}`
+                                            }
+                                        </option>
+
+                                    )
+                                )
+                            }
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                {
+                    actionMessage && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    16,
+                                padding:
+                                    "12px 14px",
+                                borderRadius:
+                                    10,
+                                background:
+                                    "rgba(34,197,94,0.10)",
+                                border:
+                                    "1px solid rgba(34,197,94,0.25)",
+                                color:
+                                    "#86efac",
+                                fontWeight:
+                                    700
+                            }}
+                        >
+                            {actionMessage}
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    actionError && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    16,
+                                padding:
+                                    "12px 14px",
+                                borderRadius:
+                                    10,
+                                background:
+                                    "rgba(239,68,68,0.10)",
+                                border:
+                                    "1px solid rgba(239,68,68,0.25)",
+                                color:
+                                    "#fca5a5",
+                                fontWeight:
+                                    700
+                            }}
+                        >
+                            {actionError}
+                        </div>
+
+                    )
+                }
+
+
+                <div
+                    style={{
+                        display:
+                            "flex",
+                        gap:
+                            10,
+                        flexWrap:
+                            "wrap",
+                        marginTop:
+                            16
+                    }}
+                >
+
+                    <button
+                        type="button"
+                        onClick={
+                            initializeWhatsApp
+                        }
+                        disabled={
+                            loading
+                        }
+                        style={{
+                            border:
+                                "1px solid rgba(56,189,248,0.35)",
+                            background:
+                                "rgba(14,165,233,0.14)",
+                            color:
+                                "#7dd3fc",
+                            padding:
+                                "11px 17px",
+                            borderRadius:
+                                10,
+                            fontWeight:
+                                800,
+                            cursor:
+                                loading
+                                    ? "default"
+                                    : "pointer"
+                        }}
+                    >
+                        {
+                            loading
+                                ? "جارٍ التنفيذ..."
+                                : "تشغيل / اتصال WhatsApp"
+                        }
+                    </button>
+
+
+                    <button
+                        type="button"
+                        onClick={
+                            refreshStatus
+                        }
+                        style={{
+                            border:
+                                "1px solid rgba(148,163,184,0.22)",
+                            background:
+                                "rgba(148,163,184,0.08)",
+                            color:
+                                "#e2e8f0",
+                            padding:
+                                "11px 17px",
+                            borderRadius:
+                                10,
+                            fontWeight:
+                                700,
+                            cursor:
+                                "pointer"
+                        }}
+                    >
+                        تحديث الحالة
+                    </button>
+
+
+                    <button
+                        type="button"
+                        onClick={
+                            logoutWhatsApp
+                        }
+                        disabled={
+                            loading ||
+                            !isReady
+                        }
+                        style={{
+                            border:
+                                "1px solid rgba(239,68,68,0.28)",
+                            background:
+                                "rgba(239,68,68,0.08)",
+                            color:
+                                "#fca5a5",
+                            padding:
+                                "11px 17px",
+                            borderRadius:
+                                10,
+                            fontWeight:
+                                700,
+                            cursor:
+                                loading ||
+                                !isReady
+                                    ? "default"
+                                    : "pointer"
+                        }}
+                    >
+                        تسجيل الخروج
+                    </button>
+
+                </div>
+
+
+                {
+                    status?.qr && !isReady && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    18,
+                                display:
+                                    "grid",
+                                gridTemplateColumns:
+                                    "minmax(260px,340px) 1fr",
+                                gap:
+                                    20,
+                                alignItems:
+                                    "center",
+                                background:
+                                    "rgba(15,23,42,0.55)",
+                                border:
+                                    "1px solid rgba(56,189,248,0.18)",
+                                borderRadius:
+                                    16,
+                                padding:
+                                    18
+                            }}
+                        >
+
+                            <div
+                                style={{
+                                    background:
+                                        "#ffffff",
+                                    borderRadius:
+                                        12,
+                                    padding:
+                                        12,
+                                    display:
+                                        "grid",
+                                    placeItems:
+                                        "center"
+                                }}
+                            >
+
+                                <img
+                                    src={
+                                        status.qr
+                                    }
+                                    alt="WhatsApp QR"
+                                    style={{
+                                        width:
+                                            "100%",
+                                        maxWidth:
+                                            300,
+                                        display:
+                                            "block"
+                                    }}
+                                />
+
+                            </div>
+
+
+                            <div>
+
+                                <div
+                                    style={{
+                                        color:
+                                            "#7dd3fc",
+                                        fontSize:
+                                            13,
+                                        fontWeight:
+                                            800,
+                                        marginBottom:
+                                            10
+                                    }}
+                                >
+                                    QR Code
+                                </div>
+
+                                <h3
+                                    style={{
+                                        margin:
+                                            "0 0 10px",
+                                        color:
+                                            "#f8fafc"
+                                    }}
+                                >
+                                    امسح الكود من WhatsApp في الهاتف
+                                </h3>
+
+                                <p
+                                    style={{
+                                        margin:
+                                            0,
+                                        color:
+                                            "#94a3b8",
+                                        lineHeight:
+                                            1.8
+                                    }}
+                                >
+                                    افتح WhatsApp في الهاتف ← الإعدادات ← الأجهزة المرتبطة ← ربط جهاز، ثم امسح الكود.
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                    )
+                }
+
+            </section>
+
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            إرسال
+                        </div>
+
+                        <h2>
+                            إرسال رسالة لعميل
+                        </h2>
+
+                    </div>
+
+                </div>
+
+
+                <div
+                    style={{
+                        display:
+                            "grid",
+                        gridTemplateColumns:
+                            "repeat(2,minmax(0,1fr))",
+                        gap:
+                            14
+                    }}
+                >
+
+                    <label
+                        style={{
+                            display:
+                                "grid",
+                            gap:
+                                7
+                        }}
+                    >
+                        <span
+                            style={{
+                                color:
+                                    "#94a3b8",
+                                fontSize:
+                                    13
+                            }}
+                        >
+                            رقم WhatsApp
+                        </span>
+
+                        <input
+                            value={
+                                phone
+                            }
+                            onChange={
+                                event =>
+                                    setPhone(
+                                        event.target.value
+                                    )
+                            }
+                            placeholder="010xxxxxxxx"
+                            style={{
+                                padding:
+                                    "12px",
+                                borderRadius:
+                                    10,
+                                border:
+                                    "1px solid rgba(148,163,184,0.22)",
+                                background:
+                                    "#0f172a",
+                                color:
+                                    "#f8fafc"
+                            }}
+                        />
+                    </label>
+
+
+                    <label
+                        style={{
+                            display:
+                                "grid",
+                            gap:
+                                7
+                        }}
+                    >
+                        <span
+                            style={{
+                                color:
+                                    "#94a3b8",
+                                fontSize:
+                                    13
+                            }}
+                        >
+                            كود العميل
+                        </span>
+
+                        <input
+                            value={
+                                customerId
+                            }
+                            onChange={
+                                event =>
+                                    setCustomerId(
+                                        event.target.value
+                                    )
+                            }
+                            placeholder="اختياري"
+                            style={{
+                                padding:
+                                    "12px",
+                                borderRadius:
+                                    10,
+                                border:
+                                    "1px solid rgba(148,163,184,0.22)",
+                                background:
+                                    "#0f172a",
+                                color:
+                                    "#f8fafc"
+                            }}
+                        />
+                    </label>
+
+
+                    <label
+                        style={{
+                            display:
+                                "grid",
+                            gap:
+                                7
+                        }}
+                    >
+                        <span
+                            style={{
+                                color:
+                                    "#94a3b8",
+                                fontSize:
+                                    13
+                            }}
+                        >
+                            اسم العميل
+                        </span>
+
+                        <input
+                            value={
+                                customerName
+                            }
+                            onChange={
+                                event =>
+                                    setCustomerName(
+                                        event.target.value
+                                    )
+                            }
+                            placeholder="اختياري"
+                            style={{
+                                padding:
+                                    "12px",
+                                borderRadius:
+                                    10,
+                                border:
+                                    "1px solid rgba(148,163,184,0.22)",
+                                background:
+                                    "#0f172a",
+                                color:
+                                    "#f8fafc"
+                            }}
+                        />
+                    </label>
+
+
+                    <label
+                        style={{
+                            display:
+                                "grid",
+                            gap:
+                                7
+                        }}
+                    >
+                        <span
+                            style={{
+                                color:
+                                    "#94a3b8",
+                                fontSize:
+                                    13
+                            }}
+                        >
+                            القالب
+                        </span>
+
+                        <select
+                            value={
+                                templateId
+                            }
+                            onChange={
+                                event =>
+                                    setTemplateId(
+                                        event.target.value
+                                    )
+                            }
+                            style={{
+                                padding:
+                                    "12px",
+                                borderRadius:
+                                    10,
+                                border:
+                                    "1px solid rgba(148,163,184,0.22)",
+                                background:
+                                    "#0f172a",
+                                color:
+                                    "#f8fafc"
+                            }}
+                        >
+
+                            {
+                                TEMPLATE_OPTIONS.map(
+                                    template => (
+
+                                        <option
+                                            key={
+                                                template.id
+                                            }
+                                            value={
+                                                template.id
+                                            }
+                                        >
+                                            {
+                                                template.label
+                                            }
+                                        </option>
+
+                                    )
+                                )
+                            }
+
+                            <option
+                                value="custom"
+                            >
+                                رسالة مخصصة
+                            </option>
+
+                        </select>
+
+                    </label>
+
+                </div>
+
+
+                {
+                    templateId ===
+                    "payment_reminder" && (
+
+                        <div
+                            style={{
+                                display:
+                                    "grid",
+                                gridTemplateColumns:
+                                    "1fr 1fr",
+                                gap:
+                                    14,
+                                marginTop:
+                                    14
+                            }}
+                        >
+
+                            <label
+                                style={{
+                                    display:
+                                        "grid",
+                                    gap:
+                                        7
+                                }}
+                            >
+                                <span
+                                    style={{
+                                        color:
+                                            "#94a3b8",
+                                        fontSize:
+                                            13
+                                    }}
+                                >
+                                    المبلغ
+                                </span>
+
+                                <input
+                                    value={
+                                        amount
+                                    }
+                                    onChange={
+                                        event =>
+                                            setAmount(
+                                                event.target.value
+                                            )
+                                    }
+                                    placeholder="0"
+                                    style={{
+                                        padding:
+                                            "12px",
+                                        borderRadius:
+                                            10,
+                                        border:
+                                            "1px solid rgba(148,163,184,0.22)",
+                                        background:
+                                            "#0f172a",
+                                        color:
+                                            "#f8fafc"
+                                    }}
+                                />
+                            </label>
+
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    templateId ===
+                    "refill_reminder" && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    14
+                            }}
+                        >
+
+                            <label
+                                style={{
+                                    display:
+                                        "grid",
+                                    gap:
+                                        7
+                                }}
+                            >
+                                <span
+                                    style={{
+                                        color:
+                                            "#94a3b8",
+                                        fontSize:
+                                            13
+                                    }}
+                                >
+                                    اسم الدواء
+                                </span>
+
+                                <input
+                                    value={
+                                        itemName
+                                    }
+                                    onChange={
+                                        event =>
+                                            setItemName(
+                                                event.target.value
+                                            )
+                                    }
+                                    style={{
+                                        padding:
+                                            "12px",
+                                        borderRadius:
+                                            10,
+                                        border:
+                                            "1px solid rgba(148,163,184,0.22)",
+                                        background:
+                                            "#0f172a",
+                                        color:
+                                            "#f8fafc",
+                                        width:
+                                            "100%"
+                                    }}
+                                />
+
+                            </label>
+
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    templateId ===
+                    "offer" && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    14
+                            }}
+                        >
+
+                            <label
+                                style={{
+                                    display:
+                                        "grid",
+                                    gap:
+                                        7
+                                }}
+                            >
+                                <span
+                                    style={{
+                                        color:
+                                            "#94a3b8",
+                                        fontSize:
+                                            13
+                                    }}
+                                >
+                                    نص العرض
+                                </span>
+
+                                <textarea
+                                    value={
+                                        offerText
+                                    }
+                                    onChange={
+                                        event =>
+                                            setOfferText(
+                                                event.target.value
+                                            )
+                                    }
+                                    rows={
+                                        4
+                                    }
+                                    style={{
+                                        padding:
+                                            "12px",
+                                        borderRadius:
+                                            10,
+                                        border:
+                                            "1px solid rgba(148,163,184,0.22)",
+                                        background:
+                                            "#0f172a",
+                                        color:
+                                            "#f8fafc",
+                                        resize:
+                                            "vertical"
+                                    }}
+                                />
+
+                            </label>
+
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    templateId ===
+                    "custom" && (
+
+                        <div
+                            style={{
+                                marginTop:
+                                    14
+                            }}
+                        >
+
+                            <label
+                                style={{
+                                    display:
+                                        "grid",
+                                    gap:
+                                        7
+                                }}
+                            >
+
+                                <span
+                                    style={{
+                                        color:
+                                            "#94a3b8",
+                                        fontSize:
+                                            13
+                                    }}
+                                >
+                                    الرسالة
+                                </span>
+
+                                <textarea
+                                    value={
+                                        customMessage
+                                    }
+                                    onChange={
+                                        event =>
+                                            setCustomMessage(
+                                                event.target.value
+                                            )
+                                    }
+                                    rows={
+                                        6
+                                    }
+                                    placeholder="اكتب الرسالة هنا..."
+                                    style={{
+                                        width:
+                                            "100%",
+                                        boxSizing:
+                                            "border-box",
+                                        padding:
+                                            "12px",
+                                        borderRadius:
+                                            10,
+                                        border:
+                                            "1px solid rgba(148,163,184,0.22)",
+                                        background:
+                                            "#0f172a",
+                                        color:
+                                            "#f8fafc",
+                                        resize:
+                                            "vertical"
+                                    }}
+                                />
+
+                            </label>
+
+                        </div>
+
+                    )
+                }
+
+
+                <div
+                    style={{
+                        marginTop:
+                            16,
+                        display:
+                            "grid",
+                        gridTemplateColumns:
+                            "1fr auto",
+                        gap:
+                            14,
+                        alignItems:
+                            "stretch"
+                    }}
+                >
+
+                    <div
+                        style={{
+                            background:
+                                "rgba(56,189,248,0.05)",
+                            border:
+                                "1px solid rgba(56,189,248,0.15)",
+                            borderRadius:
+                                12,
+                            padding:
+                                16,
+                            whiteSpace:
+                                "pre-wrap",
+                            lineHeight:
+                                1.8,
+                            color:
+                                "#e2e8f0"
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                color:
+                                    "#7dd3fc",
+                                fontSize:
+                                    12,
+                                fontWeight:
+                                    800,
+                                marginBottom:
+                                    9
+                            }}
+                        >
+                            معاينة الرسالة
+                        </div>
+
+                        {
+                            effectiveMessage ||
+                            "ستظهر المعاينة هنا."
+                        }
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onClick={
+                            sendSingleMessage
+                        }
+                        disabled={
+                            loading ||
+                            !isReady
+                        }
+                        style={{
+                            minWidth:
+                                170,
+                            border:
+                                "0",
+                            borderRadius:
+                                12,
+                            background:
+                                isReady
+                                    ? "linear-gradient(135deg,#0ea5e9,#0284c7)"
+                                    : "#334155",
+                            color:
+                                "#ffffff",
+                            fontWeight:
+                                900,
+                            cursor:
+                                loading ||
+                                !isReady
+                                    ? "default"
+                                    : "pointer"
+                        }}
+                    >
+                        إرسال الرسالة
+                    </button>
+
+                </div>
+
+            </section>
+
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            CRM History
+                        </div>
+
+                        <h2>
+                            سجل رسائل WhatsApp
+                        </h2>
+
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={
+                            loadHistory
+                        }
+                        style={{
+                            border:
+                                "1px solid rgba(148,163,184,0.22)",
+                            background:
+                                "rgba(148,163,184,0.08)",
+                            color:
+                                "#e2e8f0",
+                            padding:
+                                "10px 15px",
+                            borderRadius:
+                                10,
+                            fontWeight:
+                                700,
+                            cursor:
+                                "pointer"
+                        }}
+                    >
+                        تحديث السجل
+                    </button>
+
+                </div>
+
+
+                <div
+                    style={{
+                        display:
+                            "flex",
+                        gap:
+                            10,
+                        marginBottom:
+                            15
+                    }}
+                >
+
+                    <input
+                        value={
+                            historyPhone
+                        }
+                        onChange={
+                            event =>
+                                setHistoryPhone(
+                                    event.target.value
+                                )
+                        }
+                        placeholder="فلترة برقم الهاتف"
+                        style={{
+                            flex:
+                                1,
+                            padding:
+                                "11px 12px",
+                            borderRadius:
+                                10,
+                            border:
+                                "1px solid rgba(148,163,184,0.22)",
+                            background:
+                                "#0f172a",
+                            color:
+                                "#f8fafc"
+                        }}
+                    />
+
+                    <button
+                        type="button"
+                        onClick={
+                            loadHistory
+                        }
+                        style={{
+                            border:
+                                "1px solid rgba(56,189,248,0.24)",
+                            background:
+                                "rgba(56,189,248,0.08)",
+                            color:
+                                "#7dd3fc",
+                            padding:
+                                "11px 16px",
+                            borderRadius:
+                                10,
+                            fontWeight:
+                                700
+                        }}
+                    >
+                        بحث
+                    </button>
+
+                </div>
+
+
+                {
+                    historyLoading
+                        ? (
+
+                            <div
+                                style={{
+                                    padding:
+                                        24,
+                                    textAlign:
+                                        "center",
+                                    color:
+                                        "#94a3b8"
+                                }}
+                            >
+                                جارٍ تحميل السجل...
+                            </div>
+
+                        )
+                        : history.length ===
+                          0
+                            ? (
+
+                                <div
+                                    className="empty-state"
+                                >
+
+                                    <h3>
+                                        لا توجد رسائل مسجلة
+                                    </h3>
+
+                                    <p>
+                                        سيتم ظهور الرسائل الصادرة والواردة هنا بعد تشغيل WhatsApp واستخدامه.
+                                    </p>
+
+                                </div>
+
+                            )
+                            : (
+
+                                <div
+                                    style={{
+                                        overflowX:
+                                            "auto"
+                                    }}
+                                >
+
+                                    <table
+                                        style={{
+                                            width:
+                                                "100%",
+                                            borderCollapse:
+                                                "collapse"
+                                        }}
+                                    >
+
+                                        <thead>
+
+                                            <tr>
+
+                                                <th
+                                                    style={{
+                                                        textAlign:
+                                                            "right",
+                                                        padding:
+                                                            11,
+                                                        borderBottom:
+                                                            "1px solid rgba(148,163,184,0.18)",
+                                                        color:
+                                                            "#7dd3fc"
+                                                    }}
+                                                >
+                                                    التاريخ
+                                                </th>
+
+                                                <th
+                                                    style={{
+                                                        textAlign:
+                                                            "right",
+                                                        padding:
+                                                            11,
+                                                        borderBottom:
+                                                            "1px solid rgba(148,163,184,0.18)",
+                                                        color:
+                                                            "#7dd3fc"
+                                                    }}
+                                                >
+                                                    الهاتف
+                                                </th>
+
+                                                <th
+                                                    style={{
+                                                        textAlign:
+                                                            "right",
+                                                        padding:
+                                                            11,
+                                                        borderBottom:
+                                                            "1px solid rgba(148,163,184,0.18)",
+                                                        color:
+                                                            "#7dd3fc"
+                                                    }}
+                                                >
+                                                    الاتجاه
+                                                </th>
+
+                                                <th
+                                                    style={{
+                                                        textAlign:
+                                                            "right",
+                                                        padding:
+                                                            11,
+                                                        borderBottom:
+                                                            "1px solid rgba(148,163,184,0.18)",
+                                                        color:
+                                                            "#7dd3fc"
+                                                    }}
+                                                >
+                                                    الحالة
+                                                </th>
+
+                                                <th
+                                                    style={{
+                                                        textAlign:
+                                                            "right",
+                                                        padding:
+                                                            11,
+                                                        borderBottom:
+                                                            "1px solid rgba(148,163,184,0.18)",
+                                                        color:
+                                                            "#7dd3fc"
+                                                    }}
+                                                >
+                                                    الرسالة
+                                                </th>
+
+                                            </tr>
+
+                                        </thead>
+
+
+                                        <tbody>
+
+                                            {
+                                                history.map(
+                                                    row => (
+
+                                                        <tr
+                                                            key={
+                                                                row.id ||
+                                                                `${row.provider_message_id}-${row.created_at}`
+                                                            }
+                                                        >
+
+                                                            <td
+                                                                style={{
+                                                                    padding:
+                                                                        11,
+                                                                    color:
+                                                                        "#cbd5e1",
+                                                                    borderBottom:
+                                                                        "1px solid rgba(148,163,184,0.10)",
+                                                                    whiteSpace:
+                                                                        "nowrap"
+                                                                }}
+                                                            >
+                                                                {
+                                                                    formatDate(
+                                                                        row.created_at ||
+                                                                        row.sent_at ||
+                                                                        row.queued_at
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td
+                                                                style={{
+                                                                    padding:
+                                                                        11,
+                                                                    color:
+                                                                        "#f8fafc",
+                                                                    borderBottom:
+                                                                        "1px solid rgba(148,163,184,0.10)",
+                                                                    whiteSpace:
+                                                                        "nowrap"
+                                                                }}
+                                                            >
+                                                                <div
+    style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3
+    }}
+>
+    <strong
+        style={{
+            color:
+                row.is_unmatched
+                    ? "#fbbf24"
+                    : "#f8fafc"
+        }}
+    >
+        {
+            row.is_unmatched ? "\u0639\u0645\u064a\u0644 \u062c\u062f\u064a\u062f" : (row.customer_name || "\u2014")
+        }
+    </strong>
+
+    <span
+        style={{
+            color: "#94a3b8",
+            fontSize: 12
+        }}
+    >
+        {
+            row.recipient_phone ||
+            row.phone ||
+            "â€”"
+        }
+    </span>
+</div>
+                                                            </td>
+
+                                                            <td
+                                                                style={{
+                                                                    padding:
+                                                                        11,
+                                                                    color:
+                                                                        row.direction ===
+                                                                        "INBOUND"
+                                                                            ? "#fbbf24"
+                                                                            : "#7dd3fc",
+                                                                    fontWeight:
+                                                                        700,
+                                                                    borderBottom:
+                                                                        "1px solid rgba(148,163,184,0.10)"
+                                                                }}
+                                                            >
+                                                                {
+                                                                    row.direction ===
+                                                                    "INBOUND"
+                                                                        ? "وارد"
+                                                                        : "صادر"
+                                                                }
+                                                            </td>
+
+                                                            <td
+                                                                style={{
+                                                                    padding:
+                                                                        11,
+                                                                    color:
+                                                                        "#e2e8f0",
+                                                                    borderBottom:
+                                                                        "1px solid rgba(148,163,184,0.10)"
+                                                                }}
+                                                            >
+                                                                {
+                                                                    formatStatus(
+                                                                        row.status
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td
+                                                                style={{
+                                                                    padding:
+                                                                        11,
+                                                                    color:
+                                                                        "#cbd5e1",
+                                                                    borderBottom:
+                                                                        "1px solid rgba(148,163,184,0.10)",
+                                                                    minWidth:
+                                                                        260,
+                                                                    whiteSpace:
+                                                                        "pre-wrap"
+                                                                }}
+                                                            >
+                                                                {
+                                                                    row.body_text ||
+                                                                    row.message ||
+                                                                    "—"
+                                                                }
+                                                            </td>
+
+                                                        </tr>
+
+                                                    )
+                                                )
+                                            }
+
+                                        </tbody>
+
+                                    </table>
+
+                                </div>
+
+                            )
+
+                }
+
+            </section>
+
+        </div>
+
+    );
+
+}

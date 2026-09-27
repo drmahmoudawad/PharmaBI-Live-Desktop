@@ -1,0 +1,3535 @@
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+function getCurrentMonthRange() {
+
+    const now =
+        new Date();
+
+
+    const year =
+        now.getFullYear();
+
+
+    const month =
+        String(
+            now.getMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const day =
+        String(
+            now.getDate()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    return {
+
+        fromDate:
+            `${year}-${month}-01`,
+
+        toDate:
+            `${year}-${month}-${day}`
+
+    };
+
+}
+
+
+function formatMoney(
+    value
+) {
+
+    return Number(
+        value || 0
+    ).toLocaleString(
+        "en-US",
+        {
+            minimumFractionDigits:
+                2,
+
+            maximumFractionDigits:
+                2
+        }
+    );
+
+}
+
+
+function formatNumber(
+    value
+) {
+
+    return Number(
+        value || 0
+    ).toLocaleString(
+        "en-US"
+    );
+
+}
+
+
+function formatDailyTicketCount(
+    value
+) {
+
+    return toNumber(
+        value
+    ).toLocaleString(
+        "ar-EG",
+        {
+            minimumFractionDigits:
+                1,
+
+            maximumFractionDigits:
+                1
+        }
+    );
+}
+
+function formatPercent(
+    value
+) {
+
+    return `${Number(
+        value || 0
+    ).toFixed(
+        2
+    )}%`;
+
+}
+
+
+function formatMilliseconds(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    if (
+        !Number.isFinite(
+            number
+        )
+    ) {
+
+        return "—";
+
+    }
+
+
+    return `${number.toLocaleString(
+        "en-US",
+        {
+            maximumFractionDigits:
+                0
+        }
+    )} ms`;
+
+}
+
+
+function getModuleTitle(
+    activeModule
+) {
+
+    switch (
+        activeModule
+    ) {
+
+        case "sales-trend":
+            return "اتجاه المبيعات";
+
+        case "sales-day-hour":
+            return "Day / Hour";
+
+        case "sales-sellers":
+            return "البائعون";
+
+        case "sales-returns":
+            return "المرتجعات";
+
+        case "sales-overview":
+        default:
+            return "نظرة عامة على المبيعات";
+
+    }
+
+}
+
+
+function getHourlyAverageDays(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        new Date(
+            String(fromDate) +
+            "T00:00:00"
+        );
+
+    const to =
+        new Date(
+            String(toDate) +
+            "T00:00:00"
+        );
+
+    if (
+        Number.isNaN(from.getTime()) ||
+        Number.isNaN(to.getTime())
+    ) {
+
+        return 1;
+
+    }
+
+    return Math.max(
+        1,
+        Math.round(
+            (
+                to.getTime() -
+                from.getTime()
+            ) /
+            (
+                24 *
+                60 *
+                60 *
+                1000
+            )
+        ) +
+        1
+    );
+
+}
+
+function normalizeResponseRows(
+    result
+) {
+
+    if (
+        Array.isArray(
+            result
+        )
+    ) {
+
+        return result;
+
+    }
+
+
+    if (
+        Array.isArray(
+            result?.rows
+        )
+    ) {
+
+        return result.rows;
+
+    }
+
+
+    if (
+        Array.isArray(
+            result?.days
+        )
+    ) {
+
+        return result.days;
+
+    }
+
+
+    if (
+        Array.isArray(
+            result?.hours
+        )
+    ) {
+
+        return result.hours;
+
+    }
+
+
+    return [];
+
+}
+
+
+function EmptyState(
+    {
+        title,
+        text
+    }
+) {
+
+    return (
+
+        <div className="empty-state">
+
+            <div className="empty-icon">
+                PB
+            </div>
+
+
+            <h2>
+                {title}
+            </h2>
+
+
+            <p>
+                {text}
+            </p>
+
+        </div>
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * PERFORMANCE RESULT
+ * =========================================================
+ */
+
+function PerformanceResultCard(
+    {
+        title,
+        elapsed,
+        status,
+        rows,
+        detail
+    }
+) {
+
+    const isSuccess =
+        status ===
+        "success";
+
+
+    return (
+
+        <div
+            className="kpi-card"
+            style={{
+                minHeight:
+                    "120px"
+            }}
+        >
+
+            <span>
+                {title}
+            </span>
+
+
+            <strong
+                style={{
+                    fontSize:
+                        "18px"
+                }}
+            >
+                {
+                    formatMilliseconds(
+                        elapsed
+                    )
+                }
+            </strong>
+
+
+            <div
+                style={{
+                    marginTop:
+                        "8px",
+
+                    color:
+                        isSuccess
+                            ? "#166534"
+                            : "#991b1b",
+
+                    fontSize:
+                        "10px",
+
+                    fontWeight:
+                        "700"
+                }}
+            >
+
+                {
+                    isSuccess
+                        ? `${formatNumber(
+                            rows
+                        )} rows`
+                        : "FAILED"
+                }
+
+            </div>
+
+
+            {
+                detail && (
+
+                    <div
+                        style={{
+                            marginTop:
+                                "5px",
+
+                            color:
+                                "#64748b",
+
+                            fontSize:
+                                "9px"
+                        }}
+                    >
+                        {
+                            detail
+                        }
+                    </div>
+
+                )
+            }
+
+        </div>
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * SALES ANALYTICS PANEL
+ * =========================================================
+ */
+
+export default function SalesAnalyticsPanel(
+    {
+        connectionPayload,
+        fromDate:
+            externalFromDate = null,
+        toDate:
+            externalToDate = null,
+        activeModule:
+            requestedModule = "sales-overview"
+    }
+) {
+
+    const defaultRange =
+        useMemo(
+            () =>
+                getCurrentMonthRange(),
+            []
+        );
+
+
+    const fromDate =
+        externalFromDate ||
+        defaultRange.fromDate;
+
+
+    const toDate =
+        externalToDate ||
+        defaultRange.toDate;
+
+
+    const activeModule =
+        requestedModule ||
+        "sales-overview";
+
+
+    const [
+        loading,
+        setLoading
+    ] =
+        useState(
+            false
+        );
+
+
+    const [
+        error,
+        setError
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        summary,
+        setSummary
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        dayData,
+        setDayData
+    ] =
+        useState(
+            []
+        );
+
+
+    const [
+        hourData,
+        setHourData
+    ] =
+        useState(
+            []
+        );
+
+
+    const [
+        preview,
+        setPreview
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        reconciliation,
+        setReconciliation
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        initialised,
+        setInitialised
+    ] =
+        useState(
+            false
+        );
+
+
+    /*
+     * =========================================================
+     * PERFORMANCE TEST STATE
+     * =========================================================
+     */
+
+    const [
+        performanceLoading,
+        setPerformanceLoading
+    ] =
+        useState(
+            false
+        );
+
+
+    const [
+        performanceError,
+        setPerformanceError
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        performanceResult,
+        setPerformanceResult
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        performanceStartedAt,
+        setPerformanceStartedAt
+    ] =
+        useState(
+            null
+        );
+
+
+    /*
+     * =========================================================
+     * REQUEST BUILDER
+     * =========================================================
+     */
+
+    function buildRequest() {
+
+        if (
+            !connectionPayload
+        ) {
+
+            throw new Error(
+                "بيانات الاتصال غير متاحة."
+            );
+
+        }
+
+
+        if (
+            !fromDate ||
+            !toDate
+        ) {
+
+            throw new Error(
+                "نطاق التاريخ غير صالح."
+            );
+
+        }
+
+
+        return {
+
+            ...connectionPayload,
+
+            fromDate,
+
+            toDate
+
+        };
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD SUMMARY
+     * =========================================================
+     */
+
+    async function loadSummary() {
+
+        try {
+
+            setLoading(
+                true
+            );
+
+
+            setError(
+                ""
+            );
+
+
+            const result =
+                await window
+                    .pharmaBI
+                    .sales
+                    .summary(
+                        buildRequest()
+                    );
+
+
+            setSummary(
+                result
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] summary failed:",
+
+                requestError
+
+            );
+
+
+            setError(
+
+                requestError?.message ||
+                "فشل تحميل نظرة عامة على المبيعات."
+
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD TREND
+     * =========================================================
+     */
+
+    async function loadTrend() {
+
+        try {
+
+            setLoading(
+                true
+            );
+
+
+            setError(
+                ""
+            );
+
+
+            const result =
+                await window
+                    .pharmaBI
+                    .sales
+                    .byDay(
+                        buildRequest()
+                    );
+
+
+            setDayData(
+
+                normalizeResponseRows(
+                    result
+                )
+
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] trend failed:",
+
+                requestError
+
+            );
+
+
+            setError(
+
+                requestError?.message ||
+                "فشل تحميل اتجاه المبيعات."
+
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD DAY / HOUR
+     * =========================================================
+     */
+
+    async function loadDayHour() {
+
+        try {
+
+            setLoading(
+                true
+            );
+
+
+            setError(
+                ""
+            );
+
+
+            const request =
+                buildRequest();
+
+
+            const [
+                dayResult,
+                hourResult
+            ] =
+            await Promise.all([
+
+                window
+                    .pharmaBI
+                    .sales
+                    .byDay(
+                        request
+                    ),
+
+                window
+                    .pharmaBI
+                    .sales
+                    .byHour(
+                        request
+                    )
+
+            ]);
+
+
+            setDayData(
+
+                normalizeResponseRows(
+                    dayResult
+                )
+
+            );
+
+
+            setHourData(
+                normalizeResponseRows(
+                    hourResult
+                ).map(
+                    row => {
+
+                        const from =
+                            new Date(
+                                String(
+                                    fromDate
+                                ) +
+                                "T00:00:00"
+                            );
+
+                        const to =
+                            new Date(
+                                String(
+                                    toDate
+                                ) +
+                                "T00:00:00"
+                            );
+
+                        const days =
+                            Math.max(
+                                1,
+                                Math.round(
+                                    (
+                                        to.getTime() -
+                                        from.getTime()
+                                    ) /
+                                    (
+                                        24 *
+                                        60 *
+                                        60 *
+                                        1000
+                                    )
+                                ) +
+                                1
+                            );
+
+                        return {
+                            ...row,
+
+                            sales:
+                                toNumber(
+                                    row?.sales
+                                ) / days,
+
+                            returns:
+                                toNumber(
+                                    row?.returns
+                                ) / days,
+
+                            netSales:
+                                toNumber(
+                                    row?.netSales
+                                ) / days,
+
+                            cost:
+                                toNumber(
+                                    row?.cost
+                                ) / days,
+
+                            profit:
+                                toNumber(
+                                    row?.profit
+                                ) / days,
+
+                            units:
+                                toNumber(
+                                    row?.units
+                                ) / days,
+
+                            tickets:
+                                toNumber(
+                                    row?.tickets
+                                ) / days
+                        };
+
+                    }
+                )
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] day/hour failed:",
+
+                requestError
+
+            );
+
+
+            setError(
+
+                requestError?.message ||
+                "فشل تحميل Day / Hour."
+
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD RETURNS
+     * =========================================================
+     */
+
+    async function loadالمرتجعات() {
+
+        try {
+
+            setLoading(
+                true
+            );
+
+
+            setError(
+                ""
+            );
+
+
+            const result =
+                await window
+                    .pharmaBI
+                    .sales
+                    .summary(
+                        buildRequest()
+                    );
+
+
+            setSummary(
+                result
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] returns failed:",
+
+                requestError
+
+            );
+
+
+            setError(
+
+                requestError?.message ||
+                "فشل تحميل المرتجعات."
+
+            );
+
+        }
+        finally {
+
+            setLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * SELLERS
+     * =========================================================
+     */
+
+    async function loadالبائعون() {
+
+        setLoading(
+            false
+        );
+
+
+        setError(
+            ""
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD PREVIEW
+     * =========================================================
+     */
+
+    async function loadPreview() {
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    .sales
+                    .preview({
+
+                        ...buildRequest(),
+
+                        limit:
+                            50
+
+                    });
+
+
+            setPreview(
+                result
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] preview failed:",
+
+                requestError
+
+            );
+
+
+            setPreview(
+                null
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD RECONCILIATION
+     * =========================================================
+     */
+
+    async function loadReconciliation() {
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    .sales
+                    .reconciliation(
+                        buildRequest()
+                    );
+
+
+            setReconciliation(
+                result
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] reconciliation failed:",
+
+                requestError
+
+            );
+
+
+            setReconciliation(
+                null
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * PERFORMANCE TEST
+     *
+     * This uses the existing application APIs only.
+     *
+     * It does NOT modify cache behavior.
+     * It does NOT modify the warm-up.
+     * It simply measures how long each request takes.
+     * =========================================================
+     */
+
+    async function runPerformanceTest() {
+
+        if (
+            !connectionPayload
+        ) {
+
+            return;
+
+        }
+
+
+        let request;
+
+
+        try {
+
+            request =
+                buildRequest();
+
+        }
+        catch (
+            requestError
+        ) {
+
+            setPerformanceError(
+
+                requestError?.message ||
+                "تعذر بناء طلب اختبار الأداء."
+
+            );
+
+
+            return;
+
+        }
+
+
+        const startedAt =
+            performance.now();
+
+
+        setPerformanceLoading(
+            true
+        );
+
+
+        setPerformanceError(
+            ""
+        );
+
+
+        setPerformanceResult(
+            null
+        );
+
+
+        setPerformanceStartedAt(
+            new Date().toISOString()
+        );
+
+
+        try {
+
+            console.log(
+
+                "[SalesAnalyticsPanel] PERFORMANCE TEST START",
+
+                {
+
+                    branchId:
+                        request.branchId,
+
+                    fromDate:
+                        request.fromDate,
+
+                    toDate:
+                        request.toDate
+
+                }
+
+            );
+
+
+            /*
+             * -------------------------------------------------
+             * 1. Preview
+             * -------------------------------------------------
+             *
+             * Preview is useful because it reads normalized
+             * sales rows through the same salesService path.
+             */
+
+            const previewStarted =
+                performance.now();
+
+
+            let previewResponse =
+                null;
+
+
+            let previewStatus =
+                "success";
+
+
+            let previewError =
+                "";
+
+
+            try {
+
+                previewResponse =
+                    await window
+                        .pharmaBI
+                        .sales
+                        .preview({
+
+                            ...request,
+
+                            limit:
+                                1
+
+                        });
+
+            }
+            catch (
+                previewRequestError
+            ) {
+
+                previewStatus =
+                    "error";
+
+
+                previewError =
+                    previewRequestError?.message ||
+                    String(
+                        previewRequestError
+                    );
+
+            }
+
+
+            const previewElapsed =
+                performance.now() -
+                previewStarted;
+
+
+            /*
+             * -------------------------------------------------
+             * 2. Summary
+             * -------------------------------------------------
+             */
+
+            const summaryStarted =
+                performance.now();
+
+
+            let summaryResponse =
+                null;
+
+
+            let summaryStatus =
+                "success";
+
+
+            let summaryError =
+                "";
+
+
+            try {
+
+                summaryResponse =
+                    await window
+                        .pharmaBI
+                        .sales
+                        .summary(
+                            request
+                        );
+
+            }
+            catch (
+                summaryRequestError
+            ) {
+
+                summaryStatus =
+                    "error";
+
+
+                summaryError =
+                    summaryRequestError?.message ||
+                    String(
+                        summaryRequestError
+                    );
+
+            }
+
+
+            const summaryElapsed =
+                performance.now() -
+                summaryStarted;
+
+
+            /*
+             * -------------------------------------------------
+             * 3. Optional daily endpoint
+             * -------------------------------------------------
+             *
+             * This is intentionally executed after Summary,
+             * not in parallel, so we can see its own timing.
+             */
+
+            const dayStarted =
+                performance.now();
+
+
+            let dayResponse =
+                null;
+
+
+            let dayStatus =
+                "success";
+
+
+            let dayError =
+                "";
+
+
+            try {
+
+                dayResponse =
+                    await window
+                        .pharmaBI
+                        .sales
+                        .byDay(
+                            request
+                        );
+
+            }
+            catch (
+                dayRequestError
+            ) {
+
+                dayStatus =
+                    "error";
+
+
+                dayError =
+                    dayRequestError?.message ||
+                    String(
+                        dayRequestError
+                    );
+
+            }
+
+
+            const dayElapsed =
+                performance.now() -
+                dayStarted;
+
+
+            /*
+             * -------------------------------------------------
+             * 4. Optional hourly endpoint
+             * -------------------------------------------------
+             */
+
+            const hourStarted =
+                performance.now();
+
+
+            let hourResponse =
+                null;
+
+
+            let hourStatus =
+                "success";
+
+
+            let hourError =
+                "";
+
+
+            try {
+
+                hourResponse =
+                    await window
+                        .pharmaBI
+                        .sales
+                        .byHour(
+                            request
+                        );
+
+            }
+            catch (
+                hourRequestError
+            ) {
+
+                hourStatus =
+                    "error";
+
+
+                hourError =
+                    hourRequestError?.message ||
+                    String(
+                        hourRequestError
+                    );
+
+            }
+
+
+            const hourElapsed =
+                performance.now() -
+                hourStarted;
+
+
+            /*
+             * -------------------------------------------------
+             * FINAL RESULT
+             * -------------------------------------------------
+             */
+
+            const totalElapsed =
+                performance.now() -
+                startedAt;
+
+
+            const result = {
+
+                branchId:
+                    Number(
+                        request.branchId
+                    ),
+
+                branchName:
+                    request.branchName ||
+                    null,
+
+                fromDate:
+                    request.fromDate,
+
+                toDate:
+                    request.toDate,
+
+                totalElapsed,
+
+                preview: {
+
+                    elapsed:
+                        previewElapsed,
+
+                    status:
+                        previewStatus,
+
+                    rows:
+
+                        Number(
+                            previewResponse?.totalRows
+                        ) ||
+
+                        Number(
+                            previewResponse?.count
+                        ) ||
+
+                        Number(
+                            previewResponse?.rows?.length
+                        ) ||
+
+                        0,
+
+                    error:
+                        previewError
+
+                },
+
+                summary: {
+
+                    elapsed:
+                        summaryElapsed,
+
+                    status:
+                        summaryStatus,
+
+                    rows:
+                        Number(
+                            summaryResponse?.rows
+                        ) || 0,
+
+                    error:
+                        summaryError
+
+                },
+
+                byDay: {
+
+                    elapsed:
+                        dayElapsed,
+
+                    status:
+                        dayStatus,
+
+                    rows:
+                        Array.isArray(
+                            dayResponse?.days
+                        )
+
+                            ? dayResponse.days.length
+
+                            : Array.isArray(
+                                dayResponse
+                            )
+
+                                ? dayResponse.length
+
+                                : 0,
+
+                    error:
+                        dayError
+
+                },
+
+                byHour: {
+
+                    elapsed:
+                        hourElapsed,
+
+                    status:
+                        hourStatus,
+
+                    rows:
+                        Array.isArray(
+                            hourResponse?.hours
+                        )
+
+                            ? hourResponse.hours.length
+
+                            : Array.isArray(
+                                hourResponse
+                            )
+
+                                ? hourResponse.length
+
+                                : 0,
+
+                    error:
+                        hourError
+
+                }
+
+            };
+
+
+            setPerformanceResult(
+                result
+            );
+
+
+            console.log(
+
+                "[SalesAnalyticsPanel] PERFORMANCE TEST RESULT",
+
+                result
+
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+
+                "[SalesAnalyticsPanel] PERFORMANCE TEST FAILED:",
+
+                requestError
+
+            );
+
+
+            setPerformanceError(
+
+                requestError?.message ||
+                "فشل اختبار الأداء."
+
+            );
+
+        }
+        finally {
+
+            setPerformanceLoading(
+                false
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOAD MODULE DATA
+     * =========================================================
+     */
+
+    useEffect(
+        () => {
+
+            let cancelled =
+                false;
+
+
+            async function loadModule() {
+
+                if (
+                    !connectionPayload
+                ) {
+
+                    setInitialised(
+                        true
+                    );
+
+
+                    return;
+
+                }
+
+
+                setInitialised(
+                    false
+                );
+
+
+                setError(
+                    ""
+                );
+
+
+                try {
+
+                    if (
+                        activeModule ===
+                        "sales-overview"
+                    ) {
+
+                        await loadSummary();
+
+
+                        if (
+                            !cancelled
+                        ) {
+
+                            await loadReconciliation();
+
+
+                            await loadPreview();
+
+                        }
+
+                    }
+                    else if (
+                        activeModule ===
+                        "sales-trend"
+                    ) {
+
+                        await loadTrend();
+
+                    }
+                    else if (
+                        activeModule ===
+                        "sales-day-hour"
+                    ) {
+
+                        await loadDayHour();
+
+                    }
+                    else if (
+                        activeModule ===
+                        "sales-returns"
+                    ) {
+
+                        await loadالمرتجعات();
+
+                    }
+                    else if (
+                        activeModule ===
+                        "sales-sellers"
+                    ) {
+
+                        await loadالبائعون();
+
+                    }
+
+                }
+                catch (
+                    requestError
+                ) {
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setError(
+
+                            requestError?.message ||
+                            "فشل تحميل بيانات المبيعات."
+
+                        );
+
+                    }
+
+                }
+                finally {
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setInitialised(
+                            true
+                        );
+
+                    }
+
+                }
+
+            }
+
+
+            loadModule();
+
+
+            return () => {
+
+                cancelled =
+                    true;
+
+            };
+
+        },
+        [
+            connectionPayload,
+            fromDate,
+            toDate,
+            activeModule
+        ]
+    );
+
+
+    /*
+     * =========================================================
+     * NO CONNECTION
+     * =========================================================
+     */
+
+    if (
+        !connectionPayload
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-eyebrow">
+                    SALES
+                </div>
+
+
+                <EmptyState
+
+                    title="لا يوجد اتصال بالفرع"
+
+                    text="اختر فرعًا متصلًا لعرض تحليلات المبيعات."
+
+                />
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOADING
+     * =========================================================
+     */
+
+    if (
+        !initialised ||
+        loading
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            SALES ANALYTICS
+                        </div>
+
+
+                        <h2>
+                            {
+                                getModuleTitle(
+                                    activeModule
+                                )
+                            }
+                        </h2>
+
+
+                        <p>
+                            {
+                                fromDate
+                            }
+
+                            {" → "}
+
+                            {
+                                toDate
+                            }
+
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div className="loading-card">
+
+                    <div className="loading-spinner" />
+
+
+                    <h2>
+                        جاري تحميل بيانات المبيعات...
+                    </h2>
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * ERROR
+     * =========================================================
+     */
+
+    if (
+        error
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-eyebrow">
+                    SALES ANALYTICS
+                </div>
+
+
+                <div className="status-banner error">
+
+                    {
+                        error
+                    }
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * SALES OVERVIEW
+     * =========================================================
+     */
+
+    if (
+        activeModule ===
+        "sales-overview"
+    ) {
+
+        if (
+            !summary
+        ) {
+
+            return (
+
+                <section className="page-card">
+
+                    <EmptyState
+
+                        title="لا توجد بيانات"
+
+                        text="لم يتم إرجاع بيانات ملخص المبيعات."
+
+                    />
+
+                </section>
+
+            );
+
+        }
+
+
+        const reconciliationSummary =
+            reconciliation?.summary;
+
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            SALES ANALYTICS
+                        </div>
+
+
+                        <h2>
+                            نظرة عامة على المبيعات
+                        </h2>
+
+
+                        <p>
+                            نظرة تنفيذية على أداء المبيعات خلال الفترة المحددة.
+                        </p>
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            display:
+                                "flex",
+
+                            flexDirection:
+                                "column",
+
+                            alignItems:
+                                "flex-end",
+
+                            gap:
+                                "8px"
+                        }}
+                    >
+
+                        <div className="period-chip">
+
+                            {
+                                fromDate
+                            }
+
+                            <span>
+                                →
+                            </span>
+
+                            {
+                                toDate
+                            }
+
+                        </div>
+
+
+                        <button
+
+                            type="button"
+
+                            className="primary-button"
+
+                            onClick={
+                                runPerformanceTest
+                            }
+
+                            disabled={
+                                performanceLoading
+                            }
+
+                            style={{
+                                minWidth:
+                                    "190px"
+                            }}
+
+                        >
+
+                            {
+                                performanceLoading
+
+                                    ? "جاري قياس الأداء..."
+
+                                    : "اختبار أداء قاعدة البيانات"
+
+                            }
+
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                {
+                    performanceStartedAt && (
+
+                        <div
+                            style={{
+                                marginBottom:
+                                    "16px",
+
+                                color:
+                                    "#94a3b8",
+
+                                fontSize:
+                                    "9px",
+
+                                fontWeight:
+                                    "700"
+                            }}
+                        >
+
+                            آخر اختبار:
+
+                            {" "}
+
+                            {
+                                new Date(
+                                    performanceStartedAt
+                                ).toLocaleTimeString(
+                                    "en-US"
+                                )
+                            }
+
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    performanceError && (
+
+                        <div className="status-banner error">
+
+                            {
+                                performanceError
+                            }
+
+                        </div>
+
+                    )
+                }
+
+
+                {
+                    performanceResult && (
+
+                        <div
+                            className="table-card"
+                            style={{
+                                marginBottom:
+                                    "20px"
+                            }}
+                        >
+
+                            <div className="table-card-header">
+
+                                <div>
+
+                                    <strong>
+                                        اختبار أداء قاعدة البيانات
+                                    </strong>
+
+                                    <span>
+                                        قياس زمني للـSales APIs على الفرع الحالي
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div className="kpi-grid">
+
+                                <PerformanceResultCard
+
+                                    title="معاينة"
+
+                                    elapsed={
+                                        performanceResult
+                                            .preview
+                                            .elapsed
+                                    }
+
+                                    status={
+                                        performanceResult
+                                            .preview
+                                            .status
+                                    }
+
+                                    rows={
+                                        performanceResult
+                                            .preview
+                                            .rows
+                                    }
+
+                                    detail={
+                                        performanceResult
+                                            .preview
+                                            .error ||
+                                        "مسار المبيعات الموحّد"
+                                    }
+
+                                />
+
+
+                                <PerformanceResultCard
+
+                                    title="الملخص"
+
+                                    elapsed={
+                                        performanceResult
+                                            .summary
+                                            .elapsed
+                                    }
+
+                                    status={
+                                        performanceResult
+                                            .summary
+                                            .status
+                                    }
+
+                                    rows={
+                                        performanceResult
+                                            .summary
+                                            .rows
+                                    }
+
+                                    detail={
+                                        performanceResult
+                                            .summary
+                                            .error ||
+                                        "المبيعات + المطابقة"
+                                    }
+
+                                />
+
+
+                                <PerformanceResultCard
+
+                                    title="حسب اليوم"
+
+                                    elapsed={
+                                        performanceResult
+                                            .byDay
+                                            .elapsed
+                                    }
+
+                                    status={
+                                        performanceResult
+                                            .byDay
+                                            .status
+                                    }
+
+                                    rows={
+                                        performanceResult
+                                            .byDay
+                                            .rows
+                                    }
+
+                                    detail={
+                                        performanceResult
+                                            .byDay
+                                            .error ||
+                                        "تجميع المبيعات حسب اليوم"
+                                    }
+
+                                />
+
+
+                                <PerformanceResultCard
+
+                                    title="حسب الساعة"
+
+                                    elapsed={
+                                        performanceResult
+                                            .byHour
+                                            .elapsed
+                                    }
+
+                                    status={
+                                        performanceResult
+                                            .byHour
+                                            .status
+                                    }
+
+                                    rows={
+                                        performanceResult
+                                            .byHour
+                                            .rows
+                                    }
+
+                                    detail={
+                                        performanceResult
+                                            .byHour
+                                            .error ||
+                                        "Hourly aggregation"
+                                    }
+
+                                />
+
+
+                                <div className="kpi-card">
+
+                                    <span>
+                                        إجمالي وقت الاختبار
+                                    </span>
+
+                                    <strong>
+
+                                        {
+                                            formatMilliseconds(
+                                                performanceResult.totalElapsed
+                                            )
+                                        }
+
+                                    </strong>
+
+                                </div>
+
+
+                                <div className="kpi-card">
+
+                                    <span>
+                                        Branch
+                                    </span>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px"
+                                        }}
+                                    >
+
+                                        {
+                                            performanceResult
+                                                .branchName ||
+                                            performanceResult
+                                                .branchId
+                                        }
+
+                                    </strong>
+
+                                </div>
+
+                            </div>
+
+
+                            <div
+                                style={{
+                                    padding:
+                                        "14px 16px",
+
+                                    borderTop:
+                                        "1px solid #eef2f7",
+
+                                    color:
+                                        "#64748b",
+
+                                    fontSize:
+                                        "10px",
+
+                                    lineHeight:
+                                        "1.7"
+                                }}
+                            >
+
+                                الاختبار الحالي يقيس مسار الـAPI كما يستخدمه
+                                البرنامج فعليًا. لو ظهر Preview بطيئًا جدًا،
+                                فالمشكلة في مسار تحميل المبيعات نفسه.
+                                ولو Preview سريع وSummary بطيء جدًا،
+                                فالمشكلة إضافية في الـSummary/Reconciliation.
+
+                            </div>
+
+                        </div>
+
+                    )
+                }
+
+
+                <div className="kpi-grid">
+
+                    <div className="kpi-card">
+
+                        <span>
+                            إجمالي المبيعات
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.grossSales
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            المرتجعات
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.returns
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Net Sales
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.netSales
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            صافي التكلفة
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.netCost
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            صافي الربح
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.netProfit
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Margin
+                        </span>
+
+                        <strong>
+                            {
+                                formatPercent(
+                                    summary.grossMargin
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div className="kpi-grid">
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Sale Tickets
+                        </span>
+
+                        <strong>
+                            {
+                                formatNumber(
+                                    summary.saleTickets
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Return Tickets
+                        </span>
+
+                        <strong>
+                            {
+                                formatNumber(
+                                    summary.returnTickets
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            متوسط الفاتورة
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary.averageTicket
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Return Rate
+                        </span>
+
+                        <strong>
+                            {
+                                formatPercent(
+                                    summary.returnRate
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Units
+                        </span>
+
+                        <strong>
+                            {
+                                formatNumber(
+                                    summary.netUnits
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Reconciliation
+                        </span>
+
+                        <strong>
+
+                            {
+                                summary
+                                    ?.reconciliation
+                                    ?.ticketsWithDifference ===
+                                0
+
+                                    ? "OK"
+
+                                    : `${formatNumber(
+                                        summary
+                                            ?.reconciliation
+                                            ?.ticketsWithDifference
+                                    )} Issues`
+
+                            }
+
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                {
+                    reconciliationSummary && (
+
+                        <div className="table-card">
+
+                            <div className="table-card-header">
+
+                                <div>
+
+                                    <strong>
+                                        Reconciliation
+                                    </strong>
+
+                                    <span>
+                                        مراجعة تطابق قيمة الفواتير مع تفاصيل السطور
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div className="table-wrap">
+
+                                <table>
+
+                                    <tbody>
+
+                                        <tr>
+
+                                            <td>
+                                                Tickets
+                                            </td>
+
+                                            <td>
+
+                                                {
+                                                    formatNumber(
+                                                        reconciliationSummary.ticketCount
+                                                    )
+                                                }
+
+                                            </td>
+
+                                        </tr>
+
+
+                                        <tr>
+
+                                            <td>
+                                                Reconciled
+                                            </td>
+
+                                            <td>
+
+                                                {
+                                                    formatNumber(
+                                                        reconciliationSummary.reconciledTickets
+                                                    )
+                                                }
+
+                                            </td>
+
+                                        </tr>
+
+
+                                        <tr>
+
+                                            <td>
+                                                Unreconciled
+                                            </td>
+
+                                            <td>
+
+                                                {
+                                                    formatNumber(
+                                                        reconciliationSummary.unreconciledTickets
+                                                    )
+                                                }
+
+                                            </td>
+
+                                        </tr>
+
+
+                                        <tr>
+
+                                            <td>
+                                                Absolute Difference
+                                            </td>
+
+                                            <td>
+
+                                                {
+                                                    formatMoney(
+                                                        reconciliationSummary.absoluteDifference
+                                                    )
+                                                }
+
+                                            </td>
+
+                                        </tr>
+
+                                    </tbody>
+
+                                </table>
+
+                            </div>
+
+                        </div>
+
+                    )
+
+                }
+
+
+                {
+                    preview && (
+
+                        <div className="table-card">
+
+                            <div className="table-card-header">
+
+                                <div>
+
+                                    <strong>
+                                        معاينة أحدث المبيعات
+                                    </strong>
+
+                                    <span>
+                                        عينة من أحدث البيانات
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div className="table-wrap">
+
+                                <table>
+
+                                    <thead>
+
+                                        <tr>
+
+                                            <th>
+                                                Ticket
+                                            </th>
+
+                                            <th>
+                                                Date
+                                            </th>
+
+                                            <th>
+                                                Item
+                                            </th>
+
+                                            <th>
+                                                Type
+                                            </th>
+
+                                            <th>
+                                                Units
+                                            </th>
+
+                                            <th>
+                                                Net
+                                            </th>
+
+                                        </tr>
+
+                                    </thead>
+
+
+                                    <tbody>
+
+                                        {
+
+                                            (
+                                                preview.rows ||
+                                                preview.sampleRows ||
+                                                []
+                                            )
+                                            .map(
+
+                                                row => (
+
+                                                    <tr
+
+                                                        key={
+                                                            `${row.ticketId}-${row.lineId}`
+                                                        }
+
+                                                    >
+
+                                                        <td>
+                                                            {
+                                                                row.ticketId
+                                                            }
+                                                        </td>
+
+                                                        <td>
+                                                            {
+                                                                row.date ||
+                                                                "—"
+                                                            }
+                                                        </td>
+
+                                                        <td>
+                                                            {
+                                                                row.itemName ||
+                                                                "—"
+                                                            }
+                                                        </td>
+
+                                                        <td>
+                                                            {
+                                                                row.transactionType ||
+                                                                "—"
+                                                            }
+                                                        </td>
+
+                                                        <td>
+                                                            {
+                                                                formatNumber(
+                                                                    row.baseUnits
+                                                                )
+                                                            }
+                                                        </td>
+
+                                                        <td>
+                                                            {
+                                                                formatMoney(
+                                                                    row.netLineValue
+                                                                )
+                                                            }
+                                                        </td>
+
+                                                    </tr>
+
+                                                )
+
+                                            )
+
+                                        }
+
+                                    </tbody>
+
+                                </table>
+
+                            </div>
+
+                        </div>
+
+                    )
+
+                }
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * SALES TREND
+     * =========================================================
+     */
+
+    if (
+        activeModule ===
+        "sales-trend"
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            SALES ANALYTICS
+                        </div>
+
+
+                        <h2>
+                            اتجاه المبيعات
+                        </h2>
+
+
+                        <p>
+                            حركة المبيعات والأرباح يوميًا خلال الفترة.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                {
+                    dayData.length === 0
+
+                        ? (
+
+                            <EmptyState
+
+                                title="لا توجد بيانات"
+
+                                text="لا توجد حركة مبيعات في الفترة المحددة."
+
+                            />
+
+                        )
+
+                        : (
+
+                            <div className="table-card">
+
+                                <div className="table-wrap">
+
+                                    <table>
+
+                                        <thead>
+
+                                            <tr>
+
+                                                <th>
+                                                    Date
+                                                </th>
+
+                                                <th>
+                                                    Sales
+                                                </th>
+
+                                                <th>
+                                                    المرتجعات
+                                                </th>
+
+                                                <th>
+                                                    Net Sales
+                                                </th>
+
+                                                <th>
+                                                    Cost
+                                                </th>
+
+                                                <th>
+                                                    Profit
+                                                </th>
+
+                                                <th>
+                                                    Tickets
+                                                </th>
+
+                                            </tr>
+
+                                        </thead>
+
+
+                                        <tbody>
+
+                                            {
+                                                dayData.map(
+
+                                                    row => (
+
+                                                        <tr
+                                                            key={
+                                                                row.date
+                                                            }
+                                                        >
+
+                                                            <td>
+                                                                {
+                                                                    row.date
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatMoney(
+                                                                        row.sales
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatMoney(
+                                                                        row.returns
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatMoney(
+                                                                        row.netSales
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatMoney(
+                                                                        row.cost
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatMoney(
+                                                                        row.profit
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                            <td>
+                                                                {
+                                                                    formatNumber(
+                                                                        row.tickets
+                                                                    )
+                                                                }
+                                                            </td>
+
+                                                        </tr>
+
+                                                    )
+
+                                                )
+                                            }
+
+                                        </tbody>
+
+                                    </table>
+
+                                </div>
+
+                            </div>
+
+                        )
+
+                }
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * DAY / HOUR
+     * =========================================================
+     */
+
+    if (
+        activeModule ===
+        "sales-day-hour"
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            SALES ANALYTICS
+                        </div>
+
+
+                        <h2>
+                            Day / Hour
+                        </h2>
+
+
+                        <p>
+                            توزيع المبيعات على مستوى الأيام والساعات.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div className="table-card">
+
+                    <div className="table-card-header">
+
+                        <div>
+
+                            <strong>
+                                الأداء اليومي
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="table-wrap">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>
+                                        Date
+                                    </th>
+
+                                    <th>
+                                        Net Sales
+                                    </th>
+
+                                    <th>
+                                        Profit
+                                    </th>
+
+                                    <th>{"\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody>
+
+                                {
+                                    dayData.map(
+
+                                        row => (
+
+                                            <tr
+                                                key={
+                                                    row.date
+                                                }
+                                            >
+
+                                                <td>
+                                                    {
+                                                        row.date
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        formatMoney(toNumber(row.netSales) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        formatMoney(toNumber(row.profit) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        formatDailyTicketCount(row.tickets)
+                                                    }
+                                                </td>
+
+                                            </tr>
+
+                                        )
+
+                                    )
+                                }
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </div>
+
+
+                <div
+                    className="table-card"
+                    style={{
+                        marginTop:
+                            "18px"
+                    }}
+                >
+
+                    <div className="table-card-header">
+
+                        <div>
+
+                            <strong>
+                                الأداء حسب الساعة
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="table-wrap">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>
+                                        Hour
+                                    </th>
+
+                                    <th>{"\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
+
+                                    <th>
+                                        المرتجعات
+                                    </th>
+
+                                    <th>
+                                        Net Sales
+                                    </th>
+
+                                    <th>
+                                        Profit
+                                    </th>
+
+                                    <th>{"\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody>
+
+                                {
+                                    hourData.map(
+
+                                        row => (
+
+                                            <tr
+                                                key={
+                                                    row.hour
+                                                }
+                                            >
+
+                                                <td>
+
+                                                    {
+                                                        String(
+                                                            row.hour
+                                                        ).padStart(
+                                                            2,
+                                                            "0"
+                                                        )
+                                                    }
+
+                                                    :00
+
+                                                </td>
+
+                                                <td>
+
+                                                    {
+                                                        formatMoney(toNumber(row.sales) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+
+                                                </td>
+
+                                                <td>
+
+                                                    {
+                                                        formatMoney(toNumber(row.returns) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+
+                                                </td>
+
+                                                <td>
+
+                                                    {
+                                                        formatMoney(toNumber(row.netSales) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+
+                                                </td>
+
+                                                <td>
+
+                                                    {
+                                                        formatMoney(toNumber(row.profit) / getHourlyAverageDays(fromDate, toDate))
+                                                    }
+
+                                                </td>
+
+                                                <td>
+
+                                                    {
+                                                        formatDailyTicketCount(row.tickets)
+                                                    }
+
+                                                </td>
+
+                                            </tr>
+
+                                        )
+
+                                    )
+                                }
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * RETURNS
+     * =========================================================
+     */
+
+    if (
+        activeModule ===
+        "sales-returns"
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="page-header">
+
+                    <div>
+
+                        <div className="page-eyebrow">
+                            SALES ANALYTICS
+                        </div>
+
+
+                        <h2>
+                            المرتجعات
+                        </h2>
+
+
+                        <p>
+                            تحليل المرتجعات وتأثيرها على صافي المبيعات.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div className="kpi-grid">
+
+                    <div className="kpi-card">
+
+                        <span>
+                            إجمالي المبيعات
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary?.grossSales
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            المرتجعات
+                        </span>
+
+                        <strong>
+                            {
+                                formatMoney(
+                                    summary?.returns
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Return Rate
+                        </span>
+
+                        <strong>
+                            {
+                                formatPercent(
+                                    summary?.returnRate
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div className="kpi-card">
+
+                        <span>
+                            Return Tickets
+                        </span>
+
+                        <strong>
+                            {
+                                formatNumber(
+                                    summary?.returnTickets
+                                )
+                            }
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div className="table-card">
+
+                    <div className="table-card-header">
+
+                        <div>
+
+                            <strong>
+                                Return Interpretation
+                            </strong>
+
+                            <span>
+                                مؤشرات المرتجعات للفترة المحددة
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="table-wrap">
+
+                        <table>
+
+                            <tbody>
+
+                                <tr>
+
+                                    <td>
+                                        Net Sales after المرتجعات
+                                    </td>
+
+                                    <td>
+                                        {
+                                            formatMoney(
+                                                summary?.netSales
+                                            )
+                                        }
+                                    </td>
+
+                                </tr>
+
+
+                                <tr>
+
+                                    <td>
+                                        Returned Units
+                                    </td>
+
+                                    <td>
+                                        {
+                                            formatNumber(
+                                                summary?.returnedUnits
+                                            )
+                                        }
+                                    </td>
+
+                                </tr>
+
+
+                                <tr>
+
+                                    <td>
+                                        تكلفة المرتجعات
+                                    </td>
+
+                                    <td>
+                                        {
+                                            formatMoney(
+                                                summary?.returnCost
+                                            )
+                                        }
+                                    </td>
+
+                                </tr>
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * SELLERS
+     * =========================================================
+     */
+
+    return (
+
+        <section className="page-card">
+
+            <div className="page-header">
+
+                <div>
+
+                    <div className="page-eyebrow">
+                        SALES ANALYTICS
+                    </div>
+
+
+                    <h2>
+                        البائعون
+                    </h2>
+
+
+                    <p>
+                        تحليل أداء البائعين يحتاج Aggregation مخصص
+                        من PharmaFly حتى تكون النتائج كاملة ودقيقة.
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div className="empty-state">
+
+                <div className="empty-icon">
+                    SR
+                </div>
+
+
+                <h2>
+                    البائعون Analytics
+                </h2>
+
+
+                <p>
+                    الـBackend الحالي يحتوي على SalesRepID داخل بيانات
+                    المبيعات، لكن لا يوجد Endpoint تجميعي للبائعين حتى الآن.
+                </p>
+
+            </div>
+
+        </section>
+
+    );
+
+}

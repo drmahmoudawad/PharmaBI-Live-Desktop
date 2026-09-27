@@ -3152,10 +3152,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                         toDate,
 
                         connection:
-                            selectedBranchId ===
-                            branchId
-                                ? connection
-                                : null,
+                            connection,
 
                         historyMonths: 12
                     });
@@ -3436,7 +3433,7 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                             render:
                                 row =>
                                     money(
-                                        row.sales
+                                        n(row.sales) / dayCount(fromDate, toDate)
                                     )
                         },
 
@@ -3444,6 +3441,22 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                             key: 'tickets',
                             label:
                                 'الفواتير'
+                        ,
+                            render:
+                                row =>
+                                    (
+                                        n(row.tickets) /
+                                        dayCount(
+                                            fromDate,
+                                            toDate
+                                        )
+                                    ).toLocaleString(
+                                        undefined,
+                                        {
+                                            minimumFractionDigits: 1,
+                                            maximumFractionDigits: 1
+                                        }
+                                    )
                         }
                     ]}
                     rows={
@@ -3703,16 +3716,73 @@ function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
                                 );
                             }
                     },
-
                     {
-                        key:
-                            'segment',
-                        label:
-                            'Segment',
-                        render:
-                            row =>
-                                row.segment ||
-                                '-'
+                        key: 'segment',
+                        label: 'فئة العميل',
+                        render: row => {
+                            const raw =
+                                row?.segment ??
+                                row?.segmentName ??
+                                row?.segment_name ??
+                                row?.customerSegment ??
+                                row?.customer_segment ??
+                                row?.rfmSegment ??
+                                row?.rfm_segment ??
+                                row?.classification ??
+                                row?.category ??
+                                row?.rfm?.segment ??
+                                row?.rfm?.segmentName ??
+                                row?.rfm?.segment_code ??
+                                row?.segmentCode ??
+                                row?.segment_code ??
+                                '';
+
+                            const value = String(raw ?? '').trim();
+
+                            const labels = {
+                                CHAMPIONS: 'أبطال',
+                                CHAMPION: 'أبطال',
+                                VIP: 'عميل مهم جداً',
+                                IMPORTANT: 'عميل مهم',
+                                GOOD: 'عميل جيد',
+                                AVERAGE: 'عميل متوسط',
+                                NEW: 'عميل جديد',
+                                AT_RISK: 'عميل معرض للفقد',
+                                ATRISK: 'عميل معرض للفقد',
+                                DORMANT: 'عميل خامل',
+                                LOST: 'عميل مفقود',
+                                REACTIVATION_OPPORTUNITY: 'فرصة إعادة تنشيط',
+
+                                vip: 'عميل مهم جداً',
+                                loyal: 'عميل جيد',
+                                potential: 'عميل محتمل',
+                                'at risk': 'عميل معرض للفقد',
+                                atrisk: 'عميل معرض للفقد',
+                                lost: 'عميل مفقود',
+                                new: 'عميل جديد',
+                                weak: 'عميل ضعيف',
+                                average: 'عميل متوسط'
+                            };
+
+                            if (value !== '') {
+                                return labels[value] ||
+                                    labels[value.toUpperCase()] ||
+                                    value;
+                            }
+
+                            const code = String(
+                                row?.segmentCode ??
+                                row?.segment_code ??
+                                row?.rfmSegmentCode ??
+                                row?.rfm_segment_code ??
+                                ''
+                            ).trim();
+
+                            return labels[code] ||
+                                labels[code.toUpperCase()] ||
+                                code ||
+                                '-';
+                        }
                     },
 
                     {
@@ -4602,6 +4672,8 @@ export default function AnalyticsHubPanel(props){
         />
     );
 }
+
+
 
 
 

@@ -1,0 +1,344 @@
+import {
+    ipcMain
+} from "electron";
+
+
+import {
+    getCustomerRfm
+} from "../pharmfly/customers/customerRfmService.js";
+
+
+import {
+    getCustomerRfmV2
+} from "../pharmfly/customers/customerRfmV2Service.js";
+
+
+import {
+    initializeCrmSchema
+} from "../pharmfly/customers/crm/crmDb.js";
+
+
+import {
+    getCustomerIntelligence
+} from "../pharmfly/customers/customerIntelligenceService.js";
+
+
+import {
+    getCustomerRetention
+} from "../pharmfly/customers/customerRetentionService.js";
+
+
+import {
+    getCustomerInactivity
+} from "../pharmfly/customers/customerInactivityService.js";
+
+
+import {
+    getCustomerClv
+} from "../pharmfly/customers/customerClvService.js";
+
+
+import {
+    getCustomerCohort
+} from "../pharmfly/customers/customerCohortService.js";
+
+
+let registered =
+    false;
+
+
+export function registerCustomersIpc() {
+
+    if (
+        registered
+    ) {
+
+        return;
+
+    }
+
+
+    registered =
+        true;
+
+
+    /*
+     * =========================================================
+     * CRM DATABASE
+     * =========================================================
+     */
+
+    try {
+
+        initializeCrmSchema();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+            "[CRM] Schema initialization failed:",
+            error
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * LEGACY RFM
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:rfm",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerRfm({
+
+                branchId:
+                    payload?.branchId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate,
+
+                limit:
+                    payload?.limit
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * RFM 2.0
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:rfm-v2",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerRfmV2({
+
+                branchId:
+                    payload?.branchId,
+
+                analysisDate:
+                    payload?.analysisDate,
+
+                observationDays:
+                    payload?.observationDays,
+
+                trendDays:
+                    payload?.trendDays,
+
+                minTickets:
+                    payload?.minTickets,
+
+                saveSnapshot:
+                    payload?.saveSnapshot !== false
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CUSTOMER INTELLIGENCE
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:intelligence",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerIntelligence({
+
+                branchId:
+                    payload?.branchId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * RETENTION
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:retention",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerRetention({
+
+                branchId:
+                    payload?.branchId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * INACTIVITY
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:inactivity",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerInactivity({
+
+                branchId:
+                    payload?.branchId,
+
+                toDate:
+                    payload?.toDate,
+
+                sampleLimit:
+                    payload?.sampleLimit
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CLV
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:clv",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerClv({
+
+                branchId:
+                    payload?.branchId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate,
+
+                observationDays:
+                    payload?.observationDays,
+
+                limit:
+                    payload?.limit
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * COHORT
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "customers:cohort",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            return getCustomerCohort({
+
+                branchId:
+                    payload?.branchId,
+
+                fromDate:
+                    payload?.fromDate,
+
+                toDate:
+                    payload?.toDate,
+
+                maxMonths:
+                    payload?.maxMonths
+
+            });
+
+        }
+
+    );
+
+
+    console.log(
+        "[Customers IPC] Legacy + RFM 2.0 handlers registered."
+    );
+
+}

@@ -7,6 +7,14 @@ import {
     getBranchPool
 } from "../connection/connectionManager.js";
 
+import {
+    getEmployeeShiftAssignments
+} from "./settings/employeeShiftStore.js";
+
+import {
+    getLocalSalesDatabase
+} from "../localdb/localSalesDb.js";
+
 
 const HISTORY_MONTHS_DEFAULT = 12;
 
@@ -404,6 +412,159 @@ function getMonthlyMetrics(
 }
 
 
+function getSellerShiftTrafficContext(
+    branchId,
+    employeeId
+) {
+    const numericBranchId =
+        Number(branchId);
+
+    const selectedEmployeeId =
+        String(
+            employeeId || ""
+        ).trim();
+
+    let shiftCode = null;
+
+    try {
+        const assignments =
+            getEmployeeShiftAssignments(
+                numericBranchId
+            );
+
+        const rows =
+            Array.isArray(assignments)
+                ? assignments
+                : [];
+
+        for (const row of rows) {
+            const id =
+                String(
+                    row?.employee_id ??
+                    row?.employeeId ??
+                    ""
+                ).trim();
+
+            if (
+                id ===
+                selectedEmployeeId
+            ) {
+                shiftCode =
+                    String(
+                        row?.shift_code ??
+                        row?.shiftCode ??
+                        ""
+                    )
+                    .trim()
+                    .toUpperCase() ||
+                    null;
+
+                break;
+            }
+        }
+    }
+    catch (error) {
+        console.warn(
+            "[sellerPerformanceService] shift assignment lookup failed:",
+            error?.message || error
+        );
+    }
+
+    let trafficIndex = 1;
+    let trafficWeightPercent = 0;
+
+    try {
+        const db =
+            getLocalSalesDatabase();
+
+        const rows =
+            db
+                .prepare(
+                    "SELECT shift_code, traffic_index, traffic_weight_percent " +
+                    "FROM employee_shift_traffic_weights " +
+                    "WHERE branch_id = ?"
+                )
+                .all(
+                    numericBranchId
+                );
+
+        const match =
+            (rows || []).find(
+                row =>
+                    String(
+                        row?.shift_code || ""
+                    )
+                    .trim()
+                    .toUpperCase() ===
+                    shiftCode
+            );
+
+        const index =
+            Number(
+                match?.traffic_index
+            );
+
+        const percent =
+            Number(
+                match?.traffic_weight_percent
+            );
+
+        if (
+            Number.isFinite(index) &&
+            index > 0
+        ) {
+            trafficIndex =
+                index;
+        }
+
+        if (
+            Number.isFinite(percent)
+        ) {
+            trafficWeightPercent =
+                percent;
+        }
+    }
+    catch (error) {
+        console.warn(
+            "[sellerPerformanceService] shift traffic lookup failed:",
+            error?.message || error
+        );
+    }
+
+    return {
+        shiftCode,
+        trafficIndex,
+        trafficWeightPercent
+    };
+}
+
+function normalizeSellerMetricsForShift(
+    metrics,
+    trafficIndex
+) {
+    const index =
+        Number.isFinite(
+            Number(trafficIndex)
+        ) &&
+        Number(trafficIndex) > 0
+            ? Number(trafficIndex)
+            : 1;
+
+    return {
+        ...metrics,
+
+        averageDailySales:
+            Number(
+                metrics?.averageDailySales || 0
+            ) / index,
+
+        averageDailyInvoices:
+            Number(
+                metrics?.averageDailyInvoices || 0
+            ) / index
+    };
+}
+
 function scoreMonth(
     metrics,
     maxMetrics
@@ -494,58 +655,57 @@ function resolveConnection(
     branchId,
     connection
 ) {
-
-    if (
-        connection &&
-        typeof connection === "object" &&
-        connection.server
-    ) {
-
-        return {
-
-            ...connection,
-
-            branchId:
-                Number(
-                    branchId
-                )
-
-        };
-
-    }
-
+    const numericBranchId =
+        Number(branchId);
 
     const branches =
         getAllSavedConnections();
 
+    const saved =
+        Array.isArray(branches)
+            ? branches.find(
+                item =>
+                    Number(
+                        item?.branchId
+                    ) ===
+                    numericBranchId
+            )
+            : null;
 
-    const found =
-        branches.find(
-            item =>
-                Number(
-                    item?.branchId
-                ) ===
-                Number(
-                    branchId
-                )
-        );
+    /*
+     * Prefer a complete connection supplied by the UI.
+     * If it is missing or incomplete, use the saved connection
+     * belonging to the SAME branch.
+     */
+    const providedIsValid =
+        connection &&
+        typeof connection === "object" &&
+        String(
+            connection.server ||
+            ""
+        ).trim();
 
-
-    if (
-        !found
-    ) {
-
-        throw new Error(
-            `Branch ${branchId} connection was not found.`
-        );
-
+    if (providedIsValid) {
+        return {
+            ...saved,
+            ...connection,
+            branchId:
+                numericBranchId
+        };
     }
 
+    if (saved) {
+        return {
+            ...saved,
+            branchId:
+                numericBranchId
+        };
+    }
 
-    return found;
-
+    throw new Error(
+        `Branch ${branchId} connection was not found.`
+    );
 }
-
 
 function buildCacheKey(
     {
@@ -1256,7 +1416,14 @@ export async function getSellerPerformance(
         );
 
 
-    const cacheKey =
+    
+    const selectedShiftTrafficContext =
+        getSellerShiftTrafficContext(
+            numericBranchId,
+            selectedEmployeeId
+        );
+
+const cacheKey =
         buildCacheKey({
 
             branchId:
@@ -1274,10 +1441,18 @@ export async function getSellerPerformance(
             historyMonths:
                 months
 
-        });
+        }) +
+        "|shift=" +
+        String(
+            selectedShiftTrafficContext.shiftCode ||
+            "UNASSIGNED"
+        ) +
+        "|traffic=" +
+        String(
+            selectedShiftTrafficContext.trafficIndex
+        );
 
-
-    const cached =
+const cached =
         getCachedSellerPerformance(
             cacheKey
         );
@@ -1467,8 +1642,11 @@ export async function getSellerPerformance(
 
 
         for (
-            const employeeMonthly
-            of employeesByMonth.values()
+            const [
+                employeeId,
+                employeeMonthly
+            ]
+            of employeesByMonth.entries()
         ) {
 
             const bucket =
@@ -1493,18 +1671,30 @@ export async function getSellerPerformance(
                     days
                 );
 
+            const shiftContext =
+                getSellerShiftTrafficContext(
+                    numericBranchId,
+                    employeeId
+                );
+
+            const scoringMetrics =
+                normalizeSellerMetricsForShift(
+                    metrics,
+                    shiftContext.trafficIndex
+                );
+
 
             maxDailySales =
                 Math.max(
                     maxDailySales,
-                    metrics.averageDailySales
+                    scoringMetrics.averageDailySales
                 );
 
 
             maxDailyInvoices =
                 Math.max(
                     maxDailyInvoices,
-                    metrics.averageDailyInvoices
+                    scoringMetrics.averageDailyInvoices
                 );
 
 
@@ -1598,9 +1788,15 @@ export async function getSellerPerformance(
                     };
 
 
+                const scoringMetrics =
+                    normalizeSellerMetricsForShift(
+                        metrics,
+                        selectedShiftTrafficContext.trafficIndex
+                    );
+
                 const score =
                     scoreMonth(
-                        metrics,
+                        scoringMetrics,
                         maxMetrics
                     );
 
@@ -1694,16 +1890,21 @@ export async function getSellerPerformance(
             months,
 
         weights: {
+            averageDailySales: 40,
+            averageDailyInvoices: 30,
+            averageInvoice: 30,
 
-            averageDailySales:
-                40,
+            shiftTrafficNormalization:
+                true,
 
-            averageDailyInvoices:
-                30,
+            selectedShift:
+                selectedShiftTrafficContext.shiftCode,
 
-            averageInvoice:
-                30
+            selectedShiftTrafficWeightPercent:
+                selectedShiftTrafficContext.trafficWeightPercent,
 
+            selectedShiftTrafficIndex:
+                selectedShiftTrafficContext.trafficIndex
         },
 
         latest,

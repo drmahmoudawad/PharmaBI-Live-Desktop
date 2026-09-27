@@ -1,0 +1,4557 @@
+﻿import PurchaseOverviewPanel from './analytics/purchases/PurchaseOverviewPanel.jsx';
+import SupplierPerformancePanel from './analytics/suppliers/SupplierPerformancePanel.jsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
+import BranchPerformancePanel from './BranchPerformancePanel.jsx';
+
+function n(v) {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+}
+
+function money(v) {
+    return n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 2
+    });
+}
+
+function num(v) {
+    return n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 2
+    });
+}
+
+function pct(v) {
+    return `${n(v).toLocaleString('ar-EG', {
+        maximumFractionDigits: 1
+    })}%`;
+}
+
+function fmtDate(v) {
+    if (!v) return '-';
+
+    const text = String(v);
+
+    if (text.length >= 16) {
+        return text
+            .slice(0, 16)
+            .replace('T', ' ');
+    }
+
+    if (text.length >= 10) {
+        return text.slice(0, 10);
+    }
+
+    return text;
+}
+
+function dayCount(fromDate, toDate) {
+    const start =
+        new Date(`${fromDate}T00:00:00Z`);
+
+    const end =
+        new Date(`${toDate}T00:00:00Z`);
+
+    if (
+        !Number.isFinite(start.getTime()) ||
+        !Number.isFinite(end.getTime()) ||
+        start > end
+    ) {
+        return 1;
+    }
+
+    return (
+        Math.floor(
+            (end.getTime() - start.getTime()) /
+            86400000
+        ) + 1
+    );
+}
+
+const TITLES = {
+    overview: 'نظرة عامة على النشاط',
+    'branch-health': 'صحة الفروع',
+    alerts: 'التنبيهات والفرص',
+
+    'sales-overview': 'نظرة عامة على المبيعات',
+    'sales-trend': 'اتجاه المبيعات',
+    'sales-day-hour': 'اليوم / الساعة',
+    'sales-sellers': 'البائعون',
+    'sales-returns': 'المرتجعات',
+
+    'customer-overview': 'نظرة عامة على العملاء',
+    'customer-rfm': 'تحليل RFM',
+    'customer-retention': 'الاحتفاظ بالعملاء',
+    'customer-churn': 'التوقف / عدم النشاط',
+    'customer-clv': 'القيمة العمرية للعميل',
+    'customer-cohort': 'تحليل مجموعات العملاء',
+
+    'product-overview': 'نظرة عامة على المنتجات',
+    'product-top': 'أفضل المنتجات',
+    'product-profitability': 'الربحية',
+    'product-abc': 'تحليل ABC',
+    'product-stock': 'مخاطر المخزون',
+
+    'inventory-overview': 'نظرة عامة على المخزون',
+    'inventory-risk': 'مخاطر المخزون',
+    'inventory-reorder': 'تحليل إعادة الطلب',
+
+    'purchase-overview': 'نظرة عامة على المشتريات',
+    'supplier-performance': 'أداء الموردين',
+    'purchase-opportunities': 'فرص الشراء',
+
+    'profit-overview': 'نظرة عامة على الربحية',
+    'profit-branch': 'الربحية حسب الفرع',
+    'profit-product': 'الربحية حسب المنتج',
+    'profit-anomalies': 'شذوذ التكلفة',
+
+    'branch-overview': 'نظرة عامة على الفروع',
+    'branch-comparison': 'مقارنة الفروع',
+    'branch-ranking': 'ترتيب الفروع',
+
+    'staff-overview': 'نظرة عامة على الموظفين',
+    'staff-sales': 'المبيعات حسب البائع',
+    'staff-productivity': 'الإنتاجية',
+
+    'forecast-sales': 'توقع المبيعات',
+    'forecast-demand': 'توقع الطلب',
+    'forecast-inventory': 'توقع المخزون',
+
+    'quality-overview': 'جودة البيانات',
+    'quality-cost': 'جودة التكلفة',
+    'quality-reconciliation': 'مطابقة المبيعات'
+};
+
+function Cards({ items = [] }) {
+    return (
+        <div className="kpi-grid">
+            {items.map((item, index) => (
+                <div
+                    className="kpi-card"
+                    key={index}
+                >
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+
+                    {item.note && (
+                        <small>{item.note}</small>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function Table({
+    columns,
+    rows = []
+}) {
+    return (
+        <div className="table-card">
+            <div className="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {columns.map(column => (
+                                <th key={column.key}>
+                                    {column.label}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {rows.length ? (
+                            rows.map((row, index) => (
+                                <tr
+                                    key={
+                                        row.id ??
+                                        row.ticketId ??
+                                        row.employeeId ??
+                                        row.customerId ??
+                                        index
+                                    }
+                                >
+                                    {columns.map(column => (
+                                        <td key={column.key}>
+                                            {column.render
+                                                ? column.render(
+                                                    row,
+                                                    index
+                                                )
+                                                : (
+                                                    row[
+                                                        column.key
+                                                    ] ?? '-'
+                                                )}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))
+                        ) : (
+                            <tr>
+                                <td
+                                    colSpan={
+                                        columns.length
+                                    }
+                                    style={{
+                                        textAlign: 'center'
+                                    }}
+                                >
+                                    لا توجد بيانات
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+function PercentValue({
+    value,
+    percent,
+    formatter = num,
+    title
+}) {
+    return (
+        <span title={title || ''}>
+            {formatter(value)}
+
+            <span
+                style={{
+                    marginRight: 6,
+                    color: '#64748b',
+                    fontSize: '.82em',
+                    whiteSpace: 'nowrap'
+                }}
+            >
+                ({pct(percent)})
+            </span>
+        </span>
+    );
+}
+
+function sellerShare(value, total) {
+    if (!n(total)) return 0;
+
+    return (
+        n(value) /
+        n(total)
+    ) * 100;
+}
+
+const buttonStyle = {
+    padding: '8px 14px',
+    borderRadius: 10,
+    border:
+        '1px solid rgba(127,127,127,.25)',
+    background: 'transparent',
+    cursor: 'pointer',
+    fontWeight: 800,
+    fontFamily: 'inherit'
+};
+
+function exportSellersToExcel({
+    rows,
+    fromDate,
+    toDate,
+    branchLabel
+}) {
+    const totals = {
+        sales:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.sales),
+                0
+            ),
+
+        invoices:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.invoices),
+                0
+            ),
+
+        customers:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.customers),
+                0
+            ),
+
+        units:
+            rows.reduce(
+                (sum, row) =>
+                    sum + n(row.units),
+                0
+            )
+    };
+
+    totals.averageInvoice =
+        totals.invoices
+            ? totals.sales /
+              totals.invoices
+            : 0;
+
+    const rowsForExcel = [
+        [
+            'PharmaBI - البائعون'
+        ],
+
+        [
+            'الفرع',
+            branchLabel
+        ],
+
+        [
+            'من',
+            fromDate
+        ],
+
+        [
+            'إلى',
+            toDate
+        ],
+
+        [],
+
+        [
+            'البائع',
+            'متوسط المبيعات / يوم',
+            'نسبة المبيعات',
+            'متوسط الفواتير / يوم',
+            'نسبة الفواتير',
+            'متوسط الفاتورة',
+            'نسبة متوسط الفاتورة',
+            'متوسط العملاء / يوم',
+            'نسبة العملاء',
+            'متوسط الوحدات / يوم',
+            'نسبة الوحدات'
+        ]
+    ];
+
+    for (const row of rows) {
+        rowsForExcel.push([
+            row.employeeName ||
+                row.employeeId ||
+                '-',
+
+            n(row.sales),
+            sellerShare(
+                row.sales,
+                totals.sales
+            ),
+
+            n(row.invoices),
+            sellerShare(
+                row.invoices,
+                totals.invoices
+            ),
+
+            n(row.averageInvoice),
+            sellerShare(
+                row.averageInvoice,
+                totals.averageInvoice
+            ),
+
+            n(row.customers),
+            sellerShare(
+                row.customers,
+                totals.customers
+            ),
+
+            n(row.units),
+            sellerShare(
+                row.units,
+                totals.units
+            )
+        ]);
+    }
+
+    const worksheet =
+        XLSX.utils.aoa_to_sheet(
+            rowsForExcel
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'البائعون'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-البائعون-${String(
+            branchLabel || 'كل الفروع'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${fromDate}-${toDate}.xlsx`
+    );
+}
+
+function exportSellerHistory(
+    rows,
+    sellerName,
+    branchName
+) {
+    const data =
+        (rows || []).map(row => ({
+            'الشهر':
+                row.month,
+
+            'متوسط المبيعات / يوم':
+                row.averageDailySales,
+
+            'متوسط الفواتير / يوم':
+                row.averageDailyInvoices,
+
+            'متوسط الفاتورة':
+                row.averageInvoice,
+
+            'التقييم':
+                row.score,
+
+            'التقييم اللفظي':
+                row.scoreLabel
+        }));
+
+    const worksheet =
+        XLSX.utils.json_to_sheet(
+            data
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'أداء البائع'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-تقييم-${String(
+            branchName || 'فرع'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${String(
+            sellerName || 'بائع'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}.xlsx`
+    );
+}
+
+function exportCustomerInvoices(
+    rows,
+    customerName,
+    branchName
+) {
+    const data =
+        (rows || []).map(row => ({
+            'رقم الفاتورة':
+                row.invoiceCode ||
+                row.invoiceNumber ||
+                row.ticketId ||
+                '',
+
+            'التاريخ':
+                row.invoiceDate ||
+                row.date ||
+                row.ztime ||
+                '',
+
+            'النوع':
+                row.transactionType ||
+                row.type ||
+                '',
+
+            'الإجمالي':
+                n(
+                    row.total ??
+                    row.invoiceTotal
+                ),
+
+            'الخصم':
+                n(row.discount),
+
+            'الضريبة':
+                n(row.salesTaxValue),
+
+            'البائع':
+                row.sellerName ||
+                row.employeeName ||
+                '',
+
+            'المخزن':
+                row.storeName ||
+                ''
+        }));
+
+    const worksheet =
+        XLSX.utils.json_to_sheet(
+            data
+        );
+
+    const workbook =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        'فواتير العميل'
+    );
+
+    XLSX.writeFile(
+        workbook,
+        `PharmaBI-فواتير-العميل-${String(
+            branchName || 'فرع'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}-${String(
+            customerName || 'عميل'
+        ).replace(
+            /[\\/:*?"<>|]/g,
+            '-'
+        )}.xlsx`
+    );
+}
+
+function Chart({
+    title,
+    rows = [],
+    field
+}) {
+    const values =
+        rows.map(
+            row => n(row[field])
+        );
+
+    if (!values.length) {
+        return (
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>{title}</strong>
+                        <span>
+                            لا توجد بيانات تاريخية
+                        </span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const width = 720;
+    const height = 220;
+
+    const max =
+        Math.max(
+            ...values,
+            1
+        );
+
+    const min =
+        Math.min(
+            ...values,
+            0
+        );
+
+    const span =
+        Math.max(
+            max - min,
+            1
+        );
+
+    const points =
+        values
+            .map(
+                (value, index) => {
+
+                    const x =
+                        values.length === 1
+                            ? width / 2
+                            : (
+                                index *
+                                width
+                            ) /
+                            (
+                                values.length -
+                                1
+                            );
+
+                    const y =
+                        height -
+                        28 -
+                        (
+                            (
+                                value -
+                                min
+                            ) /
+                            span
+                        ) *
+                        (
+                            height -
+                            52
+                        );
+
+                    return `${x},${y}`;
+                }
+            )
+            .join(' ');
+
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>{title}</strong>
+                    <span>
+                        تطور المؤشر شهرياً
+                    </span>
+                </div>
+            </div>
+
+            <div
+                style={{
+                    padding:
+                        '12px 18px'
+                }}
+            >
+                <svg
+                    viewBox={`0 0 ${width} ${height}`}
+                    width="100%"
+                    height="220"
+                >
+                    <line
+                        x1="0"
+                        y1="188"
+                        x2="720"
+                        y2="188"
+                        stroke="currentColor"
+                        opacity=".12"
+                    />
+
+                    <polyline
+                        points={points}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+
+                    {rows.map(
+                        (row, index) => {
+                            const x =
+                                rows.length === 1
+                                    ? width / 2
+                                    : (
+                                        index *
+                                        width
+                                    ) /
+                                    (
+                                        rows.length -
+                                        1
+                                    );
+
+                            return (
+                                <text
+                                    key={index}
+                                    x={x}
+                                    y="210"
+                                    textAnchor="middle"
+                                    fontSize="11"
+                                    opacity=".7"
+                                >
+                                    {
+                                        String(
+                                            row.month ||
+                                            row.date ||
+                                            ''
+                                        ).slice(5)
+                                    }
+                                </text>
+                            );
+                        }
+                    )}
+                </svg>
+            </div>
+        </div>
+    );
+}
+
+function Modal({
+    title,
+    subtitle,
+    name,
+    onClose,
+    children,
+    zIndex = 9999
+}) {
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                background:
+                    'rgba(0,0,0,.38)',
+                zIndex,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 20
+            }}
+        >
+            <div
+                style={{
+                    background:
+                        'var(--page-card,#fff)',
+                    color: 'inherit',
+                    width:
+                        'min(1250px,96vw)',
+                    maxHeight: '92vh',
+                    overflowY: 'auto',
+                    borderRadius: 18,
+                    boxShadow:
+                        '0 20px 60px rgba(0,0,0,.28)'
+                }}
+            >
+                <div
+                    style={{
+                        padding:
+                            '18px 22px',
+                        display: 'flex',
+                        justifyContent:
+                            'space-between',
+                        alignItems:
+                            'center',
+                        gap: 15,
+                        borderBottom:
+                            '1px solid rgba(127,127,127,.15)'
+                    }}
+                >
+                    <div>
+                        <div className="page-eyebrow">
+                            {title}
+                        </div>
+
+                        <h2
+                            style={{
+                                margin:
+                                    '4px 0 0'
+                            }}
+                        >
+                            {name}
+                        </h2>
+
+                        <div
+                            style={{
+                                opacity: .72,
+                                fontSize: 13
+                            }}
+                        >
+                            {subtitle}
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={buttonStyle}
+                    >
+                        إغلاق
+                    </button>
+                </div>
+
+                <div
+                    style={{
+                        padding: 22
+                    }}
+                >
+                    {children}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Overlay({
+    text,
+    zIndex = 9998
+}) {
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                background:
+                    'rgba(0,0,0,.18)',
+                zIndex,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            }}
+        >
+            <div className="page-card">
+                <strong>{text}</strong>
+            </div>
+        </div>
+    );
+}
+
+function sellerScoreLabel(score) {
+    if (n(score) >= 90) return 'ممتاز';
+    if (n(score) >= 75) return 'جيد جداً';
+    if (n(score) >= 60) return 'ط¬ظٹط¯';
+
+    return 'يحتاج متابعة';
+}
+
+function SellerProfile({
+    profile,
+    onClose
+}) {
+    const rows =
+        profile?.monthly || [];
+
+    const latest =
+        profile?.latest;
+
+    return (
+        <Modal
+            title="تقييم البائع"
+            subtitle={`${profile?.branchName || '-'} · آخر ${profile?.historyMonths || 12} شهر`}
+            name={
+                profile?.employeeName ||
+                '-'
+            }
+            onClose={onClose}
+        >
+            <Cards
+                items={[
+                    {
+                        label:
+                            'متوسط المبيعات / يوم',
+                        value:
+                            money(
+                                latest?.averageDailySales
+                            )
+                    },
+
+                    {
+                        label:
+                            'متوسط الفواتير / يوم',
+                        value:
+                            num(
+                                latest?.averageDailyInvoices
+                            )
+                    },
+
+                    {
+                        label:
+                            'متوسط الفاتورة',
+                        value:
+                            money(
+                                latest?.averageInvoice
+                            )
+                    },
+
+                    {
+                        label:
+                            'تقييم آخر شهر',
+                        value:
+                            `${num(
+                                latest?.score
+                            )} / 100`,
+                        note:
+                            sellerScoreLabel(
+                                latest?.score
+                            )
+                    },
+
+                    {
+                        label:
+                            'متوسط التقييم',
+                        value:
+                            `${num(
+                                profile?.averageScore
+                            )} / 100`,
+                        note:
+                            '40% مبيعات · 30% فواتير · 30% متوسط الفاتورة'
+                    }
+                ]}
+            />
+
+            <div
+                style={{
+                    display: 'flex',
+                    justifyContent:
+                        'flex-end',
+                    marginTop: 16
+                }}
+            >
+                <button
+                    type="button"
+                    onClick={() =>
+                        exportSellerHistory(
+                            rows,
+                            profile?.employeeName,
+                            profile?.branchName
+                        )
+                    }
+                    style={buttonStyle}
+                >
+                    ↓ تصدير Excel
+                </button>
+            </div>
+
+            <Chart
+                title="متوسط المبيعات اليومية"
+                rows={rows}
+                field="averageDailySales"
+            />
+
+            <Chart
+                title="متوسط الفواتير اليومية"
+                rows={rows}
+                field="averageDailyInvoices"
+            />
+
+            <Chart
+                title="متوسط قيمة الفاتورة"
+                rows={rows}
+                field="averageInvoice"
+            />
+
+            <Table
+                columns={[
+                    {
+                        key: 'month',
+                        label: 'الشهر'
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'متوسط المبيعات / يوم',
+                        render:
+                            row =>
+                                money(
+                                    row.averageDailySales
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'متوسط الفواتير / يوم',
+                        render:
+                            row =>
+                                num(
+                                    row.averageDailyInvoices
+                                )
+                    },
+
+                    {
+                        key: 'averageInvoice',
+                        label:
+                            'متوسط الفاتورة',
+                        render:
+                            row =>
+                                money(
+                                    row.averageInvoice
+                                )
+                    },
+
+                    {
+                        key: 'score',
+                        label:
+                            'التقييم',
+                        render:
+                            row =>
+                                <strong>
+                                    {num(
+                                        row.score
+                                    )}{' '}
+                                    / 100
+                                </strong>
+                    },
+
+                    {
+                        key: 'scoreLabel',
+                        label:
+                            'الوصف',
+                        render:
+                            row =>
+                                row.scoreLabel ||
+                                sellerScoreLabel(
+                                    row.score
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+        </Modal>
+    );
+}
+
+function CustomerInvoiceDetails({
+    details,
+    onClose
+}) {
+    const header =
+        details?.header ||
+        {};
+
+    const lines =
+        details?.lines ||
+        [];
+
+    const totals =
+        details?.totals ||
+        {};
+
+    return (
+        <Modal
+            title="تفاصيل الفاتورة"
+            subtitle={`${header?.branchName || details?.branchName || '-'} ط¢آ· ${fmtDate(
+                header?.invoiceDate ||
+                header?.date ||
+                header?.ztime
+            )}`}
+            name={
+                header?.invoiceCode ||
+                header?.invoiceNumber ||
+                header?.ticketId ||
+                '-'
+            }
+            onClose={onClose}
+            zIndex={10001}
+        >
+            <Cards
+                items={[
+                    {
+                        label: 'العميل',
+                        value:
+                            header?.customerName ||
+                            '-'
+                    },
+
+                    {
+                        label: 'البائع',
+                        value:
+                            header?.sellerName ||
+                            '-'
+                    },
+
+                    {
+                        label: 'النوع',
+                        value:
+                            header?.transactionType ||
+                            '-'
+                    },
+
+                    {
+                        label: 'تاريخ الفاتورة',
+                        value:
+                            fmtDate(
+                                header?.invoiceDate ||
+                                header?.date ||
+                                header?.ztime
+                            )
+                    },
+
+                    {
+                        label: 'الإجمالي',
+                        value:
+                            money(
+                                header?.total ??
+                                header?.invoiceTotal ??
+                                totals?.total
+                            )
+                    },
+
+                    {
+                        label: 'الخصم',
+                        value:
+                            money(
+                                header?.discount
+                            )
+                    },
+
+                    {
+                        label: 'ضريبة المبيعات',
+                        value:
+                            money(
+                                header?.salesTaxValue
+                            )
+                    },
+
+                    {
+                        label: 'المدفوع',
+                        value:
+                            money(
+                                header?.paidByCustomer
+                            )
+                    }
+                ]}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            بنود الفاتورة
+                        </strong>
+
+                        <span>
+                            العبوات والأجزاء كما هي مسجلة في PharmaFly
+                        </span>
+                    </div>
+                </div>
+
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>المنتج</th>
+                                <th>العبوات</th>
+                                <th>الأجزاء</th>
+                                <th>أجزاء العبوة</th>
+                                <th>سعر البيع</th>
+                                <th>الخصم</th>
+                                <th>الخصم الإضافي</th>
+                                <th>القيمة الصافية</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {lines.length ? (
+                                lines.map(
+                                    (row, index) => (
+                                        <tr
+                                            key={
+                                                row.lineId ||
+                                                row.id ||
+                                                index
+                                            }
+                                        >
+                                            <td>
+                                                {
+                                                    row.itemName ||
+                                                    row.productName ||
+                                                    row.itemId ||
+                                                    '-'
+                                                }
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.packs
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.units
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {num(
+                                                    row.iParts ??
+                                                    row.itemParts ??
+                                                    row.parts
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.salesPrice
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.discount
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                {money(
+                                                    row.extraDiscount
+                                                )}
+                                            </td>
+
+                                            <td>
+                                                <strong>
+                                                    {money(
+                                                        row.netValue
+                                                    )}
+                                                </strong>
+                                            </td>
+                                        </tr>
+                                    )
+                                )
+                            ) : (
+                                <tr>
+                                    <td
+                                        colSpan="8"
+                                        style={{
+                                            textAlign:
+                                                'center'
+                                        }}
+                                    >
+                                        لا توجد بنود
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            إجماليات الفاتورة
+                        </strong>
+
+                        <span>
+                            أرقام الفاتورة الأصلية والحساب الخطي
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                            'repeat(4,minmax(0,1fr))',
+                        gap: 14,
+                        padding: 18
+                    }}
+                >
+                    <div>
+                        <small>
+                            الإجمالي
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.total ??
+                                totals?.total
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            الخصم
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.discount
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            ضريبة المبيعات
+                        </small>
+
+                        <strong>
+                            {money(
+                                header?.salesTaxValue
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            صافي البنود
+                        </small>
+
+                        <strong>
+                            {money(
+                                totals?.netValue
+                            )}
+                        </strong>
+                    </div>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function CustomerProfile({
+    profile,
+    onClose,
+    onInvoice,
+    onExport
+}) {
+    const metrics =
+        profile?.metrics ||
+        {};
+
+    const score =
+        n(
+            profile?.score ??
+            profile?.healthScore ??
+            profile?.customerScore ??
+            metrics?.score
+        );
+
+    const label =
+        profile?.scoreLabel ||
+        profile?.label ||
+        profile?.healthLabel ||
+        'مفقود';
+
+    const rows =
+        profile?.monthly ||
+        [];
+
+    const invoices =
+        profile?.invoices ||
+        profile?.invoiceRows ||
+        [];
+
+    const totalSales =
+        metrics?.totalSales ??
+        metrics?.monetary ??
+        0;
+
+    const totalInvoices =
+        metrics?.invoices ??
+        metrics?.invoiceCount ??
+        0;
+
+    const averageInvoice =
+        metrics?.averageInvoice ??
+        metrics?.avgInvoice ??
+        0;
+
+    const activeMonths =
+        metrics?.activeMonths ??
+        0;
+
+    const daysSince =
+        metrics?.daysSinceLastPurchase ??
+        metrics?.recencyDays ??
+        0;
+
+    return (
+        <Modal
+            title="تقييم العميل"
+            subtitle={`${profile?.branchName || '-'} · آخر ${profile?.historyMonths || 12} شهر`}
+            name={
+                profile?.customerName ||
+                profile?.name ||
+                profile?.customerId ||
+                '-'
+            }
+            onClose={onClose}
+        >
+            <Cards
+                items={[
+                    {
+                        label:
+                            'Health Score',
+                        value:
+                            `${num(
+                                score
+                            )} / 100`,
+                        note:
+                            label
+                    },
+
+                    {
+                        label:
+                            'إجمالي المشتريات',
+                        value:
+                            money(
+                                totalSales
+                            )
+                    },
+
+                    {
+                        label:
+                            'عدد الفواتير',
+                        value:
+                            num(
+                                totalInvoices
+                            )
+                    },
+
+                    {
+                        label:
+                            'متوسط الفاتورة',
+                        value:
+                            money(
+                                averageInvoice
+                            )
+                    },
+
+                    {
+                        label:
+                            'الأشهر النشطة',
+                        value:
+                            num(
+                                activeMonths
+                            )
+                    },
+
+                    {
+                        label:
+                            'أيام منذ آخر شراء',
+                        value:
+                            num(
+                                daysSince
+                            )
+                    }
+                ]}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            بيانات العميل
+                        </strong>
+
+                        <span>
+                            أول وآخر عملية شراء
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                            'repeat(4,minmax(0,1fr))',
+                        gap: 14,
+                        padding: 18
+                    }}
+                >
+                    <div>
+                        <small>
+                            Customer ID
+                        </small>
+
+                        <strong>
+                            {profile?.customerId ||
+                                '-'}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            أول شراء
+                        </small>
+
+                        <strong>
+                            {fmtDate(
+                                metrics?.firstPurchase
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            آخر شراء
+                        </small>
+
+                        <strong>
+                            {fmtDate(
+                                metrics?.lastPurchase
+                            )}
+                        </strong>
+                    </div>
+
+                    <div>
+                        <small>
+                            التصنيف
+                        </small>
+
+                        <strong>
+                            {label}
+                        </strong>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            التوصية التشغيلية
+                        </strong>
+
+                        <span>
+                            مبنية على تقييم العميل
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        padding: 20,
+                        fontSize: 16
+                    }}
+                >
+                    <div
+                        style={{
+                            fontWeight: 800,
+                            marginBottom: 8
+                        }}
+                    >
+                        {profile?.reason ||
+                            '-'}
+                    </div>
+
+                    <div>
+                        <strong>
+                            الإجراء المقترح:
+                        </strong>{' '}
+                        {profile?.recommendedAction ||
+                            profile?.action ||
+                            '-'}
+                    </div>
+                </div>
+            </div>
+
+            <Chart
+                title="مشتريات العميل شهرياً"
+                rows={rows}
+                field="sales"
+            />
+
+            <Chart
+                title="عدد الفواتير شهرياً"
+                rows={rows}
+                field="invoices"
+            />
+
+            <Chart
+                title="متوسط قيمة الفاتورة شهرياً"
+                rows={rows}
+                field="averageInvoice"
+            />
+
+            <Table
+                columns={[
+                    {
+                        key: 'month',
+                        label: 'الشهر'
+                    },
+
+                    {
+                        key: 'sales',
+                        label: 'المشتريات',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label: 'الفواتير',
+                        render:
+                            row =>
+                                num(
+                                    row.invoices
+                                )
+                    },
+
+                    {
+                        key:
+                            'averageInvoice',
+                        label:
+                            'متوسط الفاتورة',
+                        render:
+                            row =>
+                                money(
+                                    row.averageInvoice
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop: 18
+                }}
+            >
+                <div className="table-card-header">
+                    <div>
+                        <strong>
+                            فواتير العميل
+                        </strong>
+
+                        <span>
+                            اضغط على رقم الفاتورة لعرض التفاصيل
+                        </span>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() =>
+                            onExport(
+                                invoices,
+                                profile?.customerName,
+                                profile?.branchName
+                            )
+                        }
+                        style={buttonStyle}
+                    >
+                        ↓ تصدير Excel
+                    </button>
+                </div>
+
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>
+                                    رقم الفاتورة
+                                </th>
+
+                                <th>
+                                    التاريخ
+                                </th>
+
+                                <th>
+                                    النوع
+                                </th>
+
+                                <th>
+                                    الإجمالي
+                                </th>
+
+                                <th>
+                                    الخصم
+                                </th>
+
+                                <th>
+                                    الضريبة
+                                </th>
+
+                                <th>
+                                    البائع
+                                </th>
+
+                                <th>
+                                    الفرع / المخزن
+                                </th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {invoices.length ? (
+                                invoices.map(
+                                    (row, index) => {
+
+                                        const ticketId =
+                                            row.ticketId ??
+                                            row.ticket_id ??
+                                            row.id;
+
+                                        const invoiceNumber =
+                                            row.invoiceCode ||
+                                            row.invoiceNumber ||
+                                            ticketId ||
+                                            '-';
+
+                                        return (
+                                            <tr
+                                                key={
+                                                    ticketId ||
+                                                    index
+                                                }
+                                            >
+                                                <td>
+                                                    {ticketId ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() =>
+                                                                onInvoice(
+                                                                    row
+                                                                )
+                                                            }
+                                                            style={{
+                                                                ...buttonStyle,
+                                                                padding: 0,
+                                                                border: 0,
+                                                                textDecoration:
+                                                                    'underline'
+                                                            }}
+                                                        >
+                                                            {
+                                                                invoiceNumber
+                                                            }
+                                                        </button>
+                                                    ) : (
+                                                        invoiceNumber
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {fmtDate(
+                                                        row.invoiceDate ||
+                                                        row.date ||
+                                                        row.ztime
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.transactionType ||
+                                                        row.type ||
+                                                        '-'
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.total ??
+                                                        row.invoiceTotal
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.discount
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {money(
+                                                        row.salesTaxValue
+                                                    )}
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.sellerName ||
+                                                        '-'
+                                                    }
+                                                </td>
+
+                                                <td>
+                                                    {
+                                                        row.storeName ||
+                                                        '-'
+                                                    }
+                                                </td>
+                                            </tr>
+                                        );
+                                    }
+                                )
+                            ) : (
+                                <tr>
+                                    <td
+                                        colSpan="8"
+                                        style={{
+                                            textAlign:
+                                                'center'
+                                        }}
+                                    >
+                                        لا توجد فواتير
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function SellersTable({
+    rows,
+    fromDate,
+    toDate,
+    branchLabel,
+    onSellerClick
+}) {
+    const totals =
+        useMemo(
+            () => {
+
+                const sales =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.sales),
+                        0
+                    );
+
+                const invoices =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.invoices),
+                        0
+                    );
+
+                const customers =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum +
+                            n(row.customers),
+                        0
+                    );
+
+                const units =
+                    rows.reduce(
+                        (sum, row) =>
+                            sum + n(row.units),
+                        0
+                    );
+
+                return {
+                    sales,
+                    invoices,
+                    customers,
+                    units,
+                    averageInvoice:
+                        invoices
+                            ? sales /
+                              invoices
+                            : 0
+                };
+            },
+            [rows]
+        );
+
+    return (
+        <>
+            <div
+                style={{
+                    display: 'flex',
+                    justifyContent:
+                        'flex-start',
+                    marginBottom: 12
+                }}
+            >
+                <button
+                    type="button"
+                    onClick={() =>
+                        exportSellersToExcel({
+                            rows,
+                            fromDate,
+                            toDate,
+                            branchLabel
+                        })
+                    }
+                    style={buttonStyle}
+                >
+                    ↓ تصدير Excel
+                </button>
+            </div>
+
+            <Table
+                columns={[
+                    {
+                        key:
+                            'employeeName',
+                        label:
+                            'البائع',
+                        render:
+                            row => {
+
+                                const name =
+                                    row.employeeName ||
+                                    row.employeeId ||
+                                    '-';
+
+                                if (
+                                    !row.employeeId ||
+                                    row.employeeId ===
+                                        'UNASSIGNED'
+                                ) {
+                                    return name;
+                                }
+
+                                return (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            onSellerClick(
+                                                row
+                                            )
+                                        }
+                                        style={{
+                                            ...buttonStyle,
+                                            padding: 0,
+                                            border: 0,
+                                            textDecoration:
+                                                'underline'
+                                        }}
+                                    >
+                                        {name}
+                                    </button>
+                                );
+                            }
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'متوسط المبيعات / يوم',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.sales
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.sales,
+                                            totals.sales
+                                        )
+                                    }
+                                    formatter={
+                                        money
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'متوسط الفواتير / يوم',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.invoices
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.invoices,
+                                            totals.invoices
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key:
+                            'averageInvoice',
+                        label:
+                            'متوسط الفاتورة',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.averageInvoice
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.averageInvoice,
+                                            totals.averageInvoice
+                                        )
+                                    }
+                                    formatter={
+                                        money
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'customers',
+                        label:
+                            'متوسط العملاء / يوم',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.customers
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.customers,
+                                            totals.customers
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    },
+
+                    {
+                        key: 'units',
+                        label:
+                            'متوسط الوحدات / يوم',
+                        render:
+                            row => (
+                                <PercentValue
+                                    value={
+                                        row.units
+                                    }
+                                    percent={
+                                        sellerShare(
+                                            row.units,
+                                            totals.units
+                                        )
+                                    }
+                                    formatter={
+                                        num
+                                    }
+                                />
+                            )
+                    }
+                ]}
+                rows={rows}
+            />
+        </>
+    );
+}
+
+function Diagnosis({
+    data,
+    moduleId
+}) {
+    let text =
+        'التحليل التشخيصي سيقارن العوامل الرئيسية ويحدد مصدر التغير عندما تتوفر بيانات كافية.';
+
+    if (
+        data?.performance?.flags?.length
+    ) {
+        text =
+            data.performance.flags
+                .slice(0, 2)
+                .map(
+                    item =>
+                        item.message ||
+                        item.label
+                )
+                .join(' + ');
+    }
+
+    if (
+        data?.primary?.message
+    ) {
+        text =
+            data.primary.message;
+    }
+
+    if (
+        moduleId === 'quality-cost' &&
+        data?.quality
+    ) {
+        text =
+            `جودة التكلفة: ${data.quality.zeroCostRate}% من السطور بتكلفة صفر و${data.quality.missingCostRate}% بدون تكلفة مرجعية.`;
+    }
+
+    return (
+        <div
+            className="table-card"
+            style={{
+                marginTop: 18
+            }}
+        >
+            <div className="table-card-header">
+                <div>
+                    <strong>
+                        لماذا تغير الأداء؟
+                    </strong>
+
+                    <span>
+                        تشخيص مختصر مبني على البيانات الحالية
+                    </span>
+                </div>
+            </div>
+
+            <div
+                style={{
+                    padding: 20,
+                    fontSize: 16,
+                    fontWeight: 700
+                }}
+            >
+                {text}
+            </div>
+        </div>
+    );
+}
+
+
+function formatCoverageDate(
+    value
+) {
+
+    if (
+        !value
+    ) {
+
+        return "غير متاح";
+
+    }
+
+
+    const parts =
+        String(
+            value
+        ).split(
+            "-"
+        );
+
+
+    if (
+        parts.length !== 3
+    ) {
+
+        return value;
+
+    }
+
+
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+
+}
+
+
+function CacheCoveragePanel(
+    {
+        data,
+        loading,
+        error
+    }
+) {
+
+    const [
+        activeConnections,
+        setActiveConnections
+    ] = useState([]);
+
+
+    useEffect(
+        () => {
+
+            let cancelled =
+                false;
+
+
+            (
+                async () => {
+
+                    try {
+
+                        const result =
+                            await window
+                                .pharmaBI
+                                .connection
+                                .active();
+
+
+                        if (
+                            !cancelled
+                        ) {
+
+                            setActiveConnections(
+                                Array.isArray(
+                                    result
+                                )
+                                    ? result
+                                    : []
+                            );
+
+                        }
+
+                    }
+                    catch {
+
+                        if (
+                            !cancelled
+                        ) {
+
+                            setActiveConnections(
+                                []
+                            );
+
+                        }
+
+                    }
+
+                }
+            )();
+
+
+            return () => {
+
+                cancelled =
+                    true;
+
+            };
+
+        },
+        []
+    );
+
+
+    const rows =
+        Array.isArray(
+            data?.branches
+        )
+            ? data.branches
+            : [];
+
+
+    return (
+        <section className="page-card">
+
+            <div className="page-header">
+
+                <div>
+
+                    <div className="page-eyebrow">
+                        SYSTEM
+                    </div>
+
+                    <h2>
+                        Cache Status
+                    </h2>
+
+                    <p>
+                        معرفة حدود البيانات التاريخية الموجودة فعليًا على الكاش المحلي.
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div className="kpi-grid">
+
+                <div className="kpi-card">
+
+                    <span>
+                        Saved Branches
+                    </span>
+
+                    <strong>
+                        {
+                            rows.length
+                        }
+                    </strong>
+
+                </div>
+
+
+                <div className="kpi-card">
+
+                    <span>
+                        Active Connections
+                    </span>
+
+                    <strong>
+                        {
+                            activeConnections.length
+                        }
+                    </strong>
+
+                </div>
+
+
+                <div className="kpi-card">
+
+                    <span>
+                        Local Store
+                    </span>
+
+                    <strong>
+                        SQLite
+                    </strong>
+
+                </div>
+
+
+                <div className="kpi-card">
+
+                    <span>
+                        Data Coverage
+                    </span>
+
+                    <strong>
+                        تاريخ فعلي
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            {
+                loading
+                    ? (
+                        <div
+                            className="table-card"
+                            style={{
+                                padding: 28,
+                                textAlign: "center"
+                            }}
+                        >
+                            جاري قراءة حدود الكاش...
+                        </div>
+                    )
+                    : error
+                        ? (
+                            <div
+                                className="table-card"
+                                style={{
+                                    padding: 28
+                                }}
+                            >
+                                {error}
+                            </div>
+                        )
+                        : (
+                            <div className="table-card">
+
+                                <div className="table-card-header">
+
+                                    <div>
+
+                                        <strong>
+                                            التغطية التاريخية للكاش
+                                        </strong>
+
+                                        <span>
+                                            التاريخ الظاهر هنا هو آخر تاريخ موجود فعليًا داخل الكاش.
+                                        </span>
+
+                                    </div>
+
+                                </div>
+
+
+                                <div className="table-wrap">
+
+                                    <table>
+
+                                        <thead>
+
+                                            <tr>
+
+                                                <th>
+                                                    ID
+                                                </th>
+
+                                                <th>
+                                                    الفرع
+                                                </th>
+
+                                                <th>
+                                                    الاتصال
+                                                </th>
+
+                                                <th>
+                                                    أقدم بيانات
+                                                </th>
+
+                                                <th>
+                                                    أحدث بيانات
+                                                </th>
+
+                                                <th>
+                                                    الشهور المحملة
+                                                </th>
+
+                                                <th>
+                                                    السجلات
+                                                </th>
+
+                                            </tr>
+
+                                        </thead>
+
+
+                                        <tbody>
+
+                                            {
+                                                rows.map(
+                                                    row => {
+
+                                                        const branchId =
+                                                            Number(
+                                                                row.branchId
+                                                            );
+
+
+                                                        const connected =
+                                                            activeConnections.some(
+                                                                id =>
+                                                                    Number(
+                                                                        id
+                                                                    ) ===
+                                                                    branchId
+                                                            );
+
+
+                                                        return (
+                                                            <tr
+                                                                key={
+                                                                    branchId
+                                                                }
+                                                            >
+
+                                                                <td>
+                                                                    {
+                                                                        branchId
+                                                                    }
+                                                                </td>
+
+
+                                                                <td>
+                                                                    <strong>
+                                                                        {
+                                                                            row.branchName ||
+                                                                            `فرع ${branchId}`
+                                                                        }
+                                                                    </strong>
+                                                                </td>
+
+
+                                                                <td>
+                                                                    {
+                                                                        connected
+                                                                            ? (
+                                                                                <span
+                                                                                    style={{
+                                                                                        color: "#16a34a",
+                                                                                        fontWeight: 800
+                                                                                    }}
+                                                                                >
+                                                                                    ● متصل
+                                                                                </span>
+                                                                            )
+                                                                            : (
+                                                                                <span
+                                                                                    style={{
+                                                                                        color: "#94a3b8",
+                                                                                        fontWeight: 800
+                                                                                    }}
+                                                                                >
+                                                                                    ● غير متصل
+                                                                                </span>
+                                                                            )
+                                                                    }
+                                                                </td>
+
+
+                                                                <td>
+                                                                    {
+                                                                        row.earliestDate
+                                                                            ? formatCoverageDate(
+                                                                                row.earliestDate
+                                                                            )
+                                                                            : "لا توجد بيانات"
+                                                                    }
+                                                                </td>
+
+
+                                                                <td>
+                                                                    <strong>
+                                                                        {
+                                                                            row.latestDate
+                                                                                ? formatCoverageDate(
+                                                                                    row.latestDate
+                                                                                )
+                                                                                : "لا توجد بيانات"
+                                                                        }
+                                                                    </strong>
+                                                                </td>
+
+
+                                                                <td>
+                                                                    {
+                                                                        Number(
+                                                                            row.cachedMonths
+                                                                        ).toLocaleString(
+                                                                            "ar-EG"
+                                                                        )
+                                                                    }
+                                                                </td>
+
+
+                                                                <td>
+                                                                    {
+                                                                        Number(
+                                                                            row.cachedRows
+                                                                        ).toLocaleString(
+                                                                            "ar-EG"
+                                                                        )
+                                                                    }
+                                                                </td>
+
+                                                            </tr>
+                                                        );
+
+                                                    }
+                                                )
+                                            }
+
+                                        </tbody>
+
+                                    </table>
+
+                                </div>
+
+                            </div>
+                        )
+            }
+
+        </section>
+    );
+
+}
+
+function AnalyticsHubPanelBody({moduleId,branchId,connection,fromDate,toDate}){
+    const [
+        data,
+        setData
+    ] = useState(null);
+
+    const [
+        loading,
+        setLoading
+    ] = useState(true);
+
+    const [
+        error,
+        setError
+    ] = useState('');
+
+    const [
+        sellerProfile,
+        setSellerProfile
+    ] = useState(null);
+
+    const [
+        sellerLoading,
+        setSellerLoading
+    ] = useState(false);
+
+    const [
+        customerProfile,
+        setCustomerProfile
+    ] = useState(null);
+
+    const [
+        customerLoading,
+        setCustomerLoading
+    ] = useState(false);
+
+    const [
+        invoiceDetails,
+        setInvoiceDetails
+    ] = useState(null);
+
+    const [
+        invoiceLoading,
+        setInvoiceLoading
+    ] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        (
+            async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    const result =
+                        await window.pharmaBI.analytics.module({
+                            moduleId,
+                            branchId,
+                            connection,
+                            fromDate,
+                            toDate
+                        });
+
+
+                    if (!cancelled) {
+                        setData(
+                            moduleId ===
+                            'sales-sellers'
+                                ? {
+                                    ...result,
+                                    sellers:
+                                        result?.employees ||
+                                        []
+                                }
+                                : result
+                        );
+                    }
+                } catch (e) {
+                    if (!cancelled) {
+                        setError(
+                            e?.message ||
+                            'تعذر تحميل التحليل.'
+                        );
+                    }
+                } finally {
+                    if (!cancelled) {
+                        setLoading(false);
+                    }
+                }
+            }
+        )();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        moduleId,
+        branchId,
+        connection,
+        fromDate,
+        toDate
+    ]);
+
+    const title =
+        TITLES[moduleId] ||
+        'تحليل';
+
+    const cards =
+        useMemo(
+            () => {
+
+                if (!data) {
+                    return [];
+                }
+
+                if (
+                    moduleId ===
+                        'sales-overview' ||
+                    moduleId ===
+                        'overview'
+                ) {
+                    return [
+                        {
+                            label:
+                                'إجمالي المبيعات',
+                            value:
+                                money(
+                                    data?.summary?.netSales
+                                )
+                        },
+
+                        {
+                            label:
+                                'عدد الفواتير',
+                            value:
+                                num(
+                                    data?.summary?.saleTickets
+                                )
+                        },
+
+                        {
+                            label:
+                                'متوسط الفاتورة',
+                            value:
+                                money(
+                                    data?.summary?.averageTicket
+                                )
+                        },
+
+                        {
+                            label:
+                                'الربح الصافي',
+                            value:
+                                money(
+                                    data?.summary?.netProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'هامش الربح',
+                            value:
+                                pct(
+                                    data?.summary?.grossMargin
+                                )
+                        },
+
+                        {
+                            label:
+                                'مبيعات الدليفري',
+                            value:
+                                money(
+                                    data?.delivery?.deliverySales
+                                )
+                        },
+
+                        {
+                            label:
+                                'طلبات الدليفري',
+                            value:
+                                num(
+                                    data?.delivery?.deliveryTickets
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    [
+                        'profit-overview',
+                        'profit-branch',
+                        'profit-anomalies'
+                    ].includes(moduleId)
+                ) {
+                    return [
+                        {
+                            label:
+                                'Net Sales',
+                            value:
+                                money(
+                                    data?.summary?.netSales
+                                )
+                        },
+
+                        {
+                            label:
+                                'Cost',
+                            value:
+                                money(
+                                    data?.summary?.netCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Gross Profit',
+                            value:
+                                money(
+                                    data?.summary?.grossProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'Net Profit',
+                            value:
+                                money(
+                                    data?.summary?.netProfit
+                                )
+                        },
+
+                        {
+                            label:
+                                'Margin',
+                            value:
+                                pct(
+                                    data?.summary?.grossMargin
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    [
+                        'inventory-overview',
+                        'inventory-risk',
+                        'inventory-reorder'
+                    ].includes(moduleId)
+                ) {
+                    return [
+                        {
+                            label:
+                                'الأصناف المتحركة',
+                            value:
+                                num(
+                                    data?.items?.length
+                                )
+                        },
+
+                        {
+                            label:
+                                'الأصناف السريعة',
+                            value:
+                                num(
+                                    data?.fastMovers?.length
+                                )
+                        },
+
+                        {
+                            label:
+                                'الأصناف البطيئة',
+                            value:
+                                num(
+                                    data?.slowMovers?.length
+                                )
+                        }
+                    ];
+                }
+
+                if (
+  [
+    'purchase-overview',
+    'purchase-opportunities'
+  ].includes(moduleId)
+) {
+  return [
+    {
+      label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0642\u0628\u0644 \u0627\u0644\u062e\u0635\u0645',
+      value: money(data?.netPurchaseBeforeDiscount)
+    },
+    {
+      label: '\u0627\u0644\u062a\u0643\u0644\u0641\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629',
+      value: money(data?.netPurchaseCost)
+    },
+    {
+      label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+      value: money(data?.purchaseProfit)
+    },
+    {
+      label: '\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a',
+      value: pct(data?.purchaseMarginPercent)
+    },
+    {
+      label: '\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: money(data?.salesTotal)
+    },
+    {
+      label: '\u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: money(data?.salesProfit)
+    },
+    {
+      label: '\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u064a\u0629 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a',
+      value: pct(data?.salesMarginPercent)
+    },
+    {
+      label: '\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631',
+      value: num(data?.invoices)
+    },
+    {
+      label: '\u0628\u0646\u0648\u062f \u0627\u0644\u0634\u0631\u0627\u0621',
+      value: num(data?.lines)
+    },
+    {
+      label: '\u0627\u0644\u0623\u0635\u0646\u0627\u0641',
+      value: num(data?.items)
+    }
+  ];
+}                if (
+                    moduleId ===
+                    'supplier-performance'
+                ) {
+                    const supplierRows =
+                        Array.isArray(data?.suppliers)
+                            ? data.suppliers
+                            : [];
+
+                    return [
+                        {
+                            label:
+                                '\u0627\u0644\u0645\u0648\u0631\u062f\u0648\u0646',
+                            value:
+                                num(
+                                    supplierRows.length
+                                )
+                        },
+
+                        {
+                            label:
+                                '\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0634\u0631\u0627\u0621',
+                            value:
+                                money(
+                                    supplierRows.reduce(
+                                        (
+                                            sum,
+                                            item
+                                        ) =>
+                                            sum +
+                                            n(
+                                                item?.purchaseValue ??
+                                                item?.netPurchaseCost
+                                            ),
+                                        0
+                                    )
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    moduleId ===
+                        'quality-overview' ||
+                    moduleId ===
+                        'quality-cost'
+                ) {
+                    return [
+                        {
+                            label:
+                                'سطور البيع',
+                            value:
+                                num(
+                                    data?.quality?.lines
+                                )
+                        },
+
+                        {
+                            label:
+                                'Missing Cost',
+                            value:
+                                num(
+                                    data?.quality?.missingCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Zero Cost',
+                            value:
+                                num(
+                                    data?.quality?.zeroCost
+                                )
+                        },
+
+                        {
+                            label:
+                                'Suspicious',
+                            value:
+                                num(
+                                    data?.quality?.suspicious
+                                )
+                        }
+                    ];
+                }
+
+                if (
+                    moduleId.startsWith(
+                        'customer'
+                    )
+                ) {
+                    return [
+                        {
+                            label:
+                                'العملاء',
+                            value:
+                                num(
+                                    data?.summary?.customers ||
+                                    data?.summary?.totalCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                'متوسط Recency',
+                            value:
+                                num(
+                                    data?.summary?.averageRecencyDays
+                                )
+                        },
+
+                        {
+                            label:
+                                'متوسط Frequency',
+                            value:
+                                num(
+                                    data?.summary?.averageFrequency
+                                )
+                        },
+
+                        {
+                            label:
+                                'متوسط Monetary',
+                            value:
+                                money(
+                                    data?.summary?.averageMonetary
+                                )
+                        }
+                    ];
+                }
+
+                return [];
+            },
+            [data, moduleId]
+        );
+
+    if (loading) {
+        return (
+            <section className="page-card loading-card">
+                <div className="loading-spinner" />
+
+                <h2>
+                    جاري تحميل {title}...
+                </h2>
+
+                <p>
+                    يتم استخدام بيانات PharmaFly/الكاش المتاح.
+                </p>
+            </section>
+        );
+    }
+
+    if (error) {
+        return (
+            <section className="page-card">
+                <div className="status error">
+                    {error}
+                </div>
+            </section>
+        );
+    }
+
+    if (!data) {
+        return (
+            <section className="page-card empty-state">
+                <h2>{title}</h2>
+                <p>
+                    لا توجد نتيجة.
+                </p>
+            </section>
+        );
+    }
+
+    const openSellerProfile =
+        async seller => {
+
+            const selectedBranchId =
+                seller?.branchId ??
+                branchId;
+
+            const selectedEmployeeId =
+                seller?.employeeId;
+
+            if (
+                !selectedEmployeeId ||
+                selectedEmployeeId ===
+                    'UNASSIGNED' ||
+                branchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setSellerLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'seller-performance',
+
+                        branchId:
+                            selectedBranchId,
+
+                        employeeId:
+                            selectedEmployeeId,
+
+                        fromDate,
+                        toDate,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null,
+
+                        historyMonths: 12
+                    });
+
+                setSellerProfile(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'تعذر تحميل تقييم البائع.'
+                );
+            } finally {
+                setSellerLoading(false);
+            }
+        };
+
+    const openCustomerProfile =
+        async customer => {
+
+            const selectedBranchId =
+                customer?.branchId ??
+                branchId;
+
+            const selectedCustomerId =
+                customer?.customerId ??
+                customer?.customer_id;
+
+            if (
+                !selectedCustomerId ||
+                selectedBranchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setCustomerLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'customer-performance',
+
+                        branchId:
+                            selectedBranchId,
+
+                        customerId:
+                            selectedCustomerId,
+
+                        toDate,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null,
+
+                        historyMonths: 12,
+
+                        invoiceLimit: 300
+                    });
+
+                setCustomerProfile(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'تعذر تحميل تقييم العميل.'
+                );
+            } finally {
+                setCustomerLoading(false);
+            }
+        };
+
+    const openCustomerInvoice =
+        async invoice => {
+
+            const selectedBranchId =
+                customerProfile?.branchId ??
+                branchId;
+
+            const ticketId =
+                invoice?.ticketId ??
+                invoice?.ticket_id ??
+                invoice?.id;
+
+            if (
+                !ticketId ||
+                selectedBranchId === 'all'
+            ) {
+                return;
+            }
+
+            try {
+                setInvoiceLoading(true);
+
+                const result =
+                    await window.pharmaBI.dashboard.overview({
+                        action:
+                            'customer-invoice-details',
+
+                        branchId:
+                            selectedBranchId,
+
+                        ticketId,
+
+                        connection:
+                            selectedBranchId ===
+                            branchId
+                                ? connection
+                                : null
+                    });
+
+                setInvoiceDetails(
+                    result
+                );
+            } catch (e) {
+                setError(
+                    e?.message ||
+                    'تعذر تحميل تفاصيل الفاتورة.'
+                );
+            } finally {
+                setInvoiceLoading(false);
+            }
+        };
+
+    const sellerDailyFactor =
+        moduleId ===
+        'sales-sellers'
+            ? 1 /
+              dayCount(
+                  fromDate,
+                  toDate
+              )
+            : 1;
+
+    const sellerSource =
+        Array.isArray(data?.sellers)
+            ? data.sellers
+            : [];
+
+    const sellerRows =
+        moduleId ===
+        'sales-sellers'
+            ? sellerSource.map(row => ({
+                ...row,
+
+                sales:
+                    n(
+                        row.averageDailySales
+                    ),
+
+                invoices:
+                    n(
+                        row.averageDailyInvoices
+                    ),
+
+                customers:
+                    n(row.customers) *
+                    sellerDailyFactor,
+
+                units:
+                    n(row.units) *
+                    sellerDailyFactor,
+
+                averageInvoice:
+                    n(
+                        row.averageInvoice
+                    )
+            }))
+            : sellerSource;
+
+    let body = null;
+
+    if (
+        moduleId ===
+        'sales-trend'
+    ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key: 'date',
+                        label: 'التاريخ'
+                    },
+
+                    {
+                        key: 'sales',
+                        label: 'المبيعات',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'returns',
+                        label:
+                            'المرتجعات',
+                        render:
+                            row =>
+                                money(
+                                    row.returns
+                                )
+                    },
+
+                    {
+                        key: 'netSales',
+                        label: 'صافي',
+                        render:
+                            row =>
+                                money(
+                                    row.netSales
+                                )
+                    },
+
+                    {
+                        key: 'tickets',
+                        label:
+                            'الفواتير'
+                    }
+                ]}
+                rows={data.rows}
+            />
+        );
+    } else if (
+        moduleId ===
+        'sales-day-hour'
+    ) {
+        body = (
+            <>
+                <Table
+                    columns={[
+                        {
+                            key: 'date',
+                            label: 'اليوم'
+                        },
+
+                        {
+                            key: 'sales',
+                            label:
+                                'المبيعات',
+                            render:
+                                row =>
+                                    money(
+                                        row.sales
+                                    )
+                        },
+
+                        {
+                            key: 'tickets',
+                            label:
+                                'الفواتير'
+                        }
+                    ]}
+                    rows={data.days}
+                />
+
+                <div
+                    style={{
+                        height: 18
+                    }}
+                />
+
+                <Table
+                    columns={[
+                        {
+                            key: 'hour',
+                            label: 'الساعة'
+                        },
+
+                        {
+                            key: 'sales',
+                            label:
+                                'المبيعات',
+                            render:
+                                row =>
+                                    money(
+                                        row.sales
+                                    )
+                        },
+
+                        {
+                            key: 'tickets',
+                            label:
+                                'الفواتير'
+                        }
+                    ]}
+                    rows={
+                        data.hours?.slice(
+                            0,
+                            24
+                        )
+                    }
+                />
+            </>
+        );
+    } else if (
+        moduleId ===
+        'sales-sellers'
+    ) {
+        body = (
+            <SellersTable
+                rows={sellerRows}
+                fromDate={fromDate}
+                toDate={toDate}
+                branchLabel={
+                    branchId === 'all'
+                        ? 'كل الفروع'
+                        : `الفرع ${branchId}`
+                }
+                onSellerClick={
+                    openSellerProfile
+                }
+            />
+        );
+    } else if (moduleId === 'cache') {
+        body = <CacheCoveragePanel data={data} loading={loading} error={error} />;
+    } else if (
+        moduleId ===
+        'sales-returns'
+    ) {
+        body = (
+            <Cards
+                items={[
+                    {
+                        label:
+                            'المرتجعات',
+                        value:
+                            money(
+                                data.returns
+                            )
+                    },
+
+                    {
+                        label:
+                            'فواتير المرتجع',
+                        value:
+                            num(
+                                data.returnTickets
+                            )
+                    },
+
+                    {
+                        label:
+                            'بنود المرتجع',
+                        value:
+                            num(
+                                data.returnLines
+                            )
+                    },
+
+                    {
+                        label:
+                            'معدل المرتجع',
+                        value:
+                            pct(
+                                data.returnRate
+                            )
+                    }
+                ]}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'product'
+        )
+    ) {
+        const rows =
+            data.products ||
+            data.topProducts ||
+            data.current?.topProducts ||
+            data.negativeMarginProducts ||
+            [];
+
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'itemName',
+                        label:
+                            'المنتج',
+                        render:
+                            row =>
+                                row.itemName ||
+                                row.productName ||
+                                row.name ||
+                                row.item_name ||
+                                '-'
+                    },
+
+                    {
+                        key: 'units',
+                        label:
+                            'الكمية',
+                        render:
+                            row =>
+                                num(
+                                    row.units ??
+                                    row.quantity
+                                )
+                    },
+
+                    {
+                        key:
+                            'netSales',
+                        label:
+                            'المبيعات',
+                        render:
+                            row =>
+                                money(
+                                    row.netSales ??
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key:
+                            'grossProfit',
+                        label:
+                            'الربح',
+                        render:
+                            row =>
+                                money(
+                                    row.grossProfit ??
+                                    row.profit
+                                )
+                    },
+
+                    {
+                        key: 'margin',
+                        label:
+                            'الهامش',
+                        render:
+                            row =>
+                                pct(
+                                    row.margin
+                                )
+                    }
+                ]}
+                rows={rows}
+            />
+        );
+    } else if (
+        moduleId.startsWith(
+            'customer'
+        )
+    ) {
+        const rows =
+            data.customers ||
+            data.rows ||
+            data.inactiveCustomers ||
+            data.topCustomers ||
+            [];
+
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'customerName',
+                        label:
+                            'العميل',
+                        render:
+                            row => {
+
+                                const customerId =
+                                    row.customerId ??
+                                    row.customer_id;
+
+                                const name =
+                                    row.customerName ||
+                                    row.name ||
+                                    row.customer_name ||
+                                    customerId ||
+                                    '-';
+
+                                if (
+                                    customerId &&
+                                    branchId !==
+                                        'all'
+                                ) {
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                openCustomerProfile(
+                                                    {
+                                                        ...row,
+                                                        customerId
+                                                    }
+                                                )
+                                            }
+                                            style={{
+                                                ...buttonStyle,
+                                                padding: 0,
+                                                border: 0,
+                                                textDecoration:
+                                                    'underline'
+                                            }}
+                                        >
+                                            {name}
+                                        </button>
+                                    );
+                                }
+
+                                return name;
+                            }
+                    },
+
+                    {
+                        key:
+                            'score',
+                        label:
+                            'التقييم',
+                        render:
+                            row => {
+
+                                const score =
+                                    row.customerScore ??
+                                    row.healthScore ??
+                                    row.health_score ??
+                                    row.score;
+
+                                if (
+                                    score ===
+                                        null ||
+                                    score ===
+                                        undefined ||
+                                    score === ''
+                                ) {
+                                    return '-';
+                                }
+
+                                return (
+                                    <strong>
+                                        {num(
+                                            score
+                                        )}{' '}
+                                        / 100
+                                    </strong>
+                                );
+                            }
+                    },
+
+                    {
+                        key:
+                            'segment',
+                        label:
+                            'Segment',
+                        render:
+                            row =>
+                                row.segment ||
+                                '-'
+                    },
+
+                    {
+                        key:
+                            'recencyDays',
+                        label:
+                            'Recency',
+                        render:
+                            row =>
+                                num(
+                                    row.recencyDays
+                                )
+                    },
+
+                    {
+                        key:
+                            'tickets',
+                        label:
+                            'Frequency',
+                        render:
+                            row =>
+                                num(
+                                    row.tickets ??
+                                    row.frequency ??
+                                    row.invoices
+                                )
+                    },
+
+                    {
+                        key:
+                            'monetary',
+                        label:
+                            'Monetary',
+                        render:
+                            row =>
+                                money(
+                                    row.monetary ??
+                                    row.netSales ??
+                                    row.total_sales
+                                )
+                    }
+                ]}
+                rows={
+                    rows.slice(
+                        0,
+                        100
+                    )
+                }
+            />
+        );
+        } else if (
+            moduleId === 'purchase-overview' &&
+            data?.type === 'purchase-group'
+        ) {
+            body = (
+                <PurchaseOverviewPanel
+                    data={data}
+                    Table={Table}
+                    money={money}
+                    pct={pct}
+                />
+            );
+        } else if (
+            moduleId ===
+            'interbranch-exchanges'
+        ) {
+
+            const isGroup =
+                data?.type ===
+                'exchange-group';
+
+            if (isGroup) {
+
+                const branchRows =
+                    Array.isArray(
+                        data?.branches
+                    )
+                        ? data.branches
+                        : [];
+
+                const total =
+                    data?.total ||
+                    {};
+
+                body = (
+                    <Table
+                        columns={[
+                            {
+                                key:
+                                    'branchName',
+                                label:
+                                    'الفرع'
+                            },
+                            {
+                                key:
+                                    'outgoingPacks',
+                                label:
+                                    'عبوات صادر',
+                                render:
+                                    row =>
+                                        num(
+                                            row.outgoingPacks
+                                        )
+                            },
+                            {
+                                key:
+                                    'outgoingUnits',
+                                label:
+                                    'وحدات صادر',
+                                render:
+                                    row =>
+                                        num(
+                                            row.outgoingUnits
+                                        )
+                            },
+                            {
+                                key:
+                                    'outgoingTotal',
+                                label:
+                                    'قيمة الصادر',
+                                render:
+                                    row =>
+                                        money(
+                                            row.outgoingTotal
+                                        )
+                            },
+                            {
+                                key:
+                                    'incomingPacks',
+                                label:
+                                    'عبوات وارد',
+                                render:
+                                    row =>
+                                        num(
+                                            row.incomingPacks
+                                        )
+                            },
+                            {
+                                key:
+                                    'incomingUnits',
+                                label:
+                                    'وحدات وارد',
+                                render:
+                                    row =>
+                                        num(
+                                            row.incomingUnits
+                                        )
+                            },
+                            {
+                                key:
+                                    'incomingTotal',
+                                label:
+                                    'قيمة الوارد',
+                                render:
+                                    row =>
+                                        money(
+                                            row.incomingTotal
+                                        )
+                            },
+                            {
+                                key:
+                                    'netTotal',
+                                label:
+                                    'صافي التبادلات',
+                                render:
+                                    row =>
+                                        money(
+                                            row.netTotal
+                                        )
+                            },
+                            {
+                                key:
+                                    'movements',
+                                label:
+                                    'الحركات',
+                                render:
+                                    row =>
+                                        num(
+                                            row.movements
+                                        )
+                            }
+                        ]}
+                        rows={[
+                            ...branchRows,
+                            {
+                                branchName:
+                                    'الإجمالي',
+
+                                outgoingPacks:
+                                    total.outgoingPacks,
+
+                                outgoingUnits:
+                                    total.outgoingUnits,
+
+                                outgoingTotal:
+                                    total.outgoingTotal,
+
+                                incomingPacks:
+                                    total.incomingPacks,
+
+                                incomingUnits:
+                                    total.incomingUnits,
+
+                                incomingTotal:
+                                    total.incomingTotal,
+
+                                netTotal:
+                                    total.netTotal,
+
+                                movements:
+                                    total.movements
+                            }
+                        ]}
+                    />
+                );
+
+            } else {
+
+                const summary =
+                    data?.summary ||
+                    {};
+
+                const counterparties =
+                    Array.isArray(
+                        data?.counterparties
+                    )
+                        ? data.counterparties
+                        : [];
+
+                const movementRows =
+                    Array.isArray(
+                        data?.rows
+                    )
+                        ? data.rows
+                        : [];
+
+                body = (
+                    <>
+                        <Table
+                            columns={[
+                                {
+                                    key:
+                                        'branchName',
+                                    label:
+                                        'الفرع الآخر'
+                                },
+                                {
+                                    key:
+                                        'outgoingPacks',
+                                    label:
+                                        'عبوات صادر',
+                                    render:
+                                        row =>
+                                            num(
+                                                row.outgoingPacks
+                                            )
+                                },
+                                {
+                                    key:
+                                        'outgoingUnits',
+                                    label:
+                                        'وحدات صادر',
+                                    render:
+                                        row =>
+                                            num(
+                                                row.outgoingUnits
+                                            )
+                                },
+                                {
+                                    key:
+                                        'outgoingTotal',
+                                    label:
+                                        'قيمة الصادر',
+                                    render:
+                                        row =>
+                                            money(
+                                                row.outgoingTotal
+                                            )
+                                },
+                                {
+                                    key:
+                                        'incomingPacks',
+                                    label:
+                                        'عبوات وارد',
+                                    render:
+                                        row =>
+                                            num(
+                                                row.incomingPacks
+                                            )
+                                },
+                                {
+                                    key:
+                                        'incomingUnits',
+                                    label:
+                                        'وحدات وارد',
+                                    render:
+                                        row =>
+                                            num(
+                                                row.incomingUnits
+                                            )
+                                },
+                                {
+                                    key:
+                                        'incomingTotal',
+                                    label:
+                                        'قيمة الوارد',
+                                    render:
+                                        row =>
+                                            money(
+                                                row.incomingTotal
+                                            )
+                                },
+                                {
+                                    key:
+                                        'netTotal',
+                                    label:
+                                        'صافي التبادلات',
+                                    render:
+                                        row =>
+                                            money(
+                                                row.netTotal
+                                            )
+                                },
+                                {
+                                    key:
+                                        'movements',
+                                    label:
+                                        'الحركات',
+                                    render:
+                                        row =>
+                                            num(
+                                                row.movements
+                                            )
+                                }
+                            ]}
+                            rows={[
+                                ...counterparties,
+                                {
+                                    branchName:
+                                        'الإجمالي',
+
+                                    outgoingPacks:
+                                        summary.outgoingPacks,
+
+                                    outgoingUnits:
+                                        summary.outgoingUnits,
+
+                                    outgoingTotal:
+                                        summary.outgoingTotal,
+
+                                    incomingPacks:
+                                        summary.incomingPacks,
+
+                                    incomingUnits:
+                                        summary.incomingUnits,
+
+                                    incomingTotal:
+                                        summary.incomingTotal,
+
+                                    netTotal:
+                                        summary.netTotal,
+
+                                    movements:
+                                        summary.movements
+                                }
+                            ]}
+                        />
+
+                        <div
+                            style={{
+                                marginTop: 18
+                            }}
+                        >
+                            <div
+                                className="page-eyebrow"
+                                style={{
+                                    marginBottom: 8
+                                }}
+                            >
+                                تفاصيل حركة التبادلات
+                            </div>
+
+                            <Table
+                                columns={[
+                                    {
+                                        key:
+                                            'movementDate',
+                                        label:
+                                            'التاريخ',
+                                        render:
+                                            row =>
+                                                row.movementDate
+                                                    ? String(
+                                                        row.movementDate
+                                                    )
+                                                        .replace(
+                                                            'T',
+                                                            ' '
+                                                        )
+                                                        .slice(
+                                                            0,
+                                                            16
+                                                        )
+                                                    : '-'
+                                    },
+                                    {
+                                        key:
+                                            'otherBranchName',
+                                        label:
+                                            'الفرع الآخر'
+                                    },
+                                    {
+                                        key:
+                                            'direction',
+                                        label:
+                                            'الحركة',
+                                        render:
+                                            row =>
+                                                row.direction ===
+                                                'outgoing'
+                                                    ? 'صادر'
+                                                    : 'وارد'
+                                    },
+                                    {
+                                        key:
+                                            'packs',
+                                        label:
+                                            'العبوات',
+                                        render:
+                                            row =>
+                                                num(
+                                                    row.packs
+                                                )
+                                    },
+                                    {
+                                        key:
+                                            'units',
+                                        label:
+                                            'الوحدات',
+                                        render:
+                                            row =>
+                                                num(
+                                                    row.units
+                                                )
+                                    },
+                                    {
+                                        key:
+                                            'total',
+                                        label:
+                                            'القيمة',
+                                        render:
+                                            row =>
+                                                money(
+                                                    row.total
+                                                )
+                                    },
+                                    {
+                                        key:
+                                            'movementId',
+                                        label:
+                                            'رقم الحركة'
+                                    }
+                                ]}
+                                rows={
+                                    movementRows.slice(
+                                        0,
+                                        200
+                                    )
+                                }
+                            />
+                        </div>
+                    </>
+                );
+            }
+        } else if (
+            moduleId ===
+            'supplier-performance'
+        ) {
+            body = (
+                <SupplierPerformancePanel
+                    data={data}
+                    Table={Table}
+                    money={money}
+                    num={num}
+                    pct={pct}
+                    n={n}
+                />
+            );
+        } else if (
+            moduleId.includes(
+                'inventory'
+            )
+        ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key:
+                            'itemName',
+                        label:
+                            'المنتج'
+                    },
+
+                    {
+                        key:
+                            'velocity',
+                        label:
+                            'سرعة الحركة',
+                        render:
+                            row =>
+                                num(
+                                    row.velocity
+                                )
+                    },
+
+                    {
+                        key:
+                            'units',
+                        label:
+                            'الوحدات',
+                        render:
+                            row =>
+                                num(
+                                    row.units
+                                )
+                    },
+
+                    {
+                        key:
+                            'sales',
+                        label:
+                            'المبيعات',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    }
+                ]}
+                rows={data.items}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'forecast'
+        )
+    ) {
+        body = (
+            <>
+                <Cards
+                    items={[
+                        {
+                            label:
+                                'الاتجاه',
+                            value:
+                                num(
+                                    data.forecast?.slope
+                                )
+                        },
+
+                        {
+                            label:
+                                'أيام التنبؤ',
+                            value:
+                                num(
+                                    data.forecast?.forecast?.length
+                                )
+                        }
+                    ]}
+                />
+
+                <Table
+                    columns={[
+                        {
+                            key: 'day',
+                            label: 'اليوم'
+                        },
+
+                        {
+                            key: 'value',
+                            label:
+                                'التوقع',
+                            render:
+                                row =>
+                                    money(
+                                        row.value
+                                    )
+                        }
+                    ]}
+                    rows={
+                        data.forecast?.forecast ||
+                        []
+                    }
+                />
+            </>
+        );
+    } else if (
+        moduleId.includes(
+            'branch'
+        )
+    ) {
+        body = (
+            <Table
+                columns={[
+                    {
+                        key: 'rank',
+                        label: 'الترتيب'
+                    },
+
+                    {
+                        key:
+                            'branchName',
+                        label:
+                            'الفرع',
+                        render:
+                            row =>
+                                row.branchName ||
+                                row.name ||
+                                row.branchId
+                    },
+
+                    {
+                        key: 'sales',
+                        label:
+                            'المبيعات',
+                        render:
+                            row =>
+                                money(
+                                    row.sales
+                                )
+                    },
+
+                    {
+                        key: 'profit',
+                        label:
+                            'الربح',
+                        render:
+                            row =>
+                                money(
+                                    row.profit
+                                )
+                    },
+
+                    {
+                        key: 'margin',
+                        label:
+                            'الهامش',
+                        render:
+                            row =>
+                                pct(
+                                    row.margin
+                                )
+                    },
+
+                    {
+                        key: 'invoices',
+                        label:
+                            'الفواتير'
+                    }
+                ]}
+                rows={data.branches}
+            />
+        );
+    } else if (
+        moduleId.includes(
+            'reconciliation'
+        )
+    ) {
+        body = (
+            <Cards
+                items={[
+                    {
+                        label:
+                            'عدد الفواتير',
+                        value:
+                            num(
+                                data.reconciliation?.ticketCount
+                            )
+                    },
+
+                    {
+                        label:
+                            'فروقات',
+                        value:
+                            num(
+                                data.reconciliation?.ticketsWithDifference
+                            )
+                    },
+
+                    {
+                        label:
+                            'إجمالي الفرق',
+                        value:
+                            money(
+                                data.reconciliation?.absoluteDifference
+                            )
+                    }
+                ]}
+            />
+        );
+    } else {
+        body = null;
+    }
+
+    return (
+        <>
+            <section className="page-card">
+                <div className="page-header">
+                    <div>
+                        <div className="page-eyebrow">
+                            PharmaBI Analytics
+                        </div>
+
+                        <h2>
+                            {title}
+                        </h2>
+
+                        <p>
+                            {fromDate} â†’ {toDate}
+                        </p>
+                    </div>
+
+                    <div className="period-chip">
+                        {
+                            branchId ===
+                            'all'
+                                ? 'كل الفروع'
+                                : `الفرع ${branchId}`
+                        }
+                    </div>
+                </div>
+
+                {cards.length > 0 && (
+                    <Cards
+                        items={cards}
+                    />
+                )}
+
+                <div
+                    style={{
+                        marginTop: 18
+                    }}
+                >
+                    {body}
+                </div>
+
+                <Diagnosis
+                    data={data}
+                    moduleId={moduleId}
+                />
+            </section>
+
+            {sellerLoading && (
+                <Overlay
+                    text="جاري تحميل تاريخ البائع..."
+                />
+            )}
+
+            {sellerProfile && (
+                <SellerProfile
+                    profile={
+                        sellerProfile
+                    }
+                    onClose={() =>
+                        setSellerProfile(
+                            null
+                        )
+                    }
+                />
+            )}
+
+            {customerLoading && (
+                <Overlay
+                    text="جاري تحميل تقييم العميل..."
+                    zIndex={10000}
+                />
+            )}
+
+            {customerProfile && (
+                <CustomerProfile
+                    profile={
+                        customerProfile
+                    }
+                    onClose={() => {
+                        setCustomerProfile(
+                            null
+                        );
+
+                        setInvoiceDetails(
+                            null
+                        );
+                    }}
+                    onInvoice={
+                        openCustomerInvoice
+                    }
+                    onExport={
+                        exportCustomerInvoices
+                    }
+                />
+            )}
+
+            {invoiceLoading && (
+                <Overlay
+                    text="جاري تحميل تفاصيل الفاتورة..."
+                    zIndex={10002}
+                />
+            )}
+
+            {invoiceDetails && (
+                <CustomerInvoiceDetails
+                    details={
+                        invoiceDetails
+                    }
+                    onClose={() =>
+                        setInvoiceDetails(
+                            null
+                        )
+                    }
+                />
+            )}
+        </>
+    );
+}
+
+export default function AnalyticsHubPanel(props){
+
+    const moduleId = props?.moduleId;
+
+    if(
+        moduleId === 'branch-health' ||
+        moduleId === 'branch-overview'
+    ){
+        return (
+            <BranchPerformancePanel
+                mode="overview"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'branch-comparison'){
+        return (
+            <BranchPerformancePanel
+                mode="comparison"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'branch-ranking'){
+        return (
+            <BranchPerformancePanel
+                mode="ranking"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    if(moduleId === 'forecast-sales'){
+        return (
+            <BranchPerformancePanel
+                mode="forecast"
+                branchId={props?.branchId}
+                connection={props?.connection}
+                toDate={props?.toDate}
+                historyMonths={12}
+            />
+        );
+    }
+
+    return (
+        <AnalyticsHubPanelBody
+            moduleId={props?.moduleId}
+            branchId={props?.branchId}
+            connection={props?.connection}
+            fromDate={props?.fromDate}
+            toDate={props?.toDate}
+        />
+    );
+}
+
+
+

@@ -1,0 +1,4522 @@
+﻿
+==================== package.json ====================
+
+{
+  "name": "pharmabi-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PharmaBI Live Desktop - direct PharmaFly SQL Server analytics",
+  "main": "electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "powershell -NoProfile -Command \"$env:PHARMABI_DEV_SERVER='1'; Start-Process npm.cmd -ArgumentList 'run vite' -NoNewWindow; Start-Sleep -Seconds 2; .\\node_modules\\.bin\\electron.cmd .\"",
+    "build:renderer": "vite build",
+    "start": "npm run build:renderer && electron .",
+    "dist": "npm run prepare:installer-snapshot && npm run build:renderer && electron-builder --win nsis",
+    "dist:dir": "npm run prepare:installer-snapshot && npm run build:renderer && electron-builder --win dir",
+    "vite": "vite --host 127.0.0.1",
+    "prepare:installer-snapshot": "node tools/prepareInstallerSnapshot.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "mssql": "12.7.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "vite": "8.2.2"
+  },
+  "build": {
+    "appId": "com.pharmabi.live",
+    "productName": "PharmaBI Live",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PharmaBI Live",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "extraResources": [
+      {
+        "from": "installer-seed",
+        "to": "installer-seed",
+        "filter": [
+          "**/*",
+          "!persistent-cache/**",
+          "!persistent-data-cache.json"
+        ]
+      }
+    ]
+  }
+}
+
+
+==================== electron\main.js ====================
+
+import { restorePackagedInstallerState } from "./installerStateBootstrap.js";
+
+import {
+    app,
+    BrowserWindow,
+    Menu
+} from "electron";
+
+
+import path from "node:path";
+
+
+import {
+    fileURLToPath
+} from "node:url";
+
+
+import {
+    registerConnectionIpc,
+    syncCrmPhonesForBranch
+} from "./ipc/connection.ipc.js";
+
+
+import {
+    registerSalesIpc
+} from "./ipc/sales.ipc.js";
+
+
+import {
+    registerGroupIpc
+} from "./ipc/group.ipc.js";
+
+
+import {
+    registerCustomersIpc
+} from "./ipc/customers.ipc.js";
+
+
+import {
+    registerDashboardIpc
+} from "./ipc/dashboard.ipc.js";
+
+
+import {
+    registerAnalyticsHubIpc
+} from "./ipc/analyticsHub.ipc.js";
+
+
+import {
+    registerMasterItemIpc
+} from "./ipc/masterItem.ipc.js";
+
+
+import {
+    getAllSavedConnections
+} from "./settings/connectionStore.js";
+
+
+import {
+    getBranchPool,
+    closeAllConnections
+} from "./connection/connectionManager.js";
+
+
+import {
+    refreshCurrentMonthAllBranches
+} from "./cache/cacheWarmupService.js";
+
+
+import {
+    preloadPersistentCache,
+    flushPersistentCache
+} from "./cache/persistentCacheService.js";
+
+
+import {
+    closeLocalSalesDatabase
+} from "./localdb/localSalesDb.js";
+
+
+const __filename =
+    fileURLToPath(
+        import.meta.url
+    );
+
+
+const __dirname =
+    path.dirname(
+        __filename
+    );
+
+
+let mainWindow =
+    null;
+
+
+const DEV_SERVER =
+    process.env.PHARMABI_DEV_SERVER === "1";
+
+
+const DEV_SERVER_URL =
+    "http://localhost:5173";
+
+
+function createWindow() {
+
+    mainWindow =
+        new BrowserWindow({
+
+            width:
+                1450,
+
+            height:
+                900,
+
+            minWidth:
+                1100,
+
+            minHeight:
+                700,
+
+            show:
+                false,
+
+            backgroundColor:
+                "#f5f7fb",
+
+            webPreferences: {
+
+                preload:
+                    path.join(
+                        __dirname,
+                        "preload.js"
+                    ),
+
+                contextIsolation:
+                    true,
+
+                nodeIntegration:
+                    false,
+
+                sandbox:
+                    false
+
+            }
+
+        });
+
+
+    mainWindow.once(
+
+        "ready-to-show",
+
+        () => {
+
+            mainWindow.show();
+
+        }
+
+    );
+
+
+    mainWindow.webContents.on(
+
+        "did-fail-load",
+
+        (
+            _event,
+            errorCode,
+            errorDescription,
+            validatedURL
+        ) => {
+
+            console.error(
+
+                "[Electron] Renderer failed to load:",
+
+                {
+
+                    errorCode,
+
+                    errorDescription,
+
+                    validatedURL
+
+                }
+
+            );
+
+        }
+
+    );
+
+
+    if (
+        DEV_SERVER
+    ) {
+
+        console.log(
+            `[Electron] Development renderer: ${DEV_SERVER_URL}`
+        );
+
+
+        mainWindow.loadURL(
+            DEV_SERVER_URL
+        );
+
+        mainWindow.webContents.openDevTools({
+            mode:
+                "detach"
+        });
+
+    }
+    else {
+
+        const productionPath =
+            path.join(
+                __dirname,
+                "../dist/index.html"
+            );
+
+
+        console.log(
+            `[Electron] Production renderer: ${productionPath}`
+        );
+
+
+        mainWindow.loadFile(
+            productionPath
+        );
+
+    }
+
+
+    mainWindow.on(
+
+        "closed",
+
+        () => {
+
+            mainWindow =
+                null;
+
+        }
+
+    );
+
+}
+
+
+async function autoConnectSavedBranches() {
+
+    let connections =
+        [];
+
+
+    try {
+
+        connections =
+            getAllSavedConnections();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[Electron] Failed to load saved connections:",
+
+            error
+
+        );
+
+
+        return {
+
+            success:
+                false,
+
+            connected:
+                0,
+
+            failed:
+                0
+
+        };
+
+    }
+
+
+    if (
+        !Array.isArray(
+            connections
+        ) ||
+        connections.length ===
+        0
+    ) {
+
+        console.log(
+
+            "[Electron] No saved branch connections."
+
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            connected:
+                0,
+
+            failed:
+                0
+
+        };
+
+    }
+
+
+    console.log(
+
+        `[Electron] Auto-connecting ${connections.length} saved branch(es)...`
+
+    );
+
+
+    let connected =
+        0;
+
+
+    let failed =
+        0;
+
+
+    for (
+        const connection
+        of connections
+    ) {
+
+        const branchId =
+            Number(
+                connection?.branchId
+            );
+
+
+        if (
+            !Number.isInteger(
+                branchId
+            ) ||
+            branchId <= 0
+        ) {
+
+            failed +=
+                1;
+
+
+            continue;
+
+        }
+
+
+        try {
+
+            const connectPromise =
+                getBranchPool(
+                    branchId,
+                    connection
+                );
+
+            const connectTimeout =
+                new Promise(
+                    (_, reject) => {
+                        setTimeout(
+                            () =>
+                                reject(
+                                    new Error(
+                                        `Auto-connect timeout after 300000ms for branch ${branchId}`
+                                    )
+                                ),
+                            300000
+                        );
+                    }
+                );
+
+            await Promise.race([
+                connectPromise,
+                connectTimeout
+            ]);
+
+
+            connected +=
+                1;
+
+
+            console.log(
+
+                `[Electron] Branch ${branchId} connected automatically.`
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            failed +=
+                1;
+
+
+            console.error(
+
+                `[Electron] Branch ${branchId} auto-connect failed:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+
+    console.log(
+
+        `[Electron] Auto-connect complete. connected=${connected} failed=${failed}`
+
+    );
+
+
+    return {
+
+        success:
+            failed === 0,
+
+        connected,
+
+        failed
+
+    };
+
+}
+
+
+let currentMonthRefreshTimer =
+    null;
+
+
+async function startBackgroundWarmup() {
+
+    console.log(
+        "[Electron] Initial current-month warmup delayed 300000ms to prioritize UI loading."
+    );
+
+    await new Promise(
+        resolve =>
+            setTimeout(
+                resolve,
+                300000
+            )
+    );
+
+    try {
+
+        const result =
+            await refreshCurrentMonthAllBranches({
+
+                maxRetries:
+                    2
+
+            });
+
+        console.log(
+            "[Electron] Initial current-month refresh result:",
+            result
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+            "[Electron] Initial current-month refresh failed:",
+            error
+        );
+
+    }
+
+    if (
+        !currentMonthRefreshTimer
+    ) {
+
+        currentMonthRefreshTimer =
+            setInterval(
+                async () => {
+
+                    try {
+
+                        const result =
+                            await refreshCurrentMonthAllBranches({
+
+                                maxRetries:
+                                    2
+
+                            });
+
+                        console.log(
+                            "[Electron] 10-minute current-month refresh result:",
+                            result
+                        );
+
+                    }
+                    catch (
+                        error
+                    ) {
+
+                        console.error(
+                            "[Electron] 10-minute current-month refresh failed:",
+                            error
+                        );
+
+                    }
+
+                },
+                10 *
+                60 *
+                1000
+            );
+
+        console.log(
+            "[Electron] Current-month auto-refresh scheduled every 10 minutes."
+        );
+
+    }
+
+}
+
+let crmPhoneSyncTimer =
+    null;
+
+let crmPhoneSyncRunning =
+    false;
+
+
+async function runCrmPhoneAutoSync() {
+
+    if (
+        crmPhoneSyncRunning
+    ) {
+        return;
+    }
+
+    crmPhoneSyncRunning =
+        true;
+
+    try {
+
+        const branches =
+            await getAllSavedConnections();
+
+        if (
+            !Array.isArray(
+                branches
+            )
+        ) {
+            return;
+        }
+
+        const results =
+            await Promise.allSettled(
+                branches.map(
+                    async branch => {
+
+                        const branchId =
+                            Number(
+                                branch?.branchId
+                            );
+
+                        if (
+                            !Number.isInteger(
+                                branchId
+                            ) ||
+                            branchId <= 0
+                        ) {
+                            return null;
+                        }
+
+                        try {
+
+                            return await syncCrmPhonesForBranch(
+                                branchId
+                            );
+
+                        } catch (
+                            error
+                        ) {
+
+                            console.warn(
+                                `[CRM Phone AutoSync] Branch ${branchId} unavailable: ${error?.message || error}`
+                            );
+
+                            return null;
+                        }
+                    }
+                )
+            );
+
+        const successful =
+            results
+                .filter(
+                    result =>
+                        result.status ===
+                        "fulfilled" &&
+                        result.value
+                )
+                .map(
+                    result =>
+                        result.value
+                );
+
+        if (
+            successful.length > 0
+        ) {
+
+            console.log(
+                "[CRM Phone AutoSync] Completed:",
+                successful
+            );
+        }
+
+    } catch (
+        error
+    ) {
+
+        console.warn(
+            "[CRM Phone AutoSync] General error:",
+            error?.message || error
+        );
+
+    } finally {
+
+        crmPhoneSyncRunning =
+            false;
+    }
+}
+
+
+function startCrmPhoneAutoSync() {
+
+    if (
+        crmPhoneSyncTimer
+    ) {
+        return;
+    }
+
+    console.log(
+        "[CRM Phone AutoSync] Started. Interval = 120000 ms."
+    );
+
+    setTimeout(
+        () => {
+            void runCrmPhoneAutoSync();
+        },
+        30000
+    );
+
+    crmPhoneSyncTimer =
+        setInterval(
+            () => {
+                void runCrmPhoneAutoSync();
+            },
+            120000
+        );
+}
+
+app.whenReady()
+    .then(
+        async () => {
+
+            Menu.setApplicationMenu(null);
+
+
+            try {
+
+                const cacheState =
+                    preloadPersistentCache();
+
+
+                console.log(
+
+                    "[Electron] Persistent cache preloaded:",
+
+                    cacheState
+
+                );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+
+                    "[Electron] Persistent cache preload failed:",
+
+                    error
+
+                );
+
+            }
+
+
+            registerConnectionIpc();
+
+            registerSalesIpc();
+
+            registerGroupIpc();
+
+            registerCustomersIpc();
+
+            registerDashboardIpc();
+
+            registerAnalyticsHubIpc();
+            registerMasterItemIpc();
+            startCrmPhoneAutoSync();
+console.log(
+                "[Electron] IPC handlers registered."
+            );
+
+
+            createWindow();
+
+
+            setTimeout(
+
+                async () => {
+
+                    try {
+
+                        const connectionResult =
+                            await autoConnectSavedBranches();
+
+
+                        console.log(
+
+                            "[Electron] Auto-connect result:",
+
+                            connectionResult
+
+                        );
+
+
+                        startBackgroundWarmup();
+
+                    }
+                    catch (
+                        error
+                    ) {
+
+                        console.error(
+
+                            "[Electron] Unexpected auto-connect failure:",
+
+                            error
+
+                        );
+
+
+                        startBackgroundWarmup();
+
+                    }
+
+                },
+
+                0
+
+            );
+
+
+            app.on(
+
+                "activate",
+
+                () => {
+
+                    if (
+
+                        BrowserWindow
+                            .getAllWindows()
+                            .length ===
+                        0
+
+                    ) {
+
+                        createWindow();
+
+                    }
+
+                }
+
+            );
+
+        }
+
+    )
+    .catch(
+
+        error => {
+
+            console.error(
+
+                "[Electron] Startup failed:",
+
+                error
+
+            );
+
+
+            app.quit();
+
+        }
+
+    );
+
+
+app.on(
+
+    "before-quit",
+
+    async () => {
+
+        try {
+
+            await flushPersistentCache();
+
+
+            console.log(
+
+                "[Electron] Persistent cache flushed."
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Persistent cache flush failed:",
+
+                error
+
+            );
+
+        }
+
+
+        try {
+
+            closeLocalSalesDatabase();
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Local SQLite cleanup failed:",
+
+                error
+
+            );
+
+        }
+
+
+        try {
+
+            await closeAllConnections();
+
+
+            console.log(
+
+                "[Electron] SQL connections closed."
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                "[Electron] Connection cleanup failed:",
+
+                error
+
+            );
+
+        }
+
+    }
+
+);
+
+
+app.on(
+
+    "window-all-closed",
+
+    () => {
+
+        if (
+            process.platform !==
+            "darwin"
+        ) {
+
+            app.quit();
+
+        }
+
+    }
+
+);
+
+
+==================== electron\preload.js ====================
+
+import {
+    contextBridge,
+    ipcRenderer
+} from "electron";
+
+
+contextBridge.exposeInMainWorld(
+    "pharmaBI",
+    {
+
+        connection: {
+
+            test:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:test",
+                        payload
+                    ),
+
+            save:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:save",
+                        payload
+                    ),
+
+            rename:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:rename",
+                        payload
+                    ),
+
+            getSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:get-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            getAllSaved:
+                () =>
+                    ipcRenderer.invoke(
+                        "connection:get-all-saved"
+                    ),
+
+            deleteSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:delete-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            connectSaved:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:connect-saved",
+                        {
+                            branchId
+                        }
+                    ),
+
+            close:
+                branchId =>
+                    ipcRenderer.invoke(
+                        "connection:close",
+                        {
+                            branchId
+                        }
+                    ),
+
+            active:
+                () =>
+                    ipcRenderer.invoke(
+                        "connection:active"
+                    ),
+
+            syncCrmPhones:
+                payload =>
+                    ipcRenderer.invoke(
+                        "connection:sync-crm-phones",
+                        payload
+                    ),},
+
+
+        sales: {
+
+            get:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:get",
+                        payload
+                    ),
+
+            preview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:preview",
+                        payload
+                    ),
+
+            summary:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:summary",
+                        payload
+                    ),
+
+            deliverySummary:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:delivery-summary",
+                        payload
+                    ),
+
+            reconciliation:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:reconciliation",
+                        payload
+                    ),
+
+            byDay:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:by-day",
+                        payload
+                    ),
+
+            byHour:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:by-hour",
+                        payload
+                    ),
+
+            performance:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:performance",
+                        payload
+                    ),
+
+            cacheClear:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:cache:clear",
+                        payload
+                    ),
+
+            cacheStats:
+                () =>
+                    ipcRenderer.invoke(
+                        "sales:cache:stats"
+                    ),
+
+            cacheCoverage:
+                payload =>
+                    ipcRenderer.invoke(
+                        "sales:cache:coverage",
+                        payload
+                    )
+
+        },
+
+
+        masterItem: {
+
+            search:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:search",
+                        payload
+                    ),
+
+            resolve:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:resolve",
+                        payload
+                    ),
+
+            get:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:get",
+                        payload
+                    ),
+
+            searchExisting:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:search-existing",
+                        payload
+                    ),
+
+            createManual:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:create-manual",
+                        payload
+                    ),
+
+            reviewQueue:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:reviewQueue",
+                        payload
+                    ),
+
+            reviewSearch:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:reviewSearch",
+                        payload
+                    ),
+
+            reviewGroup:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:reviewGroup",
+                        payload
+                    ),
+
+            decide:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:decide",
+                        payload
+                    ),
+
+            decideGroup:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:decide-group",
+                        payload
+                    ),
+
+            createNew:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:create-new",
+                        payload
+                    ),
+
+            createNewGroup:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:create-new-group",
+                        payload
+                    ),
+
+            prices:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:prices",
+                        payload
+                    ),
+
+            managementList:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:management-list",
+                        payload
+                    ),
+
+            managementGet:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:management-get",
+                        payload
+                    ),
+
+            managementUpdateName:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:management-update-name",
+                        payload
+                    ),
+
+            managementRemoveMember:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:management-remove-member",
+                        payload
+                    ),
+
+            managementCancel:
+                payload =>
+                    ipcRenderer.invoke(
+                        "master-item:management-cancel",
+                        payload
+                    ),
+
+            stats:
+                () =>
+                    ipcRenderer.invoke(
+                        "master-item:stats"
+                    )
+
+        },
+
+
+        dashboard: {
+
+            get:
+                payload =>
+                    ipcRenderer.invoke(
+                        "dashboard:get",
+                        payload
+                    ),
+
+            overview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "dashboard:overview",
+                        payload
+                    )
+
+        },
+
+
+        group: {
+
+            salesOverview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "group:sales-overview",
+                        payload
+                    )
+
+        },
+
+
+        customers: {
+
+            rfm:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:rfm",
+                        payload
+                    ),
+
+            rfmV2:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:rfm-v2",
+                        payload
+                    ),
+
+            customer360:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:360",
+                        payload
+                    ),
+
+            searchCustomer360:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:360-search",
+                        payload
+                    ),
+
+            intelligence:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:intelligence",
+                        payload
+                    ),
+
+            retention:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:retention",
+                        payload
+                    ),
+
+            inactivity:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:inactivity",
+                        payload
+                    ),
+
+            clv:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:clv",
+                        payload
+                    ),
+
+            cohort:
+                payload =>
+                    ipcRenderer.invoke(
+                        "customers:cohort",
+                        payload
+                    )
+
+        },
+
+
+        analytics: {
+
+            module:
+                payload =>
+                    ipcRenderer.invoke(
+                        "analytics:module",
+                        payload
+                    )
+
+        },
+
+
+        products: {
+
+            overview:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:overview",
+                        payload
+                    ),
+
+            top:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:top",
+                        payload
+                    ),
+
+            profitability:
+                payload =>
+                    ipcRenderer.invoke(
+                        "products:profitability",
+                        payload
+                    )
+
+        }
+
+    }
+);
+
+
+
+
+==================== electron\localdb\localSalesDb.js ====================
+
+import Database from "better-sqlite3";
+import path from "node:path";
+import {
+    app
+} from "electron";
+
+
+let database =
+    null;
+
+
+/*
+ * =========================================================
+ * DATABASE PATH
+ * =========================================================
+ */
+
+function getDatabasePath() {
+
+    return path.join(
+
+        app.getPath(
+            "userData"
+        ),
+
+        "pharmabi-local.db"
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * OPEN DATABASE
+ * =========================================================
+ */
+
+function openDatabase() {
+
+    if (
+        database
+    ) {
+
+        return database;
+
+    }
+
+
+    database =
+        new Database(
+            getDatabasePath()
+        );
+
+
+    database.pragma(
+        "journal_mode = WAL"
+    );
+
+
+    database.pragma(
+        "synchronous = NORMAL"
+    );
+
+
+    database.pragma(
+        "foreign_keys = ON"
+    );
+
+
+    database.pragma(
+        "busy_timeout = 10000"
+    );
+
+
+    createSchema();
+
+
+    console.log(
+
+        `[localSalesDb] OPEN ${getDatabasePath()}`
+
+    );
+
+
+    return database;
+
+}
+
+
+/*
+ * =========================================================
+ * SCHEMA
+ * =========================================================
+ */
+
+function createSchema() {
+
+    const db =
+        database;
+
+
+    db.exec(`
+
+        CREATE TABLE IF NOT EXISTS sales_history (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            branch_id INTEGER NOT NULL,
+
+            ticket_id TEXT NOT NULL,
+
+            line_id TEXT NOT NULL,
+
+            item_id TEXT,
+
+            item_name TEXT,
+
+            customer_id TEXT,
+
+            customer_name TEXT,
+
+            date TEXT,
+
+            sales_return REAL DEFAULT 0,
+
+            transaction_type TEXT,
+
+            ticket_total REAL DEFAULT 0,
+
+            packs REAL DEFAULT 0,
+
+            units REAL DEFAULT 0,
+
+            parts REAL DEFAULT 1,
+
+            base_units REAL DEFAULT 0,
+
+            bonus REAL DEFAULT 0,
+
+            sales_price REAL DEFAULT 0,
+
+            unit_price REAL DEFAULT 0,
+
+            gross_line_value REAL DEFAULT 0,
+
+            discount REAL DEFAULT 0,
+
+            extra_discount REAL DEFAULT 0,
+
+            net_line_value REAL DEFAULT 0,
+
+            cost_price REAL DEFAULT 0,
+
+            unit_cost REAL DEFAULT 0,
+
+            line_cost REAL DEFAULT 0,
+
+            purchase_cost REAL DEFAULT 0,
+
+            purchase_unit_cost REAL DEFAULT 0,
+
+            purchase_date TEXT,
+
+            purchase_invoice_id TEXT,
+
+            purchase_invoice_code TEXT,
+
+            purchase_vendor_id TEXT,
+
+            purchase_parts REAL DEFAULT 1,
+
+            source_pos_item_cost REAL DEFAULT 0,
+
+            is_content INTEGER DEFAULT 0,
+
+            store_id TEXT,
+
+            sales_rep_id TEXT,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (
+
+                branch_id,
+
+                line_id
+
+            )
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_date
+
+        ON sales_history (
+
+            branch_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_ticket
+
+        ON sales_history (
+
+            branch_id,
+
+            ticket_id
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_item_date
+
+        ON sales_history (
+
+            branch_id,
+
+            item_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_customer_date
+
+        ON sales_history (
+
+            branch_id,
+
+            customer_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_seller_date
+
+        ON sales_history (
+
+            branch_id,
+
+            sales_rep_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_date
+
+        ON sales_history (
+
+            date
+
+        );
+
+
+        CREATE TABLE IF NOT EXISTS sales_sync_state (
+
+            branch_id INTEGER PRIMARY KEY,
+
+            oldest_date TEXT,
+
+            newest_date TEXT,
+
+            last_sync_started_at TEXT,
+
+            last_sync_finished_at TEXT,
+
+            last_sync_status TEXT,
+
+            last_sync_rows INTEGER DEFAULT 0,
+
+            total_rows INTEGER DEFAULT 0,
+
+            error_message TEXT
+
+        );
+
+    `);
+
+    const salesHistoryColumns =
+        db.prepare(
+            "PRAGMA table_info(sales_history)"
+        ).all();
+
+    if (
+        !salesHistoryColumns.some(
+            column => column.name === "pin_number"
+        )
+    ) {
+
+        db.exec(
+            "ALTER TABLE sales_history ADD COLUMN pin_number TEXT"
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * STATEMENTS
+ * =========================================================
+ */
+
+function getStatements() {
+
+    const db =
+        openDatabase();
+
+
+    return {
+
+        insertOrReplace:
+            db.prepare(`
+
+                INSERT INTO sales_history (
+
+                    branch_id,
+                    ticket_id,
+                    line_id,
+                    item_id,
+                    item_name,
+                    customer_id,
+                    customer_name,
+                    date,
+                    sales_return,
+                    transaction_type,
+                    ticket_total,
+                    packs,
+                    units,
+                    parts,
+                    base_units,
+                    bonus,
+                    sales_price,
+                    unit_price,
+                    gross_line_value,
+                    discount,
+                    extra_discount,
+                    net_line_value,
+                    cost_price,
+                    unit_cost,
+                    line_cost,
+                    purchase_cost,
+                    purchase_unit_cost,
+                    purchase_date,
+                    purchase_invoice_id,
+                    purchase_invoice_code,
+                    purchase_vendor_id,
+                    purchase_parts,
+                    source_pos_item_cost,
+                    is_content,
+                    store_id,
+                    sales_rep_id,
+                    pin_number,
+                    updated_at
+
+                )
+
+                VALUES (
+
+                    @branch_id,
+                    @ticket_id,
+                    @line_id,
+                    @item_id,
+                    @item_name,
+                    @customer_id,
+                    @customer_name,
+                    @date,
+                    @sales_return,
+                    @transaction_type,
+                    @ticket_total,
+                    @packs,
+                    @units,
+                    @parts,
+                    @base_units,
+                    @bonus,
+                    @sales_price,
+                    @unit_price,
+                    @gross_line_value,
+                    @discount,
+                    @extra_discount,
+                    @net_line_value,
+                    @cost_price,
+                    @unit_cost,
+                    @line_cost,
+                    @purchase_cost,
+                    @purchase_unit_cost,
+                    @purchase_date,
+                    @purchase_invoice_id,
+                    @purchase_invoice_code,
+                    @purchase_vendor_id,
+                    @purchase_parts,
+                    @source_pos_item_cost,
+                    @is_content,
+                    @store_id,
+                    @sales_rep_id,
+                    @pin_number,
+                    CURRENT_TIMESTAMP
+
+                )
+
+                ON CONFLICT (
+
+                    branch_id,
+                    line_id
+
+                )
+
+                DO UPDATE SET
+
+                    ticket_id =
+                        excluded.ticket_id,
+
+                    item_id =
+                        excluded.item_id,
+
+                    item_name =
+                        excluded.item_name,
+
+                    customer_id =
+                        excluded.customer_id,
+
+                    customer_name =
+                        excluded.customer_name,
+
+                    date =
+                        excluded.date,
+
+                    sales_return =
+                        excluded.sales_return,
+
+                    transaction_type =
+                        excluded.transaction_type,
+
+                    ticket_total =
+                        excluded.ticket_total,
+
+                    packs =
+                        excluded.packs,
+
+                    units =
+                        excluded.units,
+
+                    parts =
+                        excluded.parts,
+
+                    base_units =
+                        excluded.base_units,
+
+                    bonus =
+                        excluded.bonus,
+
+                    sales_price =
+                        excluded.sales_price,
+
+                    unit_price =
+                        excluded.unit_price,
+
+                    gross_line_value =
+                        excluded.gross_line_value,
+
+                    discount =
+                        excluded.discount,
+
+                    extra_discount =
+                        excluded.extra_discount,
+
+                    net_line_value =
+                        excluded.net_line_value,
+
+                    cost_price =
+                        excluded.cost_price,
+
+                    unit_cost =
+                        excluded.unit_cost,
+
+                    line_cost =
+                        excluded.line_cost,
+
+                    purchase_cost =
+                        excluded.purchase_cost,
+
+                    purchase_unit_cost =
+                        excluded.purchase_unit_cost,
+
+                    purchase_date =
+                        excluded.purchase_date,
+
+                    purchase_invoice_id =
+                        excluded.purchase_invoice_id,
+
+                    purchase_invoice_code =
+                        excluded.purchase_invoice_code,
+
+                    purchase_vendor_id =
+                        excluded.purchase_vendor_id,
+
+                    purchase_parts =
+                        excluded.purchase_parts,
+
+                    source_pos_item_cost =
+                        excluded.source_pos_item_cost,
+
+                    is_content =
+                        excluded.is_content,
+
+                    store_id =
+                        excluded.store_id,
+
+                    sales_rep_id =
+                        excluded.sales_rep_id,
+
+                    pin_number =
+                        excluded.pin_number,
+
+                    updated_at =
+                        CURRENT_TIMESTAMP
+
+            `),
+
+
+        getSalesRange:
+            db.prepare(`
+
+                SELECT
+
+                    branch_id,
+                    ticket_id,
+                    line_id,
+                    item_id,
+                    item_name,
+                    customer_id,
+                    customer_name,
+                    date,
+                    sales_return,
+                    transaction_type,
+                    ticket_total,
+                    packs,
+                    units,
+                    parts,
+                    base_units,
+                    bonus,
+                    sales_price,
+                    unit_price,
+                    gross_line_value,
+                    discount,
+                    extra_discount,
+                    net_line_value,
+                    cost_price,
+                    unit_cost,
+                    line_cost,
+                    purchase_cost,
+                    purchase_unit_cost,
+                    purchase_date,
+                    purchase_invoice_id,
+                    purchase_invoice_code,
+                    purchase_vendor_id,
+                    purchase_parts,
+                    source_pos_item_cost,
+                    is_content,
+                    store_id,
+                    sales_rep_id
+                    pin_number
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                AND
+
+                    date >= ?
+
+                AND
+
+                    date < ?
+
+                ORDER BY
+
+                    date ASC,
+
+                    ticket_id ASC,
+
+                    line_id ASC
+
+            `),
+
+
+        getMonthStats:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                AND
+
+                    date >= ?
+
+                AND
+
+                    date < ?
+
+            `),
+
+
+        getDateRange:
+            db.prepare(`
+
+                SELECT
+
+                    MIN(date) AS oldest_date,
+
+                    MAX(date) AS newest_date,
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getBranchCount:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getMonthCount:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(
+                        DISTINCT
+                        substr(
+                            date,
+                            1,
+                            7
+                        )
+                    ) AS total_months
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getSyncState:
+            db.prepare(`
+
+                SELECT
+
+                    branch_id,
+                    oldest_date,
+                    newest_date,
+                    last_sync_started_at,
+                    last_sync_finished_at,
+                    last_sync_status,
+                    last_sync_rows,
+                    total_rows,
+                    error_message
+
+                FROM sales_sync_state
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        saveSyncState:
+            db.prepare(`
+
+                INSERT INTO sales_sync_state (
+
+                    branch_id,
+                    oldest_date,
+                    newest_date,
+                    last_sync_started_at,
+                    last_sync_finished_at,
+                    last_sync_status,
+                    last_sync_rows,
+                    total_rows,
+                    error_message
+
+                )
+
+                VALUES (
+
+                    @branch_id,
+                    @oldest_date,
+                    @newest_date,
+                    @last_sync_started_at,
+                    @last_sync_finished_at,
+                    @last_sync_status,
+                    @last_sync_rows,
+                    @total_rows,
+                    @error_message
+
+                )
+
+                ON CONFLICT (
+
+                    branch_id
+
+                )
+
+                DO UPDATE SET
+
+                    oldest_date =
+                        excluded.oldest_date,
+
+                    newest_date =
+                        excluded.newest_date,
+
+                    last_sync_started_at =
+                        excluded.last_sync_started_at,
+
+                    last_sync_finished_at =
+                        excluded.last_sync_finished_at,
+
+                    last_sync_status =
+                        excluded.last_sync_status,
+
+                    last_sync_rows =
+                        excluded.last_sync_rows,
+
+                    total_rows =
+                        excluded.total_rows,
+
+                    error_message =
+                        excluded.error_message
+
+            `)
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE HELPERS
+ * =========================================================
+ */
+
+function getExclusiveDate(
+
+    value
+
+) {
+
+    const normalized =
+        String(
+            value ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            normalized
+        )
+    ) {
+
+        throw new Error(
+            "Invalid date. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const [
+        year,
+        month,
+        day
+    ] =
+        normalized
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const next =
+        new Date(
+
+            Date.UTC(
+
+                year,
+                month - 1,
+                day + 1
+
+            )
+
+        );
+
+
+    return [
+
+        next.getUTCFullYear(),
+
+        String(
+            next.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        String(
+            next.getUTCDate()
+        ).padStart(
+            2,
+            "0"
+        )
+
+    ].join(
+        "-"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * NORMALIZATION
+ * =========================================================
+ */
+
+function toNumber(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function toBooleanInteger(
+    value
+) {
+
+    return (
+
+        value === true ||
+        value === 1 ||
+        value === "1" ||
+        value === "true"
+
+    )
+        ? 1
+        : 0;
+
+}
+
+
+function toNullableString(
+    value
+) {
+
+    if (
+
+        value === null ||
+        value === undefined ||
+        value === ""
+
+    ) {
+
+        return null;
+
+    }
+
+
+    return String(
+        value
+    );
+
+}
+
+
+function normalizeRow(
+    branchId,
+    row
+) {
+
+    return {
+
+        branch_id:
+            Number(
+                branchId
+            ),
+
+        ticket_id:
+            String(
+                row?.ticketId ??
+                ""
+            ),
+
+        line_id:
+            String(
+                row?.lineId ??
+                ""
+            ),
+
+        item_id:
+            toNullableString(
+                row?.itemId
+            ),
+
+        item_name:
+            toNullableString(
+                row?.itemName
+            ),
+
+        customer_id:
+            toNullableString(
+                row?.customerId
+            ),
+
+        customer_name:
+            toNullableString(
+                row?.customerName
+            ),
+
+        date:
+            toNullableString(
+                row?.date
+            ),
+
+        sales_return:
+            toNumber(
+                row?.salesReturn
+            ),
+
+        transaction_type:
+            toNullableString(
+                row?.transactionType
+            ),
+
+        ticket_total:
+            toNumber(
+                row?.ticketTotal
+            ),
+
+        packs:
+            toNumber(
+                row?.packs
+            ),
+
+        units:
+            toNumber(
+                row?.units
+            ),
+
+        parts:
+            toNumber(
+                row?.parts
+            ) || 1,
+
+        base_units:
+            toNumber(
+                row?.baseUnits
+            ),
+
+        bonus:
+            toNumber(
+                row?.bonus
+            ),
+
+        sales_price:
+            toNumber(
+                row?.salesPrice
+            ),
+
+        unit_price:
+            toNumber(
+                row?.unitPrice
+            ),
+
+        gross_line_value:
+            toNumber(
+                row?.grossLineValue
+            ),
+
+        discount:
+            toNumber(
+                row?.discount
+            ),
+
+        extra_discount:
+            toNumber(
+                row?.extraDiscount
+            ),
+
+        net_line_value:
+            toNumber(
+                row?.netLineValue
+            ),
+
+        cost_price:
+            toNumber(
+                row?.costPrice
+            ),
+
+        unit_cost:
+            toNumber(
+                row?.unitCost
+            ),
+
+        line_cost:
+            toNumber(
+                row?.lineCost
+            ),
+
+        purchase_cost:
+            toNumber(
+                row?.purchaseCost
+            ),
+
+        purchase_unit_cost:
+            toNumber(
+                row?.purchaseUnitCost
+            ),
+
+        purchase_date:
+            toNullableString(
+                row?.purchaseDate
+            ),
+
+        purchase_invoice_id:
+            toNullableString(
+                row?.purchaseInvoiceId
+            ),
+
+        purchase_invoice_code:
+            toNullableString(
+                row?.purchaseInvoiceCode
+            ),
+
+        purchase_vendor_id:
+            toNullableString(
+                row?.purchaseVendorId
+            ),
+
+        purchase_parts:
+            toNumber(
+                row?.purchaseParts
+            ) || 1,
+
+        source_pos_item_cost:
+            toNumber(
+                row?.sourcePosItemCost
+            ),
+
+        is_content:
+            toBooleanInteger(
+                row?.isContent
+            ),
+
+        store_id:
+            toNullableString(
+                row?.storeId
+            ),
+
+        sales_rep_id:
+            toNullableString(
+                row?.salesRepId
+            ),
+
+        pin_number:
+            toNullableString(
+                row?.pinNumber
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SAVE ROWS
+ * =========================================================
+ */
+
+export function saveSalesRows(
+    {
+        branchId,
+        rows,
+        batchSize = 5000
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    if (
+        !Array.isArray(
+            rows
+        ) ||
+        rows.length === 0
+    ) {
+
+        return {
+
+            branchId:
+                id,
+
+            processed:
+                0
+
+        };
+
+    }
+
+
+    const db =
+        openDatabase();
+
+
+    const statements =
+        getStatements();
+
+
+    const normalizedBatchSize =
+        Number.isInteger(
+            Number(
+                batchSize
+            )
+        ) &&
+        Number(
+            batchSize
+        ) > 0
+
+            ? Math.min(
+                Number(
+                    batchSize
+                ),
+                10000
+            )
+
+            : 5000;
+
+
+    let processed =
+        0;
+
+
+    const insertBatch =
+        db.transaction(
+
+            batch => {
+
+                for (
+                    const row
+                    of batch
+                ) {
+
+                    if (
+                        row?.lineId ===
+                        null ||
+                        row?.lineId ===
+                        undefined ||
+                        String(
+                            row.lineId
+                        ) ===
+                        ""
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    statements
+                        .insertOrReplace
+                        .run(
+
+                            normalizeRow(
+                                id,
+                                row
+                            )
+
+                        );
+
+
+                    processed +=
+                        1;
+
+                }
+
+            }
+
+        );
+
+
+    for (
+        let start = 0;
+
+        start < rows.length;
+
+        start += normalizedBatchSize
+
+    ) {
+
+        insertBatch(
+
+            rows.slice(
+
+                start,
+
+                start +
+                normalizedBatchSize
+
+            )
+
+        );
+
+    }
+
+
+    return {
+
+        branchId:
+            id,
+
+        processed
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * GET SALES RANGE
+ * =========================================================
+ */
+
+export function getSalesRows(
+    {
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    const from =
+        String(
+            fromDate ||
+            ""
+        ).trim();
+
+
+    const to =
+        String(
+            toDate ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            from
+        )
+    ) {
+
+        throw new Error(
+            "Invalid fromDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            to
+        )
+    ) {
+
+        throw new Error(
+            "Invalid toDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const toExclusive =
+        getExclusiveDate(
+            to
+        );
+
+
+    const startedAt =
+        Date.now();
+
+
+    const rows =
+        getStatements()
+            .getSalesRange
+            .all(
+
+                id,
+
+                `${from}T00:00:00.000Z`,
+
+                `${toExclusive}T00:00:00.000Z`
+
+            );
+
+
+    const elapsed =
+        Date.now() -
+        startedAt;
+
+
+    console.log(
+
+        `[localSalesDb] READ branch=${id} range=${from}|${to} rows=${rows.length} in ${elapsed} ms`
+
+    );
+
+
+    return rows;
+
+}
+
+
+/*
+ * =========================================================
+ * MONTH EXISTS
+ * =========================================================
+ */
+
+export function hasSalesMonth(
+    {
+        branchId,
+        month
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    const normalizedMonth =
+        String(
+            month ||
+            ""
+        );
+
+
+    if (
+        !/^\d{4}-\d{2}$/.test(
+            normalizedMonth
+        )
+    ) {
+
+        return false;
+
+    }
+
+
+    const fromDate =
+        `${normalizedMonth}-01`;
+
+
+    const [
+        year,
+        monthNumber
+    ] =
+        normalizedMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const nextMonth =
+        new Date(
+
+            Date.UTC(
+
+                year,
+
+                monthNumber,
+
+                1
+
+            )
+
+        );
+
+
+    const toDate = [
+
+        nextMonth.getUTCFullYear(),
+
+        String(
+            nextMonth.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        "01"
+
+    ].join(
+        "-"
+    );
+
+
+    const result =
+        getStatements()
+            .getMonthStats
+            .get(
+
+                id,
+
+                fromDate,
+
+                toDate
+
+            );
+
+
+    return (
+        Number(
+            result?.total_rows
+        ) || 0
+    ) > 0;
+
+}
+
+
+/*
+ * =========================================================
+ * SAVE MONTH
+ * =========================================================
+ */
+
+export function saveSalesMonth(
+    {
+        branchId,
+        month,
+        rows
+    }
+) {
+
+    const result =
+        saveSalesRows({
+
+            branchId,
+
+            rows
+
+        });
+
+
+    updateSalesSyncState({
+
+        branchId,
+
+        status:
+            "READY",
+
+        rows:
+            result.processed
+
+    });
+
+
+    console.log(
+
+        `[localSalesDb] SAVED branch=${branchId} month=${month} rows=${result.processed}`
+
+    );
+
+
+    return result;
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE
+ * =========================================================
+ */
+
+export function getSalesDateRange(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getDateRange
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return {
+
+        oldest_date:
+            result?.oldest_date ||
+            null,
+
+        newest_date:
+            result?.newest_date ||
+            null,
+
+        total_rows:
+            Number(
+                result?.total_rows
+            ) || 0
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * COUNTS
+ * =========================================================
+ */
+
+export function getSalesRowCount(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getBranchCount
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return Number(
+        result?.total_rows
+    ) || 0;
+
+}
+
+
+export function getSalesMonthCount(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getMonthCount
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return Number(
+        result?.total_months
+    ) || 0;
+
+}
+
+
+/*
+ * =========================================================
+ * SYNC STATE
+ * =========================================================
+ */
+
+export function updateSalesSyncState(
+    {
+        branchId,
+        status,
+        rows = 0,
+        errorMessage = null
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    const statements =
+        getStatements();
+
+
+    const range =
+        statements
+            .getDateRange
+            .get(
+                id
+            );
+
+
+    const existing =
+        statements
+            .getSyncState
+            .get(
+                id
+            );
+
+
+    const now =
+        new Date()
+            .toISOString();
+
+
+    const startedAt =
+        status === "RUNNING"
+
+            ? now
+
+            : (
+                existing?.last_sync_started_at ||
+                null
+            );
+
+
+    const finishedAt =
+        status === "READY" ||
+        status === "ERROR"
+
+            ? now
+
+            : (
+                existing?.last_sync_finished_at ||
+                null
+            );
+
+
+    statements
+        .saveSyncState
+        .run({
+
+            branch_id:
+                id,
+
+            oldest_date:
+                range?.oldest_date ||
+                null,
+
+            newest_date:
+                range?.newest_date ||
+                null,
+
+            last_sync_started_at:
+                startedAt,
+
+            last_sync_finished_at:
+                finishedAt,
+
+            last_sync_status:
+                String(
+                    status ||
+                    "UNKNOWN"
+                ),
+
+            last_sync_rows:
+                Number(
+                    rows
+                ) || 0,
+
+            total_rows:
+                Number(
+                    range?.total_rows
+                ) || 0,
+
+            error_message:
+                errorMessage
+                ? String(
+                    errorMessage
+                )
+                : null
+
+        });
+
+
+    return statements
+        .getSyncState
+        .get(
+            id
+        );
+
+}
+
+
+/*
+ * =========================================================
+ * GET SYNC STATE
+ * =========================================================
+ */
+
+export function getSalesSyncState(
+    branchId
+) {
+
+    return (
+
+        getStatements()
+            .getSyncState
+            .get(
+                Number(
+                    branchId
+                )
+            ) ||
+        null
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * GLOBAL STATS
+ * =========================================================
+ */
+
+export function getLocalSalesStats() {
+
+    const db =
+        openDatabase();
+
+
+    const result =
+        db.prepare(`
+
+            SELECT
+
+                COUNT(*) AS total_rows,
+
+                COUNT(
+                    DISTINCT branch_id
+                ) AS branches,
+
+                COUNT(
+                    DISTINCT substr(
+                        date,
+                        1,
+                        7
+                    )
+                ) AS months
+
+            FROM sales_history
+
+        `)
+        .get();
+
+
+    return {
+
+        databasePath:
+            getDatabasePath(),
+
+        totalRows:
+            Number(
+                result?.total_rows
+            ) || 0,
+
+        branches:
+            Number(
+                result?.branches
+            ) || 0,
+
+        months:
+            Number(
+                result?.months
+            ) || 0
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * DATABASE ACCESS
+ * =========================================================
+ */
+
+export function getLocalSalesDatabase() {
+
+    return openDatabase();
+
+}
+
+
+/*
+ * =========================================================
+ * CLOSE
+ * =========================================================
+ */
+
+export function closeLocalSalesDatabase() {
+
+    if (
+        !database
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        database.close();
+
+        console.log(
+            "[localSalesDb] CLOSED"
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[localSalesDb] close failed:",
+
+            error
+
+        );
+
+    }
+
+
+    database =
+        null;
+
+}
+
+
+/*
+ * =========================================================
+ * DEFAULT
+ * =========================================================
+ */
+
+export default {
+
+    getLocalSalesDatabase,
+
+    getSalesRows,
+
+    saveSalesRows,
+
+    saveSalesMonth,
+
+    hasSalesMonth,
+
+    getSalesDateRange,
+
+    getSalesRowCount,
+
+    getSalesMonthCount,
+
+    updateSalesSyncState,
+
+    getSalesSyncState,
+
+    getLocalSalesStats,
+
+    closeLocalSalesDatabase
+
+};
+
+
+
+==================== src\app\App.jsx ====================
+
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+import {
+    NAVIGATION
+} from "./navigation.js";
+
+
+import {
+    useBranchState
+} from "../hooks/useBranchState.js";
+
+
+import BranchEditor
+    from "./BranchEditor.jsx";
+
+
+import GroupOverview
+    from "./GroupOverview.jsx";
+
+
+import BranchOverview
+    from "./BranchOverview.jsx";
+
+
+import DashboardOverview
+    from "../components/DashboardOverview.jsx";
+
+
+import BranchConnections
+    from "./BranchConnections.jsx";
+
+
+import CacheStatus
+    from "./CacheStatus.jsx";
+
+
+import SalesPage
+    from "./SalesPage.jsx";
+
+
+import BranchAnalyticsRouter
+    from "./BranchAnalyticsRouter.jsx";
+
+import MasterItemPage
+    from "../components/MasterItemPage.jsx";
+
+
+import {
+    buildTodayRange,
+    isValidSavedBranch,
+    normalizeBranchName,
+    sortBranches,
+    buildConnectionPayload,
+    buildEmptyConnection,
+    formatMoney,
+    formatNumber,
+    formatPercent,
+    isBranchActive
+} from "./appHelpers.js";
+function App() {
+
+    const initialRange =
+        useMemo(
+
+            () =>
+                buildTodayRange(),
+
+            []
+
+        );
+
+
+
+    const [
+        activeSection,
+        setActiveSection
+    ] = useState("system");
+
+
+    const [
+        activeModule,
+        setActiveModule
+    ] = useState("connections");
+
+
+    const [
+        openMenu,
+        setOpenMenu
+    ] = useState(null);
+
+
+    const [
+        fromDate,
+        setFromDate
+    ] = useState(initialRange.fromDate);
+
+
+    const [
+        toDate,
+        setToDate
+    ] = useState(initialRange.toDate);
+
+
+    const [
+        groupOverview,
+        setGroupOverview
+    ] = useState(null);
+
+
+    const [
+        groupLoading,
+        setGroupLoading
+    ] = useState(false);
+
+
+    const [
+        groupError,
+        setGroupError
+    ] = useState("");
+
+
+    const {
+        savedBranches,
+        selectedBranchId,
+        setSelectedBranchId,
+        selectedConnection,
+        setSelectedConnection,
+        branchOverview,
+        setBranchOverview,
+        branchOverviewLoading,
+        branchOverviewError,
+        setBranchOverviewError,
+        loadingBranches,
+        loadingBranch,
+        setLoadingBranch,
+        connectionStatus,
+        setConnectionStatus,
+        systemConnection,
+        setSystemConnection,
+        branchEditor,
+        branchEditorBusy,
+        branchEditorMessage,
+        activeConnections,
+        refreshActiveConnections,
+        loadSavedBranches,
+        selectBranch,
+        openAddBranchEditor,
+        openEditBranchEditor,
+        closeBranchEditor,
+        updateBranchEditorField,
+        updateBranchEditorName,
+        updateBranchEditorId,
+        saveBranchFromEditor,
+        deleteBranch,
+        reconnectBranch,
+        closeBranch,
+        testCurrentConnection
+    } = useBranchState({
+        initialRange,
+        fromDate,
+        toDate,
+        activeSection,
+        activeModule
+    });
+
+
+
+ /*
+     * =========================================================
+     * NAVIGATION
+     * =========================================================
+     */
+
+    function toggleMenu(
+        section
+    ) {
+
+        setOpenMenu(
+
+            current =>
+
+                current ===
+                section.id
+
+                    ? null
+                    : section.id
+
+        );
+
+    }
+
+
+    function selectModule(
+        section,
+        module
+    ) {
+
+        const resolvedSectionId =
+            module?.sectionId ||
+            section.id;
+
+
+        setActiveSection(
+            resolvedSectionId
+        );
+
+        setActiveModule(
+            module.id
+        );
+
+        setOpenMenu(
+            null
+        );
+
+        if (
+            resolvedSectionId ===
+            "dashboard"
+        ) {
+
+            setBranchOverviewError(
+                ""
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * SALES VIEW
+     * =========================================================
+     */
+
+    function renderSales() {
+
+        return (
+
+            <SalesPage
+                selectedBranchId={selectedBranchId}
+                selectedConnection={selectedConnection}
+                fromDate={fromDate}
+                toDate={toDate}
+                activeModule={activeModule}
+            />
+
+        );
+
+    }
+
+
+    function renderDashboardOverview() {
+
+        return (
+
+            <DashboardOverview
+                selectedBranchId={selectedBranchId}
+                selectedConnection={selectedConnection}
+                fromDate={fromDate}
+                toDate={toDate}
+                selectedBranchName={selectedBranchName}
+            />
+
+        );
+
+    }
+
+
+ /*
+     * =========================================================
+     * ACTIVE DEFINITIONS
+     * =========================================================
+     */
+
+    const activeSectionDefinition =
+        NAVIGATION.find(
+
+            section =>
+
+                section.id ===
+                activeSection
+
+        ) ||
+
+        NAVIGATION.find(
+
+            section =>
+
+                section.children?.some(
+
+                    module =>
+
+                        (module.sectionId || section.id) ===
+                        activeSection
+
+                )
+
+        ) ||
+
+        NAVIGATION[0];
+
+
+    const activeModuleDefinition =
+        NAVIGATION
+            .flatMap(
+                section =>
+                    section.children || []
+            )
+            .find(
+                module =>
+                    module.id ===
+                    activeModule
+            ) ||
+
+        activeSectionDefinition
+            ?.children
+            ?.[0] ||
+
+        null;
+
+
+    const selectedBranchDefinition =
+        selectedBranchId ===
+        "all"
+
+            ? null
+
+            : savedBranches.find(
+
+                branch =>
+
+                    Number(
+                        branch.branchId
+                    ) ===
+                    Number(
+                        selectedBranchId
+                    )
+
+            );
+
+
+    const selectedBranchName =
+        selectedBranchDefinition
+
+            ? normalizeBranchName(
+                selectedBranchDefinition
+            )
+
+            : "ظƒظ„ ط§ظ„ظپط±ظˆط¹";
+
+
+    /*
+     * =========================================================
+     * GROUP OVERVIEW
+     * =========================================================
+     */
+
+
+
+
+    /*
+     * =========================================================
+     * BRANCH BUSINESS OVERVIEW
+     * =========================================================
+     */
+
+
+
+
+    /*
+     * =========================================================
+     * BRANCH CONNECTIONS
+     * =========================================================
+     */
+
+
+
+
+    /*
+     * =========================================================
+     * CACHE STATUS
+     * =========================================================
+     */
+
+
+
+
+    /*
+     * =========================================================
+     * SALES
+     * =========================================================
+     */
+
+
+    /*
+     * =========================================================
+     * BRANCH EDITOR MODAL
+     * =========================================================
+     */
+
+
+
+    /*
+     * =========================================================
+     * RENDER
+     * =========================================================
+     */
+
+    return (
+
+        <main className="app-shell">
+
+            <header className="top-shell">
+
+                <div className="top-row">
+
+                    <div className="brand-block">
+
+                        <div className="brand-mark">
+                            PB
+                        </div>
+
+
+                        <div>
+
+                            <div className="brand-name">
+                                PharmaBI
+                            </div>
+
+
+                            <div className="brand-caption">
+                                ط°ظƒط§ط، PharmaFly
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <div className="global-controls">
+
+                        <label className="global-control">
+
+                            <span>
+                                ط§ظ„ظپط±ط¹
+                            </span>
+
+
+                            <select
+
+                                value={
+                                    selectedBranchId
+                                }
+
+                                onChange={event =>
+                                    selectBranch(
+                                        event.target.value
+                                    )
+                                }
+
+                                disabled={
+
+                                    loadingBranches ||
+                                    loadingBranch
+
+                                }
+
+                            >
+
+                                <option value="all">
+                                    ظƒظ„ ط§ظ„ظپط±ظˆط¹
+                                </option>
+
+
+                                {
+                                    savedBranches.map(
+
+                                        branch => (
+
+                                            <option
+
+                                                key={
+                                                    branch.branchId
+                                                }
+
+                                                value={
+                                                    branch.branchId
+                                                }
+
+                                            >
+
+                                                {
+                                                    normalizeBranchName(
+                                                        branch
+                                                    )
+                                                }
+
+                                            </option>
+
+                                        )
+
+                                    )
+
+                                }
+
+                            </select>
+
+                        </label>
+
+
+                        <label className="global-control">
+
+                            <span>
+                                ظ…ظ†
+                            </span>
+
+
+                            <input
+
+                                type="date"
+
+                                value={
+                                    fromDate
+                                }
+
+                                onChange={event =>
+                                    setFromDate(
+                                        event.target.value
+                                    )
+                                }
+
+                            />
+
+                        </label>
+
+
+                        <label className="global-control">
+
+                            <span>
+                                ط¥ظ„ظ‰
+                            </span>
+
+
+                            <input
+
+                                type="date"
+
+                                value={
+                                    toDate
+                                }
+
+                                onChange={event =>
+                                    setToDate(
+                                        event.target.value
+                                    )
+                                }
+
+                            />
+
+                        </label>
+
+                    </div>
+
+                </div>
+
+
+                <div className="navigation-row">
+
+                    <nav className="main-navigation">
+
+                        {
+                            NAVIGATION.map(
+
+                                section => {
+
+                                    const active =
+                                        activeSection ===
+                                        section.id ||
+                                        section.children?.some(
+                                            module =>
+                                                (module.sectionId || section.id) ===
+                                                activeSection
+                                        );
+
+
+                                    const open =
+                                        openMenu ===
+                                        section.id;
+
+
+                                    return (
+
+                                        <div
+
+                                            className="navigation-item"
+
+                                            key={
+                                                section.id
+                                            }
+
+                                        >
+
+                                            <button
+
+                                                type="button"
+
+                                                className={
+
+                                                    `navigation-button ${
+                                                        active
+                                                            ? "active"
+                                                            : ""
+                                                    } ${
+                                                        open
+                                                            ? "open"
+                                                            : ""
+                                                    }`
+
+                                                }
+
+                                                onClick={() =>
+                                                    toggleMenu(
+                                                        section
+                                                    )
+                                                }
+
+                                            >
+
+                                                <span>
+
+                                                    {
+                                                        section.label
+                                                    }
+
+                                                </span>
+
+
+                                                <span className="navigation-arrow">
+    {open ? "â–´" : "â–¾"}
+</span>
+
+                                            </button>
+
+
+                                            {
+
+                                                open && (
+
+                                                    <div className="navigation-dropdown">
+
+                                                        <div className="dropdown-title">
+
+                                                            {
+                                                                section.label
+                                                            }
+
+                                                        </div>
+
+
+                                                        {
+
+                                                            section.children.map(
+
+                                                                module => (
+
+                                                                    <button
+
+                                                                        key={
+                                                                            module.id
+                                                                        }
+
+                                                                        type="button"
+
+                                                                        className={
+
+                                                                            `dropdown-link ${
+                                                                                activeModule ===
+                                                                                module.id &&
+                                                                                (module.sectionId || section.id) ===
+                                                                                activeSection
+                                                                                    ? "active"
+                                                                                    : ""
+                                                                            }`
+
+                                                                        }
+
+                                                                        onClick={() =>
+
+                                                                            selectModule(
+
+                                                                                section,
+
+                                                                                module
+
+                                                                            )
+
+                                                                        }
+
+                                                                    >
+
+                                                                        {
+                                                                            module.label
+                                                                        }
+
+                                                                    </button>
+
+                                                                )
+
+                                                            )
+
+                                                        }
+
+                                                    </div>
+
+                                                )
+
+                                            }
+
+                                        </div>
+
+                                    );
+
+                                }
+
+                            )
+
+                        }
+
+                    </nav>
+
+                </div>
+
+
+                <div className="context-row">
+
+                    <div className="breadcrumbs">
+
+                        <span>
+                            PharmaBI
+                        </span>
+
+
+                        <span>
+                            /
+                        </span>
+
+
+                        <strong>
+                            {
+                                selectedBranchName
+                            }
+                        </strong>
+
+
+                        <span>
+                            /
+                        </span>
+
+
+                        <strong>
+
+                            {
+                                activeModuleDefinition?.label ||
+                                activeSectionDefinition?.label
+                            }
+
+                        </strong>
+
+                    </div>
+
+
+                    <div className="mode-indicator">
+
+                        <span
+
+                            className={
+
+                                `mode-dot ${
+                                    selectedBranchId ===
+                                    "all"
+
+                                        ? "group"
+
+                                        : "branch"
+
+                                }`
+
+                            }
+
+                        />
+
+
+                        {
+                            selectedBranchId ===
+                            "all"
+
+                                ? "ظˆط¶ط¹ ط§ظ„ظ…ط¬ظ…ظˆط¹ط©"
+
+                                : selectedBranchName
+
+                        }
+
+                    </div>
+
+                </div>
+
+            </header>
+
+
+            {
+                connectionStatus.message && (
+
+                    <div
+
+                        className={
+
+                            `status-banner ${connectionStatus.type}`
+
+                        }
+
+                    >
+
+                        {
+                            connectionStatus.message
+                        }
+
+                    </div>
+
+                )
+            }
+
+
+            <section className="workspace">
+
+                {
+                    loadingBranches
+
+                        ? (
+
+                            <section className="page-card loading-card">
+
+                                <div className="loading-spinner" />
+
+                                <h2>
+                                    ط¬ط§ط±ظٹ طھط­ظ…ظٹظ„ ط§ظ„ظپط±ظˆط¹...
+                                </h2>
+
+                            </section>
+
+                        )
+
+                        : (
+
+                            selectedBranchId ===
+                            "all" &&
+                            activeSection !==
+                            "procurement"
+
+                                ? (
+
+                                    activeSection ===
+                                    "dashboard" &&
+
+                                    activeModule ===
+                                    "overview"
+
+                                        ? renderDashboardOverview()
+
+                                        : activeSection ===
+                                          "system"
+
+                                            ? (
+
+                                                activeModule ===
+                                                "connections"
+
+                                                    ? (
+
+                                                        <BranchConnections
+                                                            savedBranches={savedBranches}
+                                                            activeConnections={activeConnections}
+                                                            branchEditorBusy={branchEditorBusy}
+                                                            openAddBranchEditor={openAddBranchEditor}
+                                                            selectedBranchId={selectedBranchId}
+                                                            selectedBranchName={selectedBranchName}
+                                                            systemConnection={systemConnection}
+                                                            setSystemConnection={setSystemConnection}
+                                                            testCurrentConnection={testCurrentConnection}
+                                                            selectBranch={selectBranch}
+                                                            openEditBranchEditor={openEditBranchEditor}
+                                                            closeBranch={closeBranch}
+                                                            reconnectBranch={reconnectBranch}
+                                                            deleteBranch={deleteBranch}
+                                                            loadingBranch={loadingBranch}
+                                                        />
+
+                                                    )
+
+                                                    : (
+
+                                                        <CacheStatus
+                                                            savedBranches={savedBranches}
+                                                            activeConnections={activeConnections}
+                                                        />
+
+                                                    )
+
+                                            )
+
+                                            : activeSection === "sales"
+    ? renderSales()
+    : activeSection === "products" && activeModule === "master-items"
+        ? <MasterItemPage />
+        : (
+
+                                                    <section className="page-card empty-state">
+
+                                                        <div className="page-eyebrow">
+                                                            طھط­ظ„ظٹظ„ط§طھ ط§ظ„ظ…ط¬ظ…ظˆط¹ط©
+                                                        </div>
+
+
+                                                        <h2>
+
+                                                            {
+                                                                activeModuleDefinition?.label
+                                                            }
+
+                                                        </h2>
+
+
+                                                        <p>
+
+                                                            ظ‡ط°ط§ ط§ظ„طھط­ظ„ظٹظ„ ط³ظٹط¹ظ…ظ„ ط¹ظ„ظ‰ ظ…ط³طھظˆظ‰
+                                                            ط§ظ„ظ…ط¬ظ…ظˆط¹ط© ط¹ظ†ط¯ ط±ط¨ط· ط§ظ„طھط­ظ„ظٹظ„ ط§ظ„ط¬ظ…ط§ط¹ظٹ
+                                                            ط§ظ„ط®ط§طµ ط¨ظ‡.
+
+                                                        </p>
+
+                                                    </section>
+
+                                                )
+
+                                )
+
+                                : <BranchAnalyticsRouter
+
+                                activeSection={activeSection}
+                                activeModule={activeModule}
+                                activeModuleDefinition={activeModuleDefinition}
+                                activeSectionDefinition={activeSectionDefinition}
+                                selectedConnection={selectedConnection}
+                                selectedBranchId={selectedBranchId}
+                                selectedBranchName={selectedBranchName}
+                                fromDate={fromDate}
+                                toDate={toDate}
+                                branchOverview={branchOverview}
+                                branchOverviewLoading={branchOverviewLoading}
+                                branchOverviewError={branchOverviewError}
+                                renderBranchOverview={() => (
+
+                                    <BranchOverview
+                                        selectedBranchName={selectedBranchName}
+                                        fromDate={fromDate}
+                                        toDate={toDate}
+                                        branchOverview={branchOverview}
+                                        branchOverviewLoading={branchOverviewLoading}
+                                        branchOverviewError={branchOverviewError}
+                                    />
+
+                                )}
+                                renderDashboardOverview={renderDashboardOverview}
+                                renderBranchConnections={() => (
+
+                                    <BranchConnections
+                                        savedBranches={savedBranches}
+                                        activeConnections={activeConnections}
+                                        branchEditorBusy={branchEditorBusy}
+                                        openAddBranchEditor={openAddBranchEditor}
+                                        selectedBranchId={selectedBranchId}
+                                        selectedBranchName={selectedBranchName}
+                                        systemConnection={systemConnection}
+                                        setSystemConnection={setSystemConnection}
+                                        testCurrentConnection={testCurrentConnection}
+                                        selectBranch={selectBranch}
+                                        openEditBranchEditor={openEditBranchEditor}
+                                        closeBranch={closeBranch}
+                                        reconnectBranch={reconnectBranch}
+                                        deleteBranch={deleteBranch}
+                                        loadingBranch={loadingBranch}
+                                    />
+
+                                )}
+                                renderCacheStatus={() => (
+
+                                    <CacheStatus
+                                        savedBranches={savedBranches}
+                                        activeConnections={activeConnections}
+                                    />
+
+                                )}
+                                renderSales={() => (
+
+                                    <SalesPage
+                                        selectedBranchId={selectedBranchId}
+                                        selectedConnection={selectedConnection}
+                                        fromDate={fromDate}
+                                        toDate={toDate}
+                                        activeModule={activeModule}
+                                    />
+
+                                )}
+
+                            />
+
+                        )
+
+                }
+
+            </section>
+
+
+            <footer className="app-footer">
+
+                <span>
+                    PharmaBI Live
+                </span>
+
+
+                <span>
+                    PharmaFly
+                </span>
+
+
+                <span>
+
+                    {
+                        selectedBranchId ===
+                        "all"
+
+                            ? "ظ…طھط¹ط¯ط¯ ط§ظ„ظپط±ظˆط¹"
+
+                            : selectedBranchName
+
+                    }
+
+                </span>
+
+            </footer>
+
+
+            {
+                <BranchEditor
+
+                    branchEditor={branchEditor}
+                    branchEditorBusy={branchEditorBusy}
+                    branchEditorMessage={branchEditorMessage}
+                    updateBranchEditorField={updateBranchEditorField}
+                    updateBranchEditorName={updateBranchEditorName}
+                    updateBranchEditorId={updateBranchEditorId}
+                    closeBranchEditor={closeBranchEditor}
+                    saveBranchFromEditor={saveBranchFromEditor}
+
+                />
+            }
+
+        </main>
+
+    );
+
+}
+
+
+export default App;
+
+
+
+
+

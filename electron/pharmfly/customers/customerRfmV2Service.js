@@ -1,0 +1,3145 @@
+﻿import {
+    getLocalSalesDatabase
+} from "../../localdb/localSalesDb.js";
+
+
+import {
+    initializeCrmSchema
+} from "./crm/crmDb.js";
+
+
+import {
+    getBranchConnection
+} from "../../settings/connectionStore.js";
+
+
+import {
+    getBranchPool
+} from "../../connection/connectionManager.js";
+
+
+function toNumber(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function round2(
+    value
+) {
+
+    return Math.round(
+        (
+            toNumber(
+                value
+            ) +
+            Number.EPSILON
+        ) * 100
+    ) / 100;
+
+}
+
+
+function round4(
+    value
+) {
+
+    return Math.round(
+        (
+            toNumber(
+                value
+            ) +
+            Number.EPSILON
+        ) * 10000
+    ) / 10000;
+
+}
+
+
+
+function normalizeWhatsAppPhone(
+    value
+) {
+
+    let digits =
+        String(
+            value ||
+            ""
+        ).replace(
+            /\D/g,
+            ""
+        );
+
+    if (!digits) {
+        return null;
+    }
+
+    if (
+        digits.startsWith("00")
+    ) {
+        digits =
+            digits.slice(
+                2
+            );
+    }
+
+    if (
+        digits.startsWith("20") &&
+        digits.length === 12
+    ) {
+        return digits;
+    }
+
+    if (
+        digits.startsWith("0") &&
+        digits.length === 11
+    ) {
+        return (
+            "20" +
+            digits.slice(
+                1
+            )
+        );
+    }
+
+    if (
+        digits.startsWith("1") &&
+        digits.length === 10
+    ) {
+        return (
+            "20" +
+            digits
+        );
+    }
+
+    return digits;
+}
+
+
+async function loadCustomerPhones(
+    branchId
+) {
+
+    try {
+
+        const numericBranchId =
+            Number(
+                branchId
+            );
+
+        const saved =
+            getBranchConnection(
+                numericBranchId
+            );
+
+        if (!saved) {
+
+            console.warn(
+                `[RFM V2] No saved PharmaFly connection for branch ${numericBranchId}; phone map skipped.`
+            );
+
+            return new Map();
+        }
+
+        const pool =
+            await getBranchPool(
+                numericBranchId,
+                saved
+            );
+
+        const result =
+            await pool
+                .request()
+                .query(`
+                    SELECT
+                        t.CustomerID,
+                        t.Tel
+                    FROM dbo.Telephones t
+                    INNER JOIN dbo.Cards c
+                        ON c.Id = t.CustomerID
+                    WHERE
+                        c.IsHDCustomer = 1
+                        AND t.Tel IS NOT NULL
+                        AND LTRIM(
+                            RTRIM(
+                                t.Tel
+                            )
+                        ) <> ''
+                    ORDER BY
+                        t.CustomerID,
+                        t.ID DESC
+                `);
+
+        const phoneMap =
+            new Map();
+
+        for (
+            const row
+            of (
+                result.recordset ||
+                []
+            )
+        ) {
+
+            const customerId =
+                String(
+                    row.CustomerID
+                );
+
+            if (
+                phoneMap.has(
+                    customerId
+                )
+            ) {
+                continue;
+            }
+
+            const whatsappPhone =
+                String(
+                    row.Tel ||
+                    ""
+                ).trim();
+
+            if (!whatsappPhone) {
+                continue;
+            }
+
+            phoneMap.set(
+                customerId,
+                {
+                    whatsappPhone,
+                    whatsappPhoneNormalized:
+                        normalizeWhatsAppPhone(
+                            whatsappPhone
+                        )
+                }
+            );
+        }
+
+        console.log(
+            `[RFM V2] PharmaFly delivery phone map loaded: ${phoneMap.size} customers`
+        );
+
+        return phoneMap;
+
+    } catch (
+        error
+    ) {
+
+        console.warn(
+            `[RFM V2] PharmaFly phone lookup skipped because connection is unavailable: ${error?.message || error}`
+        );
+
+        return new Map();
+    }
+}
+
+
+function normalizeDate(
+    value
+) {
+
+    const text =
+        String(
+            value ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            text
+        )
+    ) {
+
+        throw new Error(
+            "Invalid date. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    return text;
+
+}
+
+
+function addDays(
+    dateText,
+    days
+) {
+
+    const date =
+        new Date(
+            `${dateText}T00:00:00.000Z`
+        );
+
+
+    date.setUTCDate(
+        date.getUTCDate() +
+        Number(
+            days
+        )
+    );
+
+
+    return date
+        .toISOString()
+        .slice(
+            0,
+            10
+        );
+
+}
+
+
+function dateDifferenceDays(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        new Date(
+            `${fromDate}T00:00:00.000Z`
+        );
+
+
+    const to =
+        new Date(
+            `${toDate}T00:00:00.000Z`
+        );
+
+
+    return Math.max(
+        0,
+        Math.floor(
+            (
+                to.getTime() -
+                from.getTime()
+            ) /
+            86400000
+        )
+    );
+
+}
+
+
+function percentileRank(
+    values,
+    value
+) {
+
+    if (
+        values.length <= 1
+    ) {
+
+        return 0.5;
+
+    }
+
+
+    let less =
+        0;
+
+
+    let equal =
+        0;
+
+
+    for (
+        const item
+        of values
+    ) {
+
+        if (
+            item < value
+        ) {
+
+            less +=
+                1;
+
+        }
+        else if (
+            item === value
+        ) {
+
+            equal +=
+                1;
+
+        }
+
+    }
+
+
+    return (
+        less +
+        (
+            equal /
+            2
+        )
+    ) /
+    values.length;
+
+}
+
+
+function scoreLowerIsBetter(
+    values,
+    value
+) {
+
+    const rank =
+        percentileRank(
+            values,
+            value
+        );
+
+
+    if (
+        rank <= 0.20
+    ) {
+
+        return 5;
+
+    }
+
+
+    if (
+        rank <= 0.40
+    ) {
+
+        return 4;
+
+    }
+
+
+    if (
+        rank <= 0.60
+    ) {
+
+        return 3;
+
+    }
+
+
+    if (
+        rank <= 0.80
+    ) {
+
+        return 2;
+
+    }
+
+
+    return 1;
+
+}
+
+
+function scoreHigherIsBetter(
+    values,
+    value
+) {
+
+    const rank =
+        percentileRank(
+            values,
+            value
+        );
+
+
+    if (
+        rank >= 0.80
+    ) {
+
+        return 5;
+
+    }
+
+
+    if (
+        rank >= 0.60
+    ) {
+
+        return 4;
+
+    }
+
+
+    if (
+        rank >= 0.40
+    ) {
+
+        return 3;
+
+    }
+
+
+    if (
+        rank >= 0.20
+    ) {
+
+        return 2;
+
+    }
+
+
+    return 1;
+
+}
+
+
+function average(
+    values
+) {
+
+    if (
+        !values.length
+    ) {
+
+        return 0;
+
+    }
+
+
+    return (
+        values.reduce(
+            (
+                total,
+                value
+            ) =>
+                total +
+                toNumber(
+                    value
+                ),
+            0
+        ) /
+        values.length
+    );
+
+}
+
+
+function calculateMonthlyFrequency(
+    ticketCount,
+    observationDays
+) {
+
+    if (
+        observationDays <= 0
+    ) {
+
+        return 0;
+
+    }
+
+
+    return round4(
+        (
+            toNumber(
+                ticketCount
+            ) /
+            observationDays
+        ) *
+        30.4375
+    );
+
+}
+
+
+function calculateTrend(
+    recentSales,
+    previousSales,
+    days
+) {
+
+    const recentDaily =
+        days > 0
+            ? recentSales / days
+            : 0;
+
+
+    const previousDaily =
+        days > 0
+            ? previousSales / days
+            : 0;
+
+
+    if (
+        previousDaily <= 0 &&
+        recentDaily > 0
+    ) {
+
+        return {
+
+            trend:
+                "GROWING",
+
+            score:
+                100,
+
+            percent:
+                null
+
+        };
+
+    }
+
+
+    if (
+        previousDaily <= 0
+    ) {
+
+        return {
+
+            trend:
+                "STABLE",
+
+            score:
+                50,
+
+            percent:
+                0
+
+        };
+
+    }
+
+
+    const percent =
+        (
+            (
+                recentDaily -
+                previousDaily
+            ) /
+            previousDaily
+        ) *
+        100;
+
+
+    if (
+        percent >= 20
+    ) {
+
+        return {
+
+            trend:
+                "GROWING",
+
+            score:
+                Math.min(
+                    100,
+                    Math.round(
+                        50 +
+                        percent
+                    )
+                ),
+
+            percent:
+                round2(
+                    percent
+                )
+
+        };
+
+    }
+
+
+    if (
+        percent <= -20
+    ) {
+
+        return {
+
+            trend:
+                "DECLINING",
+
+            score:
+                Math.max(
+                    0,
+                    Math.round(
+                        50 +
+                        percent
+                    )
+                ),
+
+            percent:
+                round2(
+                    percent
+                )
+
+        };
+
+    }
+
+
+    return {
+
+        trend:
+            "STABLE",
+
+        score:
+            Math.max(
+                0,
+                Math.min(
+                    100,
+                    Math.round(
+                        50 +
+                        (
+                            percent /
+                            2
+                        )
+                    )
+                )
+            ),
+
+        percent:
+            round2(
+                percent
+            )
+
+    };
+
+}
+
+
+function determineLifecycle(
+    {
+        ticketCount,
+        recencyDays,
+        averageDaysBetweenPurchases,
+        trend,
+        firstPurchaseDate,
+        lastPurchaseDate,
+        analysisDate
+    }
+) {
+
+    if (
+        ticketCount <= 1
+    ) {
+
+        if (
+            firstPurchaseDate &&
+            lastPurchaseDate &&
+            dateDifferenceDays(
+                firstPurchaseDate,
+                analysisDate
+            ) <= 60
+        ) {
+
+            return "NEW";
+
+        }
+
+    }
+
+
+    const expectedInterval =
+        averageDaysBetweenPurchases > 0
+            ? averageDaysBetweenPurchases
+            : 30;
+
+
+    if (
+        recencyDays <=
+        Math.max(
+            30,
+            Math.round(
+                expectedInterval *
+                1.5
+            )
+        )
+    ) {
+
+        if (
+            ticketCount >= 8
+        ) {
+
+            return "LOYAL";
+
+        }
+
+
+        if (
+            trend ===
+            "GROWING"
+        ) {
+
+            return "GROWING";
+
+        }
+
+
+        return "ACTIVE";
+
+    }
+
+
+    if (
+        recencyDays <=
+        Math.max(
+            60,
+            Math.round(
+                expectedInterval *
+                2.5
+            )
+        )
+    ) {
+
+        return "AT_RISK";
+
+    }
+
+
+    if (
+        ticketCount >= 3
+    ) {
+
+        return "DORMANT";
+
+    }
+
+
+    return "INACTIVE";
+
+}
+
+
+function determineSegment(
+    r,
+    f,
+    m,
+    lifecycle
+) {
+
+    if (
+        lifecycle ===
+        "NEW"
+    ) {
+
+        return "NEW_PROMISING";
+
+    }
+
+
+    if (
+        r >= 4 &&
+        f >= 4 &&
+        m >= 4
+    ) {
+
+        return "CHAMPIONS";
+
+    }
+
+
+    if (
+        r >= 4 &&
+        f >= 3 &&
+        m >= 3
+    ) {
+
+        return "LOYAL";
+
+    }
+
+
+    if (
+        r >= 4 &&
+        f <= 2
+    ) {
+
+        return "PROMISING";
+
+    }
+
+
+    if (
+        r <= 2 &&
+        f >= 4 &&
+        m >= 4
+    ) {
+
+        return "HIGH_VALUE_AT_RISK";
+
+    }
+
+
+    if (
+        r <= 2 &&
+        f >= 3
+    ) {
+
+        return "AT_RISK";
+
+    }
+
+
+    if (
+        r <= 2 &&
+        f <= 2
+    ) {
+
+        return "DORMANT";
+
+    }
+
+
+    if (
+        r >= 4 &&
+        m >= 4
+    ) {
+
+        return "HIGH_VALUE_ACTIVE";
+
+    }
+
+
+    if (
+        f >= 4
+    ) {
+
+        return "FREQUENT";
+
+    }
+
+
+    return "REGULAR";
+
+}
+
+
+function getRecommendedAction(
+    segment
+) {
+
+    const actions = {
+
+        CHAMPIONS:
+            "RETENTION_VIP",
+
+        LOYAL:
+            "UPSELL_CROSS_SELL",
+
+        NEW_PROMISING:
+            "ACTIVATION",
+
+        PROMISING:
+            "SECOND_PURCHASE",
+
+        HIGH_VALUE_AT_RISK:
+            "URGENT_WIN_BACK",
+
+        AT_RISK:
+            "WIN_BACK",
+
+        DORMANT:
+            "REACTIVATION",
+
+        HIGH_VALUE_ACTIVE:
+            "VALUE_GROWTH",
+
+        FREQUENT:
+            "BASKET_GROWTH",
+
+        REGULAR:
+            "NURTURE"
+
+    };
+
+
+    return (
+        actions[
+            segment
+        ] ||
+        "NURTURE"
+    );
+
+}
+
+
+function getPriorityLevel(
+    score
+) {
+
+    if (
+        score >= 85
+    ) {
+
+        return "URGENT";
+
+    }
+
+
+    if (
+        score >= 70
+    ) {
+
+        return "HIGH";
+
+    }
+
+
+    if (
+        score >= 50
+    ) {
+
+        return "MEDIUM";
+
+    }
+
+
+    return "LOW";
+
+}
+
+
+function getCustomerValueScore(
+    {
+        netSales,
+        grossProfit,
+        tickets,
+        salesValues,
+        grossProfitValues,
+        ticketValues
+    }
+) {
+
+    const salesScore =
+        scoreHigherIsBetter(
+            salesValues,
+            Math.max(
+                0,
+                netSales
+            )
+        );
+
+
+    const profitScore =
+        scoreHigherIsBetter(
+            grossProfitValues,
+            grossProfit
+        );
+
+
+    const frequencyScore =
+        scoreHigherIsBetter(
+            ticketValues,
+            tickets
+        );
+
+
+    return Math.round(
+        (
+            (
+                salesScore *
+                0.40
+            ) +
+            (
+                profitScore *
+                0.40
+            ) +
+            (
+                frequencyScore *
+                0.20
+            )
+        ) *
+        20
+    );
+
+}
+
+
+function getCrmPriority(
+    {
+        customerValueScore,
+        recencyScore,
+        trendScore,
+        lifecycle,
+        segment
+    }
+) {
+
+    let score =
+        (
+            customerValueScore *
+            0.40
+        ) +
+        (
+            recencyScore *
+            10 *
+            0.20
+        ) +
+        (
+            trendScore *
+            0.15
+        );
+
+
+    if (
+        lifecycle ===
+        "AT_RISK"
+    ) {
+
+        score +=
+            15;
+
+    }
+
+
+    if (
+        lifecycle ===
+        "DORMANT"
+    ) {
+
+        score +=
+            10;
+
+    }
+
+
+    if (
+        segment ===
+        "HIGH_VALUE_AT_RISK"
+    ) {
+
+        score +=
+            15;
+
+    }
+
+
+    if (
+        segment ===
+        "CHAMPIONS"
+    ) {
+
+        score +=
+            10;
+
+    }
+
+
+    return Math.min(
+        100,
+        Math.max(
+            0,
+            Math.round(
+                score
+            )
+        )
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * FAST SQL DATASET
+ *
+ * One primary range scan.
+ * Customer daily purchase dates + interval statistics
+ * are derived from the same filtered dataset.
+ * =========================================================
+ */
+
+function loadCustomerDataset(
+    db,
+    {
+        branchId,
+        observationFromDate,
+        observationToDate,
+        recentFromDate,
+        recentToDate,
+        previousFromDate,
+        previousToDate
+    }
+) {
+
+    const observationToExclusive =
+        addDays(
+            observationToDate,
+            1
+        );
+
+
+    const startedAt =
+        Date.now();
+
+
+    const rows =
+        db.prepare(`
+
+            WITH filtered AS (
+
+                SELECT
+
+                    customer_id,
+
+                    MAX(
+                        customer_name
+                    ) OVER (
+                        PARTITION BY
+                            customer_id
+                    ) AS resolved_customer_name,
+
+                    substr(
+                        date,
+                        1,
+                        10
+                    ) AS sale_date,
+
+                    transaction_type,
+
+                    ticket_id,
+
+                    ABS(
+                        COALESCE(
+                            net_line_value,
+                            0
+                        )
+                    ) AS line_value,
+
+                    ABS(
+                        COALESCE(
+                            line_cost,
+                            0
+                        )
+                    ) AS line_cost
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                    AND customer_id IS NOT NULL
+
+                    AND TRIM(
+                        customer_id
+                    ) <> ''
+
+                    AND CAST(
+                        customer_id AS INTEGER
+                    ) > 0
+
+                    AND transaction_type IN (
+                        'SALE',
+                        'RETURN'
+                    )
+
+                    AND date >= ?
+
+                    AND date < ?
+
+            ),
+
+            customer_daily AS (
+
+                SELECT
+
+                    customer_id,
+
+                    sale_date
+
+                FROM filtered
+
+                WHERE
+                    transaction_type =
+                    'SALE'
+
+                GROUP BY
+
+                    customer_id,
+
+                    sale_date
+
+            ),
+
+            daily_intervals AS (
+
+                SELECT
+
+                    customer_id,
+
+                    (
+                        julianday(
+                            sale_date
+                        ) -
+                        julianday(
+                            LAG(
+                                sale_date
+                            ) OVER (
+                                PARTITION BY
+                                    customer_id
+                                ORDER BY
+                                    sale_date
+                            )
+                        )
+                    ) AS day_interval
+
+                FROM customer_daily
+
+            ),
+
+            interval_stats AS (
+
+                SELECT
+
+                    customer_id,
+
+                    AVG(
+                        day_interval
+                    ) AS average_interval
+
+                FROM daily_intervals
+
+                WHERE
+                    day_interval IS NOT NULL
+
+                GROUP BY
+                    customer_id
+
+            ),
+
+            customer_stats AS (
+
+                SELECT
+
+                    customer_id,
+
+                    MAX(
+                        resolved_customer_name
+                    ) AS customer_name,
+
+                    COUNT(
+                        DISTINCT CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN ticket_id
+                        END
+                    ) AS ticket_count,
+
+                    MIN(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN sale_date
+                        END
+                    ) AS first_purchase_date,
+
+                    MAX(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN sale_date
+                        END
+                    ) AS last_purchase_date,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN line_value
+                            ELSE 0
+                        END
+                    ) AS gross_sales,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'RETURN'
+                            THEN line_value
+                            ELSE 0
+                        END
+                    ) AS returns,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN line_value
+
+                            WHEN transaction_type =
+                                'RETURN'
+                            THEN -line_value
+
+                            ELSE 0
+
+                        END
+                    ) AS net_sales,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                            THEN line_cost
+
+                            WHEN transaction_type =
+                                'RETURN'
+                            THEN -line_cost
+
+                            ELSE 0
+
+                        END
+                    ) AS net_cost,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                                AND sale_date >= ?
+                                AND sale_date <= ?
+                            THEN line_value
+
+                            WHEN transaction_type =
+                                'RETURN'
+                                AND sale_date >= ?
+                                AND sale_date <= ?
+                            THEN -line_value
+
+                            ELSE 0
+
+                        END
+                    ) AS recent_sales,
+
+                    SUM(
+                        CASE
+                            WHEN transaction_type =
+                                'SALE'
+                                AND sale_date >= ?
+                                AND sale_date <= ?
+                            THEN line_value
+
+                            WHEN transaction_type =
+                                'RETURN'
+                                AND sale_date >= ?
+                                AND sale_date <= ?
+                            THEN -line_value
+
+                            ELSE 0
+
+                        END
+                    ) AS previous_sales
+
+                FROM filtered
+
+                GROUP BY
+                    customer_id
+
+            )
+
+            SELECT
+
+                customer_stats.*,
+
+                COALESCE(
+                    interval_stats.average_interval,
+                    0
+                ) AS average_interval
+
+            FROM customer_stats
+
+            LEFT JOIN interval_stats
+
+                ON interval_stats.customer_id =
+                   customer_stats.customer_id
+
+            ORDER BY
+                customer_stats.customer_id
+
+        `).all(
+
+            Number(
+                branchId
+            ),
+
+            observationFromDate + "T00:00:00.000Z",
+
+            observationToExclusive + "T00:00:00.000Z",
+
+            recentFromDate,
+            recentToDate,
+
+            recentFromDate,
+            recentToDate,
+
+            previousFromDate,
+            previousToDate,
+
+            previousFromDate,
+            previousToDate
+
+        );
+
+    const elapsed =
+        Date.now() -
+        startedAt;
+
+
+
+    console.log(
+        `[RFM V2] SQL dataset branch=${branchId} rows=${rows.length} in ${elapsed} ms`
+    );
+
+
+    return rows;
+
+}
+
+
+/*
+ * =========================================================
+ * SNAPSHOT SAVE
+ * =========================================================
+ */
+
+function saveRfmSnapshot(
+    {
+        branchId,
+        analysisDate,
+        observationFromDate,
+        observationToDate,
+        observationDays,
+        customers,
+        totalNetSales,
+        totalGrossProfit
+    }
+) {
+
+    const crmDb =
+        initializeCrmSchema();
+
+
+    const insertSnapshot =
+        crmDb.prepare(`
+
+            INSERT INTO crm_rfm_snapshots (
+
+                branch_id,
+                analysis_date,
+                observation_from_date,
+                observation_to_date,
+                observation_days,
+
+                scoring_method,
+                recency_method,
+                frequency_method,
+                monetary_method,
+
+                customer_count,
+                total_net_sales,
+                total_gross_profit
+
+            )
+
+            VALUES (
+
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+
+                'PERCENTILE_1_5',
+                'PERCENTILE_LOWER_IS_BETTER',
+                'PERCENTILE_HIGHER_IS_BETTER',
+                'PERCENTILE_HIGHER_IS_BETTER',
+
+                ?,
+                ?,
+                ?
+
+            )
+
+        `);
+
+
+    const insertCustomer =
+        crmDb.prepare(`
+
+            INSERT INTO crm_rfm_customer_scores (
+
+                snapshot_id,
+                branch_id,
+                customer_id,
+                customer_name,
+
+                first_purchase_date,
+                last_purchase_date,
+                recency_days,
+
+                ticket_count,
+                net_sales,
+                gross_profit,
+                average_ticket_value,
+                average_days_between_purchases,
+                monthly_frequency,
+
+                r_score,
+                f_score,
+                m_score,
+                rfm_score,
+                rfm_total,
+
+                segment_code,
+                lifecycle_stage,
+
+                behavior_score,
+                customer_value_score,
+
+                priority_score,
+                priority_level,
+
+                crm_eligibility,
+                recommended_action,
+
+                purchase_trend,
+                purchase_trend_score
+
+            )
+
+            VALUES (
+
+                @snapshot_id,
+                @branch_id,
+                @customer_id,
+                @customer_name,
+
+                @first_purchase_date,
+                @last_purchase_date,
+                @recency_days,
+
+                @ticket_count,
+                @net_sales,
+                @gross_profit,
+                @average_ticket_value,
+                @average_days_between_purchases,
+                @monthly_frequency,
+
+                @r_score,
+                @f_score,
+                @m_score,
+                @rfm_score,
+                @rfm_total,
+
+                @segment_code,
+                @lifecycle_stage,
+
+                @behavior_score,
+                @customer_value_score,
+
+                @priority_score,
+                @priority_level,
+
+                @crm_eligibility,
+                @recommended_action,
+
+                @purchase_trend,
+                @purchase_trend_score
+
+            )
+
+        `);
+
+
+    const upsertProfile =
+        crmDb.prepare(`
+
+            INSERT INTO crm_customer_profiles (
+
+                branch_id,
+                customer_id,
+                customer_name,
+
+                whatsapp_phone,
+                whatsapp_phone_normalized,
+
+                first_purchase_date,
+                last_purchase_date,
+
+                total_tickets,
+                total_net_sales,
+                total_gross_profit,
+
+                average_ticket_value,
+                average_days_between_purchases,
+                purchase_frequency_monthly,
+
+                r_score,
+                f_score,
+                m_score,
+                rfm_score,
+                rfm_total,
+
+                segment_code,
+                lifecycle_stage,
+
+                behavior_score,
+                customer_value_score,
+
+                crm_priority_score,
+                crm_priority_level,
+
+                crm_eligibility,
+                recommended_action,
+
+                purchase_trend,
+                purchase_trend_score,
+
+                updated_at
+
+            )
+
+            VALUES (
+
+                @branch_id,
+                @customer_id,
+                @customer_name,
+
+                @whatsapp_phone,
+                @whatsapp_phone_normalized,
+
+                @first_purchase_date,
+                @last_purchase_date,
+
+                @total_tickets,
+                @total_net_sales,
+                @total_gross_profit,
+
+                @average_ticket_value,
+                @average_days_between_purchases,
+                @purchase_frequency_monthly,
+
+                @r_score,
+                @f_score,
+                @m_score,
+                @rfm_score,
+                @rfm_total,
+
+                @segment_code,
+                @lifecycle_stage,
+
+                @behavior_score,
+                @customer_value_score,
+
+                @crm_priority_score,
+                @crm_priority_level,
+
+                @crm_eligibility,
+                @recommended_action,
+
+                @purchase_trend,
+                @purchase_trend_score,
+
+                CURRENT_TIMESTAMP
+
+            )
+
+            ON CONFLICT (
+                branch_id,
+                customer_id
+            )
+
+            DO UPDATE SET
+
+                customer_name =
+                    COALESCE(
+                        excluded.customer_name,
+                        crm_customer_profiles.customer_name
+                    ),
+
+                
+                whatsapp_phone =
+                    COALESCE(
+                        excluded.whatsapp_phone,
+                        crm_customer_profiles.whatsapp_phone
+                    ),
+
+                whatsapp_phone_normalized =
+                    COALESCE(
+                        excluded.whatsapp_phone_normalized,
+                        crm_customer_profiles.whatsapp_phone_normalized
+                    ),
+
+                first_purchase_date =
+                    excluded.first_purchase_date,
+
+                last_purchase_date =
+                    excluded.last_purchase_date,
+
+                total_tickets =
+                    excluded.total_tickets,
+
+                total_net_sales =
+                    excluded.total_net_sales,
+
+                total_gross_profit =
+                    excluded.total_gross_profit,
+
+                average_ticket_value =
+                    excluded.average_ticket_value,
+
+                average_days_between_purchases =
+                    excluded.average_days_between_purchases,
+
+                purchase_frequency_monthly =
+                    excluded.purchase_frequency_monthly,
+
+                r_score =
+                    excluded.r_score,
+
+                f_score =
+                    excluded.f_score,
+
+                m_score =
+                    excluded.m_score,
+
+                rfm_score =
+                    excluded.rfm_score,
+
+                rfm_total =
+                    excluded.rfm_total,
+
+                segment_code =
+                    excluded.segment_code,
+
+                lifecycle_stage =
+                    excluded.lifecycle_stage,
+
+                behavior_score =
+                    excluded.behavior_score,
+
+                customer_value_score =
+                    excluded.customer_value_score,
+
+                crm_priority_score =
+                    excluded.crm_priority_score,
+
+                crm_priority_level =
+                    excluded.crm_priority_level,
+
+                crm_eligibility =
+                    excluded.crm_eligibility,
+
+                recommended_action =
+                    excluded.recommended_action,
+
+                purchase_trend =
+                    excluded.purchase_trend,
+
+                purchase_trend_score =
+                    excluded.purchase_trend_score,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+
+        `);
+
+
+    const transaction =
+        crmDb.transaction(
+            () => {
+
+                const snapshot =
+                    insertSnapshot.run(
+
+                        Number(
+                            branchId
+                        ),
+
+                        `${analysisDate}T23:59:59.999Z`,
+
+                        observationFromDate,
+                        observationToDate,
+
+                        Number(
+                            observationDays
+                        ),
+
+                        customers.length,
+
+                        round2(
+                            totalNetSales
+                        ),
+
+                        round2(
+                            totalGrossProfit
+                        )
+
+                    );
+
+
+                const snapshotId =
+                    Number(
+                        snapshot.lastInsertRowid
+                    );
+
+
+                for (
+                    const customer
+                    of customers
+                ) {
+
+                    insertCustomer.run({
+
+                        snapshot_id:
+                            snapshotId,
+
+                        branch_id:
+                            Number(
+                                branchId
+                            ),
+
+                        customer_id:
+                            customer.customerId,
+
+                        customer_name:
+                            customer.customerName,
+
+                        
+                        
+                        first_purchase_date:
+                            customer.firstPurchaseDate,
+
+                        last_purchase_date:
+                            customer.lastPurchaseDate,
+
+                        recency_days:
+                            customer.recencyDays,
+
+                        ticket_count:
+                            customer.ticketCount,
+
+                        net_sales:
+                            customer.netSales,
+
+                        gross_profit:
+                            customer.grossProfit,
+
+                        average_ticket_value:
+                            customer.averageTicketValue,
+
+                        average_days_between_purchases:
+                            customer.averageDaysBetweenPurchases,
+
+                        monthly_frequency:
+                            customer.monthlyFrequency,
+
+                        r_score:
+                            customer.r,
+
+                        f_score:
+                            customer.f,
+
+                        m_score:
+                            customer.m,
+
+                        rfm_score:
+                            customer.rfmScore,
+
+                        rfm_total:
+                            customer.rfmTotal,
+
+                        segment_code:
+                            customer.segmentCode,
+
+                        lifecycle_stage:
+                            customer.lifecycleStage,
+
+                        behavior_score:
+                            customer.behaviorScore,
+
+                        customer_value_score:
+                            customer.customerValueScore,
+
+                        priority_score:
+                            customer.crmPriorityScore,
+
+                        priority_level:
+                            customer.crmPriorityLevel,
+
+                        crm_eligibility:
+                            customer.crmEligibility,
+
+                        recommended_action:
+                            customer.recommendedAction,
+
+                        purchase_trend:
+                            customer.purchaseTrend,
+
+                        purchase_trend_score:
+                            customer.purchaseTrendScore
+
+                    });
+
+
+                    upsertProfile.run({
+
+                        branch_id:
+                            Number(
+                                branchId
+                            ),
+
+                        customer_id:
+                            customer.customerId,
+
+                        customer_name:
+                            customer.customerName,
+
+                        
+                        whatsapp_phone:
+                            customer.whatsappPhone,
+
+                        whatsapp_phone_normalized:
+                            customer.whatsappPhoneNormalized,
+
+                        first_purchase_date:
+                            customer.firstPurchaseDate,
+
+                        last_purchase_date:
+                            customer.lastPurchaseDate,
+
+                        total_tickets:
+                            customer.ticketCount,
+
+                        total_net_sales:
+                            customer.netSales,
+
+                        total_gross_profit:
+                            customer.grossProfit,
+
+                        average_ticket_value:
+                            customer.averageTicketValue,
+
+                        average_days_between_purchases:
+                            customer.averageDaysBetweenPurchases,
+
+                        purchase_frequency_monthly:
+                            customer.monthlyFrequency,
+
+                        r_score:
+                            customer.r,
+
+                        f_score:
+                            customer.f,
+
+                        m_score:
+                            customer.m,
+
+                        rfm_score:
+                            customer.rfmScore,
+
+                        rfm_total:
+                            customer.rfmTotal,
+
+                        segment_code:
+                            customer.segmentCode,
+
+                        lifecycle_stage:
+                            customer.lifecycleStage,
+
+                        behavior_score:
+                            customer.behaviorScore,
+
+                        customer_value_score:
+                            customer.customerValueScore,
+
+                        crm_priority_score:
+                            customer.crmPriorityScore,
+
+                        crm_priority_level:
+                            customer.crmPriorityLevel,
+
+                        crm_eligibility:
+                            customer.crmEligibility,
+
+                        recommended_action:
+                            customer.recommendedAction,
+
+                        purchase_trend:
+                            customer.purchaseTrend,
+
+                        purchase_trend_score:
+                            customer.purchaseTrendScore
+
+                    });
+
+                }
+
+
+                return snapshotId;
+
+            }
+        );
+
+
+    const snapshotId =
+        transaction();
+    return snapshotId;
+
+}
+
+
+/*
+ * =========================================================
+ * MAIN RFM V2
+ * =========================================================
+ */
+
+export async function getCustomerRfmV2(
+    {
+        branchId,
+        analysisDate,
+        observationDays = 365,
+        trendDays = 90,
+        minTickets = 1,
+        saveSnapshot = true
+    }
+) {
+
+    const numericBranchId =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            numericBranchId
+        ) ||
+        numericBranchId <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    const normalizedAnalysisDate =
+        normalizeDate(
+            analysisDate
+        );
+
+
+    const normalizedObservationDays =
+        Math.max(
+            30,
+            Math.min(
+                1825,
+                Math.floor(
+                    Number(
+                        observationDays
+                    ) ||
+                    365
+                )
+            )
+        );
+
+
+    const normalizedTrendDays =
+        Math.max(
+            30,
+            Math.min(
+                365,
+                Math.floor(
+                    Number(
+                        trendDays
+                    ) ||
+                    90
+                )
+            )
+        );
+
+
+    const observationFromDate =
+        addDays(
+            normalizedAnalysisDate,
+            -normalizedObservationDays + 1
+        );
+
+
+    const observationToDate =
+        normalizedAnalysisDate;
+
+
+    const recentToDate =
+        normalizedAnalysisDate;
+
+
+    const recentFromDate =
+        addDays(
+            normalizedAnalysisDate,
+            -normalizedTrendDays + 1
+        );
+
+
+    const previousToDate =
+        addDays(
+            recentFromDate,
+            -1
+        );
+
+
+    const previousFromDate =
+        addDays(
+            previousToDate,
+            -normalizedTrendDays + 1
+        );
+
+
+    const db =
+        getLocalSalesDatabase();
+
+
+    const rawRows =
+        loadCustomerDataset(
+            db,
+            {
+
+                branchId:
+                    numericBranchId,
+
+                observationFromDate,
+
+                observationToDate,
+
+                recentFromDate,
+
+                recentToDate,
+
+                previousFromDate,
+
+                previousToDate
+
+            }
+        );
+
+
+    const filteredRows =
+        rawRows.filter(
+            row =>
+                Number(
+                    row.ticket_count
+                ) >=
+                Math.max(
+                    1,
+                    Number(
+                        minTickets
+                    ) || 1
+                )
+        );
+
+
+    if (
+        filteredRows.length === 0
+    ) {
+
+        return {
+
+            success:
+                true,
+
+            snapshotId:
+                null,
+
+            branchId:
+                numericBranchId,
+
+            analysisDate:
+                normalizedAnalysisDate,
+
+            observationFromDate,
+
+            observationToDate,
+
+            observationDays:
+                normalizedObservationDays,
+
+            trendDays:
+                normalizedTrendDays,
+
+            customers:
+                [],
+
+            summary: {
+
+                customers:
+                    0,
+
+                netSales:
+                    0,
+
+                grossProfit:
+                    0,
+
+                averageCustomerValue:
+                    0,
+
+                averageTicketValue:
+                    0,
+
+                averageRecencyDays:
+                    0,
+
+                averageMonthlyFrequency:
+                    0,
+
+                segments:
+                    [],
+
+                lifecycle:
+                    [],
+
+                growingCustomers:
+                    0,
+
+                decliningCustomers:
+                    0,
+
+                crmEligibleCustomers:
+                    0
+
+            }
+
+        };
+
+    }
+
+
+    const recencyValues =
+        [];
+
+
+    const frequencyValues =
+        [];
+
+
+    const monetaryValues =
+        [];
+
+
+    const grossProfitValues =
+        [];
+
+
+    for (
+        const row
+        of filteredRows
+    ) {
+
+        const lastPurchaseDate =
+            row.last_purchase_date;
+
+
+        const recencyDays =
+            lastPurchaseDate
+                ? dateDifferenceDays(
+                    lastPurchaseDate,
+                    normalizedAnalysisDate
+                )
+                : 9999;
+
+
+        const netSales =
+            Math.max(
+                0,
+                toNumber(
+                    row.net_sales
+                )
+            );
+
+
+        const grossProfit =
+            toNumber(
+                row.net_sales
+            ) -
+            toNumber(
+                row.net_cost
+            );
+
+
+        recencyValues.push(
+            recencyDays
+        );
+
+
+        frequencyValues.push(
+            Number(
+                row.ticket_count
+            ) ||
+            0
+        );
+
+
+        monetaryValues.push(
+            netSales
+        );
+
+
+        grossProfitValues.push(
+            grossProfit
+        );
+
+    }
+
+
+    const customerPhoneMap =
+        await loadCustomerPhones(
+            numericBranchId
+        );
+
+    const scoredCustomers =
+        filteredRows.map(
+            row => {
+
+                const customerId =
+                    String(
+                        row.customer_id
+                    );
+
+
+                const ticketCount =
+                    Number(
+                        row.ticket_count
+                    ) ||
+                    0;
+
+
+                const netSales =
+                    round2(
+                        row.net_sales
+                    );
+
+
+                const netCost =
+                    toNumber(
+                        row.net_cost
+                    );
+
+
+                const grossProfit =
+                    round2(
+                        netSales -
+                        netCost
+                    );
+
+
+                const firstPurchaseDate =
+                    row.first_purchase_date ||
+                    null;
+
+
+                const lastPurchaseDate =
+                    row.last_purchase_date ||
+                    null;
+
+
+                const recencyDays =
+                    lastPurchaseDate
+                        ? dateDifferenceDays(
+                            lastPurchaseDate,
+                            normalizedAnalysisDate
+                        )
+                        : 9999;
+
+
+                const averageDaysBetweenPurchases =
+                    round2(
+                        row.average_interval
+                    );
+
+
+                const monthlyFrequency =
+                    calculateMonthlyFrequency(
+                        ticketCount,
+                        normalizedObservationDays
+                    );
+
+
+                const averageTicketValue =
+                    ticketCount > 0
+                        ? round2(
+                            netSales /
+                            ticketCount
+                        )
+                        : 0;
+
+
+                const recentSales =
+                    Math.max(
+                        0,
+                        toNumber(
+                            row.recent_sales
+                        )
+                    );
+
+
+                const previousSales =
+                    Math.max(
+                        0,
+                        toNumber(
+                            row.previous_sales
+                        )
+                    );
+
+
+                const trendResult =
+                    calculateTrend(
+                        recentSales,
+                        previousSales,
+                        normalizedTrendDays
+                    );
+
+
+                const r =
+                    scoreLowerIsBetter(
+                        recencyValues,
+                        recencyDays
+                    );
+
+
+                const f =
+                    scoreHigherIsBetter(
+                        frequencyValues,
+                        ticketCount
+                    );
+
+
+                const m =
+                    scoreHigherIsBetter(
+                        monetaryValues,
+                        Math.max(
+                            0,
+                            netSales
+                        )
+                    );
+
+
+                const lifecycle =
+                    determineLifecycle({
+
+                        ticketCount,
+
+                        recencyDays,
+
+                        averageDaysBetweenPurchases,
+
+                        trend:
+                            trendResult.trend,
+
+                        firstPurchaseDate,
+
+                        lastPurchaseDate,
+
+                        analysisDate:
+                            normalizedAnalysisDate
+
+                    });
+
+
+                const segmentCode =
+                    determineSegment(
+                        r,
+                        f,
+                        m,
+                        lifecycle
+                    );
+
+
+                const customerValueScore =
+                    getCustomerValueScore({
+
+                        netSales,
+
+                        grossProfit,
+
+                        tickets:
+                            ticketCount,
+
+                        salesValues:
+                            monetaryValues,
+
+                        grossProfitValues,
+
+                        ticketValues:
+                            frequencyValues
+
+                    });
+
+
+                const behaviorScore =
+                    Math.max(
+                        0,
+                        Math.min(
+                            100,
+                            Math.round(
+                                (
+                                    (
+                                        f *
+                                        20
+                                    ) *
+                                    0.25
+
+                                ) +
+
+                                (
+                                    (
+                                        m *
+                                        20
+                                    ) *
+                                    0.20
+
+                                ) +
+
+                                (
+                                    trendResult.score *
+                                    0.30
+
+                                ) +
+
+                                (
+                                    (
+                                        100 -
+                                        Math.min(
+                                            100,
+                                            recencyDays
+                                        )
+                                    ) *
+                                    0.25
+
+                                )
+                            )
+                        )
+                    );
+
+
+                const crmPriorityScore =
+                    getCrmPriority({
+
+                        customerValueScore,
+
+                        recencyScore:
+                            r,
+
+                        trendScore:
+                            trendResult.score,
+
+                        lifecycle,
+
+                        segment:
+                            segmentCode
+
+                    });
+
+
+                const crmPriorityLevel =
+                    getPriorityLevel(
+                        crmPriorityScore
+                    );
+
+
+                const crmEligibility =
+                    ticketCount > 0
+                        ? 1
+                        : 0;
+
+
+                return {
+
+                    customerId,
+
+                    customerName:
+                        row.customer_name ||
+                        "غير معروف",
+
+                    
+                    whatsappPhone:
+                        customerPhoneMap.get(
+                            customerId
+                        )?.whatsappPhone ||
+                        null,
+
+                    whatsappPhoneNormalized:
+                        customerPhoneMap.get(
+                            customerId
+                        )?.whatsappPhoneNormalized ||
+                        null,
+firstPurchaseDate,
+
+                    lastPurchaseDate,
+
+                    recencyDays,
+
+                    ticketCount,
+
+                    netSales,
+
+                    grossProfit,
+
+                    averageTicketValue,
+
+                    averageDaysBetweenPurchases,
+
+                    monthlyFrequency,
+
+                    r,
+
+                    f,
+
+                    m,
+
+                    rfmScore:
+                        `${r}${f}${m}`,
+
+                    rfmTotal:
+                        r +
+                        f +
+                        m,
+
+                    segmentCode,
+
+                    lifecycleStage:
+                        lifecycle,
+
+                    behaviorScore,
+
+                    customerValueScore,
+
+                    crmPriorityScore,
+
+                    crmPriorityLevel,
+
+                    crmEligibility,
+
+                    recommendedAction:
+                        getRecommendedAction(
+                            segmentCode
+                        ),
+
+                    purchaseTrend:
+                        trendResult.trend,
+
+                    purchaseTrendScore:
+                        trendResult.score,
+
+                    purchaseTrendPercent:
+                        trendResult.percent,
+
+                    recent90Sales:
+                        round2(
+                            recentSales
+                        ),
+
+                    previous90Sales:
+                        round2(
+                            previousSales
+                        )
+
+                };
+
+            }
+        );
+
+
+    scoredCustomers.sort(
+        (
+            a,
+            b
+        ) => {
+
+            if (
+                b.crmPriorityScore !==
+                a.crmPriorityScore
+            ) {
+
+                return (
+                    b.crmPriorityScore -
+                    a.crmPriorityScore
+                );
+
+            }
+
+
+            if (
+                b.customerValueScore !==
+                a.customerValueScore
+            ) {
+
+                return (
+                    b.customerValueScore -
+                    a.customerValueScore
+                );
+
+            }
+
+
+            return (
+                b.netSales -
+                a.netSales
+            );
+
+        }
+    );
+
+
+    const totalNetSales =
+        scoredCustomers.reduce(
+            (
+                total,
+                customer
+            ) =>
+                total +
+                customer.netSales,
+            0
+        );
+
+
+    const totalGrossProfit =
+        scoredCustomers.reduce(
+            (
+                total,
+                customer
+            ) =>
+                total +
+                customer.grossProfit,
+            0
+        );
+
+
+    const segmentsMap =
+        new Map();
+
+
+    const lifecycleMap =
+        new Map();
+
+
+    for (
+        const customer
+        of scoredCustomers
+    ) {
+
+        if (
+            !segmentsMap.has(
+                customer.segmentCode
+            )
+        ) {
+
+            segmentsMap.set(
+                customer.segmentCode,
+                {
+
+                    code:
+                        customer.segmentCode,
+
+                    customers:
+                        0,
+
+                    netSales:
+                        0,
+
+                    grossProfit:
+                        0
+
+                }
+            );
+
+        }
+
+
+        const segment =
+            segmentsMap.get(
+                customer.segmentCode
+            );
+
+
+        segment.customers +=
+            1;
+
+        segment.netSales +=
+            customer.netSales;
+
+        segment.grossProfit +=
+            customer.grossProfit;
+
+
+        if (
+            !lifecycleMap.has(
+                customer.lifecycleStage
+            )
+        ) {
+
+            lifecycleMap.set(
+                customer.lifecycleStage,
+                {
+
+                    stage:
+                        customer.lifecycleStage,
+
+                    customers:
+                        0,
+
+                    netSales:
+                        0
+
+                }
+            );
+
+        }
+
+
+        const lifecycle =
+            lifecycleMap.get(
+                customer.lifecycleStage
+            );
+
+
+        lifecycle.customers +=
+            1;
+
+        lifecycle.netSales +=
+            customer.netSales;
+
+    }
+
+
+    const segments =
+        Array.from(
+            segmentsMap.values()
+        )
+        .map(
+            item => ({
+
+                ...item,
+
+                netSales:
+                    round2(
+                        item.netSales
+                    ),
+
+                grossProfit:
+                    round2(
+                        item.grossProfit
+                    )
+
+            })
+        )
+        .sort(
+            (
+                a,
+                b
+            ) =>
+                b.netSales -
+                a.netSales
+        );
+
+
+    const lifecycle =
+        Array.from(
+            lifecycleMap.values()
+        )
+        .map(
+            item => ({
+
+                ...item,
+
+                netSales:
+                    round2(
+                        item.netSales
+                    )
+
+            })
+        )
+        .sort(
+            (
+                a,
+                b
+            ) =>
+                b.customers -
+                a.customers
+        );
+
+
+    const growingCustomers =
+        scoredCustomers.filter(
+            customer =>
+                customer.purchaseTrend ===
+                "GROWING"
+        ).length;
+
+
+    const decliningCustomers =
+        scoredCustomers.filter(
+            customer =>
+                customer.purchaseTrend ===
+                "DECLINING"
+        ).length;
+
+
+    const crmEligibleCustomers =
+        scoredCustomers.filter(
+            customer =>
+                customer.crmEligibility ===
+                1
+        ).length;
+
+
+    let snapshotId =
+        null;
+
+
+    if (
+        saveSnapshot
+    ) {
+
+        snapshotId =
+            saveRfmSnapshot({
+
+                branchId:
+                    numericBranchId,
+
+                analysisDate:
+                    normalizedAnalysisDate,
+
+                observationFromDate,
+
+                observationToDate,
+
+                observationDays:
+                    normalizedObservationDays,
+
+                customers:
+                    scoredCustomers,
+
+                totalNetSales,
+
+                totalGrossProfit
+
+            });
+
+    }
+
+
+    return {
+
+        success:
+            true,
+
+        snapshotId,
+
+        branchId:
+            numericBranchId,
+
+        analysisDate:
+            normalizedAnalysisDate,
+
+        observationFromDate,
+
+        observationToDate,
+
+        observationDays:
+            normalizedObservationDays,
+
+        trendDays:
+            normalizedTrendDays,
+
+        summary: {
+
+            customers:
+                scoredCustomers.length,
+
+            netSales:
+                round2(
+                    totalNetSales
+                ),
+
+            grossProfit:
+                round2(
+                    totalGrossProfit
+                ),
+
+            averageCustomerValue:
+                round2(
+                    totalNetSales /
+                    Math.max(
+                        1,
+                        scoredCustomers.length
+                    )
+                ),
+
+            averageTicketValue:
+                round2(
+                    average(
+                        scoredCustomers.map(
+                            customer =>
+                                customer.averageTicketValue
+                        )
+                    )
+                ),
+
+            averageRecencyDays:
+                round2(
+                    average(
+                        scoredCustomers.map(
+                            customer =>
+                                customer.recencyDays
+                        )
+                    )
+                ),
+
+            averageMonthlyFrequency:
+                round4(
+                    average(
+                        scoredCustomers.map(
+                            customer =>
+                                customer.monthlyFrequency
+                        )
+                    )
+                ),
+
+            segments,
+
+            lifecycle,
+
+            growingCustomers,
+
+            decliningCustomers,
+
+            crmEligibleCustomers
+
+        },
+
+        customers:
+            scoredCustomers
+
+    };
+
+}
+
+
+export default {
+
+    getCustomerRfmV2
+
+};
+
+
+
+

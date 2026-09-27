@@ -1,0 +1,514 @@
+import {
+    ipcMain,
+    BrowserWindow
+} from "electron";
+
+import getWhatsAppService
+    from "../pharmfly/customers/crm/whatsappService.js";
+
+
+const CHANNELS = [
+    "whatsapp:init",
+    "whatsapp:status",
+    "whatsapp:send",
+    "whatsapp:sendBulk",
+    "whatsapp:history",
+    "whatsapp:logout"
+];
+
+
+function sendToRenderer(
+    channel,
+    payload
+) {
+
+    try {
+
+        const windows =
+            BrowserWindow.getAllWindows();
+
+        for (
+            const window
+            of windows
+        ) {
+
+            if (
+                window &&
+                !window.isDestroyed()
+            ) {
+
+                window.webContents.send(
+                    channel,
+                    payload
+                );
+
+            }
+
+        }
+
+    }
+    catch (
+        error
+    ) {
+
+        console.warn(
+            `[WhatsApp IPC] Renderer event failed: ${error?.message || error}`
+        );
+
+    }
+
+}
+
+
+function safeRemoveHandler(
+    channel
+) {
+
+    try {
+
+        ipcMain.removeHandler(
+            channel
+        );
+
+    }
+    catch {
+        // No existing handler.
+    }
+
+}
+
+
+export function registerWhatsAppIpc() {
+
+    const service =
+        getWhatsAppService();
+
+
+    for (
+        const channel
+        of CHANNELS
+    ) {
+
+        safeRemoveHandler(
+            channel
+        );
+
+    }
+
+
+    service.setEventSink(
+        (
+            event,
+            payload
+        ) => {
+
+            switch (
+                event
+            ) {
+
+                case "qr":
+
+                    sendToRenderer(
+                        "whatsapp:qr",
+                        payload
+                    );
+
+                    break;
+
+
+                case "authenticated":
+
+                    sendToRenderer(
+                        "whatsapp:authenticated",
+                        payload
+                    );
+
+                    break;
+
+
+                case "initializing":
+
+                    sendToRenderer(
+                        "whatsapp:initializing",
+                        payload
+                    );
+
+                    break;
+
+
+                case "ready":
+
+                    sendToRenderer(
+                        "whatsapp:connected",
+                        payload
+                    );
+
+                    break;
+
+
+                case "disconnected":
+
+                    sendToRenderer(
+                        "whatsapp:disconnected",
+                        payload
+                    );
+
+                    break;
+
+
+                case "auth_failure":
+
+                    sendToRenderer(
+                        "whatsapp:auth-failure",
+                        payload
+                    );
+
+                    break;
+
+
+                case "error":
+
+                    sendToRenderer(
+                        "whatsapp:error",
+                        payload
+                    );
+
+                    break;
+
+
+                case "message":
+
+                    sendToRenderer(
+                        "whatsapp:message",
+                        payload
+                    );
+
+                    break;
+
+
+                case "message_ack":
+
+                    sendToRenderer(
+                        "whatsapp:message-ack",
+                        payload
+                    );
+
+                    break;
+
+
+                case "sent":
+
+                    sendToRenderer(
+                        "whatsapp:sent",
+                        payload
+                    );
+
+                    break;
+
+
+                case "failed":
+
+                    sendToRenderer(
+                        "whatsapp:failed",
+                        payload
+                    );
+
+                    break;
+
+
+                case "bulk_progress":
+
+                    sendToRenderer(
+                        "whatsapp:bulk-progress",
+                        payload
+                    );
+
+                    break;
+
+
+                case "logged_out":
+
+                    sendToRenderer(
+                        "whatsapp:logged-out",
+                        payload
+                    );
+
+                    break;
+
+
+                case "state_changed":
+
+                    sendToRenderer(
+                        "whatsapp:state-changed",
+                        payload
+                    );
+
+                    break;
+
+
+                default:
+
+                    sendToRenderer(
+                        "whatsapp:event",
+                        {
+                            event,
+                            ...payload
+                        }
+                    );
+
+                    break;
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:init",
+        async () => {
+
+            try {
+
+                return {
+                    success:
+                        true,
+                    ...await service.initialize()
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp IPC] init failed:",
+                    error
+                );
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error)
+                };
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:status",
+        async () => {
+
+            try {
+
+                return {
+                    success:
+                        true,
+                    ...await service.getStatus()
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error)
+                };
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:send",
+        async (
+            _event,
+            data = {}
+        ) => {
+
+            try {
+
+                const result =
+                    await service.sendMessage(
+                        data
+                    );
+
+                return {
+                    success:
+                        true,
+                    result
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp IPC] send failed:",
+                    error
+                );
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error)
+                };
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:sendBulk",
+        async (
+            _event,
+            data = {}
+        ) => {
+
+            try {
+
+                const result =
+                    await service.sendBulkMessages(
+                        data
+                    );
+
+                return {
+                    success:
+                        true,
+                    result
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp IPC] bulk send failed:",
+                    error
+                );
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error)
+                };
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:history",
+        async (
+            _event,
+            filters = {}
+        ) => {
+
+            try {
+
+                const history =
+                    await service.getHistory(
+                        filters
+                    );
+
+                return {
+                    success:
+                        true,
+                    history
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp IPC] history failed:",
+                    error
+                );
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error),
+                    history:
+                        []
+                };
+
+            }
+
+        }
+    );
+
+
+    ipcMain.handle(
+        "whatsapp:logout",
+        async () => {
+
+            try {
+
+                const result =
+                    await service.logout();
+
+                return {
+                    success:
+                        true,
+                    ...result
+                };
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp IPC] logout failed:",
+                    error
+                );
+
+                return {
+                    success:
+                        false,
+                    error:
+                        error?.message ||
+                        String(error)
+                };
+
+            }
+
+        }
+    );
+
+
+    console.log(
+        "[WhatsApp IPC] Registered."
+    );
+
+}
+
+
+export default registerWhatsAppIpc;

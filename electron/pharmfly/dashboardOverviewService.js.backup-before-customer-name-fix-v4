@@ -1,0 +1,1487 @@
+import {
+    getAllSavedConnections
+} from "../settings/connectionStore.js";
+
+import {
+    getSales
+} from "./sales/salesService.js";
+
+
+import {
+    getBranchPool
+} from "../connection/connectionManager.js";
+
+
+function number(
+    value
+) {
+
+    const result = Number(value);
+
+    return Number.isFinite(result)
+        ? result
+        : 0;
+
+}
+
+
+function round(
+    value,
+    decimals = 2
+) {
+
+    const factor = 10 ** decimals;
+
+    return Math.round(
+        (number(value) + Number.EPSILON) * factor
+    ) / factor;
+
+}
+
+
+function validateDate(
+    value,
+    fieldName
+) {
+
+    const text = String(value || "").trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+
+        throw new Error(
+            `Invalid ${fieldName}. Expected YYYY-MM-DD`
+        );
+
+    }
+
+    const date = new Date(`${text}T00:00:00Z`);
+
+    if (Number.isNaN(date.getTime())) {
+
+        throw new Error(`Invalid ${fieldName}: ${text}`);
+
+    }
+
+    return text;
+
+}
+
+
+function daysInclusive(
+    fromDate,
+    toDate
+) {
+
+    const from = new Date(`${fromDate}T00:00:00Z`).getTime();
+    const to = new Date(`${toDate}T00:00:00Z`).getTime();
+
+    return Math.max(
+        1,
+        Math.floor((to - from) / 86400000) + 1
+    );
+
+}
+
+
+function addDay(
+    dateText
+) {
+
+    const date = new Date(`${dateText}T00:00:00Z`);
+
+    date.setUTCDate(date.getUTCDate() + 1);
+
+    return date.toISOString().slice(0, 10);
+
+}
+
+
+function newDailyBucket(
+    date
+) {
+
+    return {
+        date,
+        sales: 0,
+        deliverySales: 0,
+        tickets: new Set(),
+        customers: new Set(),
+        deliveryTickets: new Set()
+    };
+
+}
+
+
+function repairEmployeeName(value) {
+
+    const text = String(value ?? "").trim();
+
+    if (!text) {
+        return "";
+    }
+
+    if (!text.includes("ط") && !text.includes("ظ")) {
+        return text;
+    }
+
+    try {
+
+        const decoder = new TextDecoder("windows-1256");
+        const byteMap = new Map();
+
+        for (let byte = 0; byte <= 255; byte++) {
+            const character = decoder.decode(Uint8Array.of(byte));
+            if (character && !byteMap.has(character)) {
+                byteMap.set(character, byte);
+            }
+        }
+
+        const bytes = [];
+
+        for (const character of text) {
+            const byte = byteMap.get(character);
+            if (byte == null) {
+                return text;
+            }
+            bytes.push(byte);
+        }
+
+        const repaired =
+            new TextDecoder("utf-8").decode(
+                Uint8Array.from(bytes)
+            ).trim();
+
+        if (
+            repaired &&
+            repaired !== text &&
+            /[\u0600-\u06FF]/.test(repaired)
+        ) {
+            return repaired;
+        }
+
+    }
+    catch (error) {
+        console.warn(
+            "[dashboardOverviewService] name repair failed:",
+            error
+        );
+    }
+
+    return text;
+}
+
+async function loadEmployeeNames(
+    branchId,
+    connection,
+    rows,
+    fromDate,
+    toDate
+) {
+
+    const pool =
+        await getBranchPool(
+            Number(branchId),
+            connection
+        );
+
+
+    /*
+     * AUTHORITATIVE DAILY CUSTOMER / DELIVERY FACTS
+     *
+     * These facts are intentionally loaded independently from the
+     * seller PinNumber query below. A missing PinNumber must never
+     * remove a valid customer or delivery ticket from the KPI.
+     */
+
+    const customerIdsByDay =
+        new Map();
+
+
+    const deliveryTicketsByDay =
+        new Map();
+
+
+    const deliverySalesByDay =
+        new Map();
+
+
+    let deliveryTotalSales =
+        0;
+
+
+    const metricsTicketResult =
+        await pool
+            .request()
+            .input(
+                "metricsFromDate",
+                `${fromDate} 00:00:00`
+            )
+            .input(
+                "metricsToDateExclusive",
+                `${addDay(toDate)} 00:00:00`
+            )
+            .query(`
+
+                SET NOCOUNT ON;
+
+                SELECT
+
+                    t.ID AS ticket_id,
+
+                    CONVERT(
+                        varchar(10),
+                        CAST(t.ztime AS date),
+                        23
+                    ) AS ticket_date,
+
+                    t.CustomerID AS customer_id,
+
+                    c.Name AS delivery_customer_name,
+
+                    t.SalesReturn AS sales_return,
+
+                    ISNULL(
+                        t.Total,
+                        0
+                    ) AS ticket_total
+
+                FROM dbo.posTickets t
+
+                LEFT JOIN dbo.Cards c
+                    ON c.ID = t.CustomerID
+
+                WHERE
+
+                    t.ztime >= @metricsFromDate
+
+                AND
+
+                    t.ztime < @metricsToDateExclusive;
+
+            `);
+
+
+    for (
+        const row
+        of metricsTicketResult?.recordset || []
+    ) {
+
+        const ticketId =
+            row?.ticket_id === null ||
+            row?.ticket_id === undefined
+
+                ? ""
+
+                : String(
+                    row.ticket_id
+                ).trim();
+
+
+        const dateText =
+            String(
+                row?.ticket_date ||
+                ""
+            ).slice(
+                0,
+                10
+            );
+
+
+        const customerId =
+            row?.customer_id === null ||
+            row?.customer_id === undefined
+
+                ? ""
+
+                : String(
+                    row.customer_id
+                ).trim();
+
+
+        const deliveryCustomerName =
+            row?.delivery_customer_name === null ||
+            row?.delivery_customer_name === undefined
+
+                ? ""
+
+                : String(
+                    row.delivery_customer_name
+                ).trim();
+
+
+        const salesReturn =
+            Number(
+                row?.sales_return
+            ) || 0;
+
+
+        const ticketTotal =
+            number(
+                row?.ticket_total
+            );
+
+
+        /*
+         * CUSTOMER KPI
+         *
+         * Customer = CustomerID > 0.
+         * Returns are excluded.
+         */
+
+        if (
+            dateText &&
+            salesReturn !== 2 &&
+            customerId &&
+            customerId !== "0"
+        ) {
+
+            if (
+                !customerIdsByDay.has(
+                    dateText
+                )
+            ) {
+
+                customerIdsByDay.set(
+                    dateText,
+                    new Set()
+                );
+
+            }
+
+
+            customerIdsByDay
+                .get(
+                    dateText
+                )
+                .add(
+                    customerId
+                );
+
+        }
+
+
+        /*
+         * DELIVERY KPI
+         *
+         * Delivery = DeliveryBoyId > 0.
+         * One ticket = one delivery order.
+         * Financial value = t.Total.
+         */
+
+        if (
+            dateText &&
+            ticketId &&
+            salesReturn !== 2 &&
+            deliveryCustomerName
+        ) {
+
+            if (
+                !deliveryTicketsByDay.has(
+                    dateText
+                )
+            ) {
+
+                deliveryTicketsByDay.set(
+                    dateText,
+                    new Set()
+                );
+
+            }
+
+
+            deliveryTicketsByDay
+                .get(
+                    dateText
+                )
+                .add(
+                    ticketId
+                );
+
+
+            deliverySalesByDay.set(
+
+                dateText,
+
+                number(
+                    deliverySalesByDay.get(
+                        dateText
+                    )
+                ) +
+                ticketTotal
+
+            );
+
+
+            deliveryTotalSales +=
+                ticketTotal;
+
+        }
+
+    }
+
+
+    /*
+     * Authoritative employee mapping in the current PharmaFly
+     * database:
+     *
+     *     posTickets.PinNumber
+     *             â†“
+     *     Cards.ID
+     *             â†“
+     *     Cards.Name
+     *
+     * We explicitly DO NOT use Users here because Users.login
+     * is the account that opens/logs into PharmaFly, not the
+     * seller displayed on the sale.
+     */
+
+    const ticketResult =
+        await pool
+            .request()
+            .input(
+                "fromDate",
+                `${fromDate} 00:00:00`
+            )
+            .input(
+                "toDateExclusive",
+                `${addDay(toDate)} 00:00:00`
+            )
+            .query(`
+
+                SET NOCOUNT ON;
+
+                SELECT
+
+                    t.ID AS ticket_id,
+
+                    CONVERT(
+                        nvarchar(100),
+                        t.PinNumber
+                    ) AS employee_id
+
+                FROM dbo.posTickets t
+
+                LEFT JOIN dbo.Cards c
+                    ON c.ID = t.CustomerID
+
+                WHERE
+
+                    t.ztime >= @fromDate
+
+                AND
+
+                    t.ztime < @toDateExclusive
+
+                AND
+
+                    t.PinNumber IS NOT NULL
+
+                AND
+
+                    CONVERT(
+                        nvarchar(100),
+                        t.PinNumber
+                    ) NOT IN (
+                        N'',
+                        N'0'
+                    );
+
+            `);
+
+
+    const employeeKeyByTicketId =
+        new Map();
+
+
+    const employeeKeys =
+        new Set();
+
+
+    for (
+        const row
+        of ticketResult?.recordset || []
+    ) {
+
+        const ticketId =
+            row?.ticket_id === null ||
+            row?.ticket_id === undefined
+
+                ? ""
+
+                : String(
+                    row.ticket_id
+                ).trim();
+
+
+        const employeeId =
+            row?.employee_id === null ||
+            row?.employee_id === undefined
+
+                ? ""
+
+                : String(
+                    row.employee_id
+                ).trim();
+
+
+        if (
+            ticketId &&
+            employeeId &&
+            employeeId !== "0"
+        ) {
+
+            employeeKeyByTicketId.set(
+                ticketId,
+                employeeId
+            );
+
+            employeeKeys.add(
+                employeeId
+            );
+
+        }
+
+    }
+
+
+    const names =
+        new Map();
+
+
+    if (
+        employeeKeys.size === 0
+    ) {
+
+        console.warn(
+            `[dashboardOverviewService] No PinNumber employee IDs found for branch=${branchId} range=${fromDate}|${toDate}`
+        );
+
+        return {
+            names,
+            employeeKeyByTicketId,
+            customerIdsByDay,
+            deliveryTicketsByDay,
+            deliverySalesByDay,
+            deliveryTotalSales
+        };
+
+    }
+
+
+    /*
+     * Resolve ONLY employee cards.
+     *
+     * This is the exact relationship confirmed against the
+     * live database, for example:
+     *
+     *     PinNumber 7520
+     *         -> Cards.ID 7520
+     *         -> Cards.Name "ط¯ / ط§ط­ظ…ط¯ ط¹ظ„ظ‰"
+     *         -> IsEmployee = 1
+     */
+
+    const request =
+        pool.request();
+
+
+    const placeholders =
+        Array.from(
+            employeeKeys
+        ).map(
+            (
+                employeeId,
+                index
+            ) => {
+
+                const parameterName =
+                    `employeeCardId${index}`;
+
+
+                request.input(
+                    parameterName,
+                    employeeId
+                );
+
+
+                return `@${parameterName}`;
+
+            }
+        );
+
+
+    const result =
+        await request.query(`
+
+            SET NOCOUNT ON;
+
+            SELECT
+
+                CONVERT(
+                    nvarchar(100),
+                    c.ID
+                ) AS employee_id,
+
+                LTRIM(
+                    RTRIM(
+                        CONVERT(
+                            nvarchar(400),
+                            c.Name
+                        )
+                    )
+                ) AS employee_name
+
+            FROM dbo.Cards c
+
+            WHERE
+
+                CONVERT(
+                    nvarchar(100),
+                    c.ID
+                ) IN (
+
+                    ${placeholders.join(", ")}
+
+                )
+
+            AND
+
+                NULLIF(
+                    LTRIM(
+                        RTRIM(
+                            CONVERT(
+                                nvarchar(400),
+                                c.Name
+                            )
+                        )
+                    ),
+                    ''
+                ) IS NOT NULL;
+
+        `);
+
+
+    for (
+        const row
+        of result?.recordset || []
+    ) {
+
+        const employeeId =
+            String(
+                row?.employee_id ||
+                ""
+            ).trim();
+
+
+        const employeeName =
+    repairEmployeeName(
+        row?.employee_name ||
+        ""
+    );
+
+if (
+            employeeId &&
+            employeeName
+        ) {
+
+            names.set(
+                employeeId,
+                employeeName
+            );
+
+        }
+
+    }
+
+
+    console.log(
+        `[dashboardOverviewService] Employee mapping branch=${branchId}: tickets=${employeeKeyByTicketId.size} uniquePinNumbers=${employeeKeys.size} resolvedEmployeeNames=${names.size}`
+    );
+
+
+    const unresolved =
+        Array.from(
+            employeeKeys
+        ).filter(
+            employeeId =>
+                !names.has(
+                    employeeId
+                )
+        );
+
+
+    
+    /* TEMP SELLER CARD MAPPING DIAGNOSTIC */
+    try {
+
+        const cardSalesRepDiagnostic =
+            await pool.request().query(`
+                SET NOCOUNT ON;
+
+                SELECT
+                    ID,
+                    Name,
+                    IsEmployee,
+                    IsSalesRep,
+                    SalesRepID
+                FROM dbo.Cards
+                WHERE
+                    SalesRepID IN (10,26,28)
+                ORDER BY
+                    SalesRepID,
+                    ID;
+            `);
+
+        console.log(
+            "[SELLER CARD MAPPING] Cards.SalesRepID 10/26/28 =",
+            cardSalesRepDiagnostic.recordset
+        );
+
+        const ticketSampleDiagnostic =
+            await pool.request().query(`
+                SET NOCOUNT ON;
+
+                SELECT TOP 30
+                    t.ID AS TicketID,
+                    t.SalesRepID,
+                    t.PinNumber,
+                    t.ztime
+                FROM dbo.posTickets t
+                WHERE
+                    t.SalesRepID IN (10,26,28)
+                ORDER BY
+                    t.ztime DESC,
+                    t.ID DESC;
+            `);
+
+        console.log(
+            "[SELLER CARD MAPPING] Ticket samples =",
+            ticketSampleDiagnostic.recordset
+        );
+
+    }
+    catch (diagnosticError) {
+
+        console.error(
+            "[SELLER CARD MAPPING] failed =",
+            diagnosticError
+        );
+
+    }
+if (
+        unresolved.length > 0
+    ) {
+
+        console.warn(
+            "[dashboardOverviewService] Employee IDs without Cards employee match:",
+            unresolved.slice(
+                0,
+                30
+            )
+        );
+
+    }
+
+
+    return {
+        names,
+        employeeKeyByTicketId,
+        customerIdsByDay,
+        deliveryTicketsByDay,
+        deliverySalesByDay,
+        deliveryTotalSales
+    };
+
+}
+function aggregateRows(
+    rows,
+    fromDate,
+    toDate,
+    employeeNames = new Map(),
+    employeeKeyByTicketId = new Map(),
+    customerIdsByDay = new Map(),
+    deliveryTicketsByDay = new Map(),
+    deliverySalesByDay = new Map(),
+    deliveryTotalSales = 0
+) {
+
+    const daily = new Map();
+    const customers = new Map();
+    const products = new Map();
+    const employees = new Map();
+
+    let totalSales = 0;
+    let deliverySales = 0;
+
+    const allTickets = new Set();
+    const deliveryTickets = new Set();
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+
+        const dateText = String(row?.date || "").slice(0, 10);
+
+        if (!dateText) {
+            continue;
+        }
+
+        const isReturn = row.transactionType === "RETURN";
+
+        const salesValue = isReturn
+            ? -Math.abs(number(row.netLineValue))
+            : number(row.netLineValue);
+
+        const absoluteSaleValue = Math.abs(salesValue);
+
+        const ticketId = row.ticketId == null
+            ? null
+            : String(row.ticketId);
+
+        const customerId = row.customerId == null
+            ? null
+            : String(row.customerId);
+
+        const customerName = String(
+            row.customerName || ""
+        ).trim();
+
+        if (!daily.has(dateText)) {
+            daily.set(dateText, newDailyBucket(dateText));
+        }
+
+        const day = daily.get(dateText);
+
+        day.sales += salesValue;
+
+        if (ticketId) {
+            day.tickets.add(ticketId);
+            allTickets.add(ticketId);
+        }
+
+        if (customerId && customerId !== "0" && !isReturn) {
+            day.customers.add(customerId);
+        }
+
+        totalSales += salesValue;
+
+        if (customerId && customerId !== "0") {
+
+            const key = customerId;
+
+            if (!customers.has(key)) {
+                customers.set(key, {
+                    customerId: key,
+                    customerName: customerName || key,
+                    sales: 0,
+                    invoices: new Set()
+                });
+            }
+
+            const customer = customers.get(key);
+
+            customer.sales += salesValue;
+
+            if (ticketId) {
+                customer.invoices.add(ticketId);
+            }
+
+            if (customerName && !customer.customerName) {
+                customer.customerName = customerName;
+            }
+
+        }
+
+        const itemId = row.itemId == null
+            ? null
+            : String(row.itemId);
+
+        if (itemId) {
+
+            if (!products.has(itemId)) {
+                products.set(itemId, {
+                    itemId,
+                    itemName: row.itemName || itemId,
+                    sales: 0,
+                    units: 0,
+                    invoices: new Set()
+                });
+            }
+
+            const product = products.get(itemId);
+
+            product.sales += salesValue;
+
+            product.units += isReturn
+                ? -Math.abs(number(row.baseUnits))
+                : number(row.baseUnits);
+
+            if (ticketId) {
+                product.invoices.add(ticketId);
+            }
+
+        }
+
+        const ticketEmployeeKey =
+            ticketId &&
+            employeeKeyByTicketId.has(
+                ticketId
+            )
+                ? employeeKeyByTicketId.get(
+                    ticketId
+                )
+                : null;
+
+
+        const fallbackEmployeeId =
+            row.salesRepId == null
+                ? null
+                : String(
+                    row.salesRepId
+                ).trim();
+
+
+        const employeeId =
+            ticketEmployeeKey ||
+            fallbackEmployeeId ||
+            "UNASSIGNED";
+
+        if (!employees.has(employeeId)) {
+            employees.set(employeeId, {
+                employeeId,
+                employeeName:
+                    employeeId === "UNASSIGNED"
+                        ? "ط؛ظٹط± ظ…ط­ط¯ط¯"
+                        : (
+                            employeeNames.get(employeeId) ||
+                            `ظ…ظˆط¸ظپ ط؛ظٹط± ظ…ط¹ط±ظˆظپ (${employeeId})`
+                        ),
+                sales: 0,
+                invoices: new Set(),
+                customers: new Set(),
+                units: 0
+            });
+        }
+
+        const employee = employees.get(employeeId);
+
+        employee.sales += salesValue;
+
+        employee.units += isReturn
+            ? -Math.abs(number(row.baseUnits))
+            : number(row.baseUnits);
+
+        if (ticketId) {
+            employee.invoices.add(ticketId);
+        }
+
+
+        if (!isReturn && customerId && customerId !== "0") {
+
+            employee.customers.add(customerId);
+
+        }
+        else if (!isReturn && customerName) {
+
+            employee.customers.add(`name:${customerName}`);
+
+        }
+
+    }
+
+    /*
+     * =========================================================
+     * AUTHORITATIVE CUSTOMER / DELIVERY DAILY FACTS
+     * =========================================================
+     *
+     * These values come from dbo.posTickets directly.
+     * This prevents the KPI from depending on seller PinNumber
+     * or on line-level CustomerName heuristics.
+     */
+
+    for (
+        const [
+            dateText,
+            customerIds
+        ]
+        of customerIdsByDay.entries()
+    ) {
+
+        if (!daily.has(dateText)) {
+
+            daily.set(
+                dateText,
+                newDailyBucket(dateText)
+            );
+
+        }
+
+
+        const day =
+            daily.get(dateText);
+
+
+        day.customers.clear();
+
+
+        for (
+            const customerId
+            of customerIds
+        ) {
+
+            day.customers.add(
+                customerId
+            );
+
+        }
+
+    }
+
+
+    /*
+     * Replace any previous line-level delivery inference.
+     */
+
+    for (
+        const day
+        of daily.values()
+    ) {
+
+        day.deliverySales = 0;
+
+        day.deliveryTickets.clear();
+
+    }
+
+
+    deliveryTickets.clear();
+
+
+    for (
+        const [
+            dateText,
+            ticketIds
+        ]
+        of deliveryTicketsByDay.entries()
+    ) {
+
+        if (!daily.has(dateText)) {
+
+            daily.set(
+                dateText,
+                newDailyBucket(dateText)
+            );
+
+        }
+
+
+        const day =
+            daily.get(dateText);
+
+
+        for (
+            const ticketId
+            of ticketIds
+        ) {
+
+            day.deliveryTickets.add(
+                ticketId
+            );
+
+            deliveryTickets.add(
+                ticketId
+            );
+
+        }
+
+    }
+
+
+    for (
+        const [
+            dateText,
+            salesValue
+        ]
+        of deliverySalesByDay.entries()
+    ) {
+
+        if (!daily.has(dateText)) {
+
+            daily.set(
+                dateText,
+                newDailyBucket(dateText)
+            );
+
+        }
+
+
+        daily
+            .get(dateText)
+            .deliverySales =
+                number(salesValue);
+
+    }
+
+
+    deliverySales =
+        number(
+            deliveryTotalSales
+        );
+
+
+    const numberOfDays = daysInclusive(fromDate, toDate);
+
+    const dailyRows = [];
+
+    let cursor = fromDate;
+
+    while (cursor <= toDate) {
+
+        const bucket =
+            daily.get(cursor) ||
+            newDailyBucket(cursor);
+
+        dailyRows.push({
+            date: cursor,
+            sales: round(bucket.sales),
+            tickets: bucket.tickets.size,
+            customers: bucket.customers.size,
+            deliverySales: round(bucket.deliverySales),
+            deliveryTickets: bucket.deliveryTickets.size
+        });
+
+        cursor = addDay(cursor);
+
+    }
+
+    const topCustomers = [...customers.values()]
+        .map(item => ({
+            customerId: item.customerId,
+            customerName: item.customerName,
+            sales: round(item.sales),
+            invoices: item.invoices.size,
+            averageInvoice: round(
+                item.invoices.size
+                    ? item.sales / item.invoices.size
+                    : 0
+            )
+        }))
+        .filter(item => item.sales !== 0)
+        .sort((a, b) => b.sales - a.sales)
+        .slice(0, 10);
+
+    const topProducts = [...products.values()]
+        .map(item => ({
+            itemId: item.itemId,
+            itemName: item.itemName,
+            sales: round(item.sales),
+            units: round(item.units),
+            invoices: item.invoices.size
+        }))
+        .filter(item => item.sales !== 0)
+        .sort((a, b) => b.sales - a.sales)
+        .slice(0, 10);
+
+    const topEmployees = [...employees.values()]
+        .map(item => ({
+            employeeId: item.employeeId,
+            employeeName: item.employeeName,
+            sales: round(item.sales),
+            invoices: item.invoices.size,
+            customers: item.customers.size,
+            averageDailySales: round(
+                item.sales / numberOfDays
+            ),
+            averageDailyInvoices: round(
+                item.invoices.size / numberOfDays
+            ),
+            averageInvoice: round(
+                item.invoices.size
+                    ? item.sales / item.invoices.size
+                    : 0
+            ),
+            units: round(item.units)
+        }))
+        .filter(item => item.sales !== 0)
+        .sort((a, b) => b.sales - a.sales);
+
+    return {
+        totalSales: round(totalSales),
+        averageDailySales: round(totalSales / numberOfDays),
+        averageDailyCustomers: round(
+            dailyRows.reduce(
+                (sum, row) => sum + row.customers,
+                0
+            ) / numberOfDays
+        ),
+        averageDailyInvoices: round(
+            allTickets.size / numberOfDays
+        ),
+        deliverySales: round(deliverySales),
+        averageDailyDeliverySales: round(
+            deliverySales / numberOfDays
+        ),
+        deliveryTickets: deliveryTickets.size,
+        averageDailyDeliveryTickets: round(
+            deliveryTickets.size / numberOfDays
+        ),
+        averageDailyDeliveryInvoices: round(
+            deliveryTickets.size / numberOfDays
+        ),
+        invoiceCount: allTickets.size,
+        daily: dailyRows,
+        topCustomers,
+        topProducts,
+        employees: topEmployees
+    };
+
+}
+async function loadBranch(
+    branch,
+    fromDate,
+    toDate
+) {
+
+    const rows = await getSales({
+        branchId: branch.branchId,
+        connection: branch,
+        fromDate,
+        toDate
+    });
+
+    const employeeContext =
+        await loadEmployeeNames(
+            branch.branchId,
+            branch,
+            rows,
+            fromDate,
+            toDate
+        );
+
+
+    const result = aggregateRows(
+        rows,
+        fromDate,
+        toDate,
+        employeeContext.names,
+        employeeContext.employeeKeyByTicketId,
+        employeeContext.customerIdsByDay,
+        employeeContext.deliveryTicketsByDay,
+        employeeContext.deliverySalesByDay,
+        employeeContext.deliveryTotalSales
+    );
+
+    return {
+        ...result,
+        branchId: Number(branch.branchId),
+        branchName: branch.branchName || `Branch ${branch.branchId}`
+    };
+
+}
+
+
+export async function getDashboardOverview({
+    branchId,
+    fromDate,
+    toDate,
+    connection = null
+}) {
+
+    const start = validateDate(fromDate, "fromDate");
+    const end = validateDate(toDate, "toDate");
+
+    if (start > end) {
+        throw new Error("fromDate cannot be greater than toDate");
+    }
+
+    if (
+        branchId === "all" ||
+        branchId === null ||
+        branchId === undefined
+    ) {
+
+        const branches = getAllSavedConnections();
+
+        const loaded = await Promise.all(
+            branches.map(branch =>
+                loadBranch(
+                    branch,
+                    start,
+                    end
+                )
+            )
+        );
+
+        const combinedRows = [];
+
+        for (const branch of loaded) {
+            combinedRows.push(
+                ...branch.daily.map(row => ({
+                    ...row,
+                    branchId: branch.branchId,
+                    branchName: branch.branchName
+                }))
+            );
+        }
+
+        const rowLike = [];
+
+        for (const branch of loaded) {
+            rowLike.push({
+                branch,
+                daily: branch.daily
+            });
+        }
+
+        const dailyMap = new Map();
+
+        for (const item of combinedRows) {
+            if (!dailyMap.has(item.date)) {
+                dailyMap.set(item.date, {
+                    date: item.date,
+                    sales: 0,
+                    tickets: 0,
+                    customers: 0,
+                    deliverySales: 0,
+                    deliveryTickets: 0
+                });
+            }
+
+            const day = dailyMap.get(item.date);
+            day.sales += number(item.sales);
+            day.tickets += number(item.tickets);
+            day.customers += number(item.customers);
+            day.deliverySales += number(item.deliverySales);
+            day.deliveryTickets += number(item.deliveryTickets);
+        }
+
+        const customerMap = new Map();
+        const productMap = new Map();
+        const employeeMap = new Map();
+
+        let totalSales = 0;
+        let deliverySales = 0;
+        let invoiceCount = 0;
+        let deliveryTickets = 0;
+
+        for (const branch of loaded) {
+
+            totalSales += branch.totalSales;
+            deliverySales += branch.deliverySales;
+            invoiceCount += branch.invoiceCount;
+            deliveryTickets += branch.deliveryTickets;
+
+            for (const item of branch.topCustomers) {
+                const key = `${branch.branchId}:${item.customerId}`;
+                customerMap.set(key, {
+                    ...item,
+                    customerName: item.customerName,
+                    branchId: branch.branchId,
+                    branchName: branch.branchName
+                });
+            }
+
+            for (const item of branch.topProducts) {
+                const key = `${branch.branchId}:${item.itemId}`;
+                productMap.set(key, {
+                    ...item,
+                    branchId: branch.branchId,
+                    branchName: branch.branchName
+                });
+            }
+
+            for (const item of branch.employees) {
+                const key = `${branch.branchId}:${item.employeeId}`;
+                employeeMap.set(key, {
+                    ...item,
+                    branchId: branch.branchId,
+                    branchName: branch.branchName
+                });
+            }
+
+        }
+
+        const numberOfDays = daysInclusive(start, end);
+        const daily = [];
+        let cursor = start;
+
+        while (cursor <= end) {
+            const item = dailyMap.get(cursor) || {
+                date: cursor,
+                sales: 0,
+                tickets: 0,
+                customers: 0,
+                deliverySales: 0,
+                deliveryTickets: 0
+            };
+
+            daily.push({
+                date: cursor,
+                sales: round(item.sales),
+                tickets: item.tickets,
+                customers: item.customers,
+                deliverySales: round(item.deliverySales),
+                deliveryTickets: item.deliveryTickets
+            });
+
+            cursor = addDay(cursor);
+        }
+
+        return {
+            success: true,
+            mode: "group",
+            branchCount: loaded.length,
+            fromDate: start,
+            toDate: end,
+            totalSales: round(totalSales),
+            averageDailySales: round(totalSales / numberOfDays),
+            averageDailyCustomers: round(
+                daily.reduce((sum, row) => sum + row.customers, 0) /
+                numberOfDays
+            ),
+            deliverySales: round(deliverySales),
+            averageDailyDeliverySales: round(
+                deliverySales / numberOfDays
+            ),
+            deliveryTickets,
+            averageDailyDeliveryTickets: round(
+                deliveryTickets / numberOfDays
+            ),
+            averageDailyDeliveryInvoices: round(
+                deliveryTickets / numberOfDays
+            ),
+            invoiceCount,
+            daily,
+            topCustomers: [...customerMap.values()]
+                .sort((a, b) => b.sales - a.sales)
+                .slice(0, 10),
+            topProducts: [...productMap.values()]
+                .sort((a, b) => b.sales - a.sales)
+                .slice(0, 10),
+            employees: [...employeeMap.values()]
+                .sort((a, b) => b.sales - a.sales)
+        };
+
+    }
+
+    const branch = {
+        ...(connection || {}),
+        branchId: Number(branchId),
+    };
+
+    const result = await loadBranch(
+        branch,
+        start,
+        end
+    );
+
+    return {
+        success: true,
+        mode: "branch",
+        ...result
+    };
+
+}
+
+
+export default {
+    getDashboardOverview
+};
+

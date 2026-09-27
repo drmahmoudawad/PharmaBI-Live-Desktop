@@ -17,6 +17,7 @@ export const NAVIGATION = [
             { id: "sales-overview", label: "نظرة عامة على المبيعات", sectionId: "sales" },
             { id: "sales-trend", label: "اتجاه المبيعات", sectionId: "sales" },
             { id: "sales-day-hour", label: "اليوم / الساعة", sectionId: "sales" },
+            { id: "sales-shifts", label: "\u0627\u0644\u0634\u064a\u0641\u062a\u0627\u062a", sectionId: "sales" },
             { id: "sales-sellers", label: "البائعون", sectionId: "sales" },
             { id: "sales-returns", label: "المرتجعات", sectionId: "sales" }
         ]
@@ -32,6 +33,18 @@ export const NAVIGATION = [
             { id: "customer-churn", label: "التوقف / عدم النشاط", sectionId: "customers" },
             { id: "customer-clv", label: "القيمة العمرية للعميل", sectionId: "customers" },
             { id: "customer-cohort", label: "تحليل مجموعات العملاء", sectionId: "customers" }
+        ]
+    },
+
+    {
+        id: "crm",
+        label: "CRM",
+        children: [
+            {
+                id: "crm-whatsapp",
+                label: "WhatsApp",
+                sectionId: "crm"
+            }
         ]
     },
 
@@ -54,17 +67,17 @@ export const NAVIGATION = [
         children: [
             {
                 id: "purchase-overview",
-                label: "\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629 \u0639\u0644\u0649 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a \u0648\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a",
+                label: "نظرة عامة على المشتريات والمبيعات",
                 sectionId: "procurement"
             },
             {
                 id: "supplier-performance",
-                label: "\u0623\u062f\u0627\u0621 \u0627\u0644\u0645\u0648\u0631\u062f\u064a\u0646",
+                label: "أداء الموردين",
                 sectionId: "procurement"
             },
             {
                 id: "interbranch-exchanges",
-                label: "\u0627\u0644\u062a\u0628\u0627\u062f\u0644\u0627\u062a \u0628\u064a\u0646 \u0627\u0644\u0641\u0631\u0648\u0639",
+                label: "التبادلات بين الفروع",
                 sectionId: "procurement"
             }
         ]
@@ -83,7 +96,12 @@ export const NAVIGATION = [
             { id: "branch-ranking", label: "ترتيب الفروع", sectionId: "branches" },
             { id: "staff-overview", label: "نظرة عامة على الموظفين", sectionId: "staff" },
             { id: "staff-sales", label: "المبيعات حسب البائع", sectionId: "staff" },
-            { id: "staff-productivity", label: "الإنتاجية", sectionId: "staff" }
+            { id: "staff-productivity", label: "الإنتاجية", sectionId: "staff" },
+            {
+                id: "staff-shifts",
+                label: "\u0634\u064a\u0641\u062a\u0627\u062a \u0627\u0644\u0645\u0648\u0638\u0641\u064a\u0646",
+                sectionId: "staff"
+            }
         ]
     },
 
@@ -110,4 +128,3 @@ export const NAVIGATION = [
     }
 
 ];
-

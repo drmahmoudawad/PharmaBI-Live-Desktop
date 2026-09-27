@@ -416,6 +416,148 @@ contextBridge.exposeInMainWorld(
         },
 
 
+
+        whatsapp: {
+
+            init:
+                () =>
+                    ipcRenderer.invoke(
+                        "whatsapp:init"
+                    ),
+
+            status:
+                () =>
+                    ipcRenderer.invoke(
+                        "whatsapp:status"
+                    ),
+
+            send:
+                payload =>
+                    ipcRenderer.invoke(
+                        "whatsapp:send",
+                        payload
+                    ),
+
+            sendBulk:
+                payload =>
+                    ipcRenderer.invoke(
+                        "whatsapp:sendBulk",
+                        payload
+                    ),
+
+            history:
+                filters =>
+                    ipcRenderer.invoke(
+                        "whatsapp:history",
+                        filters || {}
+                    ),
+
+            logout:
+                () =>
+                    ipcRenderer.invoke(
+                        "whatsapp:logout"
+                    ),
+
+            onQr:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:qr",
+                        callback
+                    ),
+
+            offQr:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:qr",
+                        callback
+                    ),
+
+            onConnected:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:connected",
+                        callback
+                    ),
+
+            offConnected:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:connected",
+                        callback
+                    ),
+
+            onDisconnected:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:disconnected",
+                        callback
+                    ),
+
+            offDisconnected:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:disconnected",
+                        callback
+                    ),
+
+            onMessage:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:message",
+                        callback
+                    ),
+
+            offMessage:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:message",
+                        callback
+                    ),
+
+            onMessageAck:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:message-ack",
+                        callback
+                    ),
+
+
+            onUnreadCount:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:unread-count",
+                        callback
+                    ),
+
+            offUnreadCount:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:unread-count",
+                        callback
+                    ),
+            offMessageAck:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:message-ack",
+                        callback
+                    ),
+
+            onBulkProgress:
+                callback =>
+                    ipcRenderer.on(
+                        "whatsapp:bulk-progress",
+                        callback
+                    ),
+
+            offBulkProgress:
+                callback =>
+                    ipcRenderer.removeListener(
+                        "whatsapp:bulk-progress",
+                        callback
+                    )
+
+        },
+
         products: {
 
             overview:
@@ -443,5 +585,6 @@ contextBridge.exposeInMainWorld(
 
     }
 );
+
 
 

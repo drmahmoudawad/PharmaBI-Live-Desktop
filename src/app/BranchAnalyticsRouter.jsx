@@ -1,105 +1,221 @@
-import React from 'react';
+import React from "react";
+import EmployeeShiftsPage from "../components/EmployeeShiftsPage.jsx";
+
+import ProductAnalyticsPanel
+    from "../components/ProductAnalyticsPanel.jsx";
+
+import WhatsAppPage
+    from "../components/WhatsAppPage.jsx";
 
 import AnalyticsHubPanel
-    from '../components/AnalyticsHubPanel.jsx';
+    from "../components/AnalyticsHubPanel.jsx";
 
-import BranchPerformancePanel
-    from '../components/BranchPerformancePanel.jsx';
+import SalesShiftsPage
+    from "../components/SalesShiftsPage.jsx";
 
 import SalesPage
-    from './SalesPage.jsx';
-
-
-import MasterItemPage
-    from '../components/MasterItemPage.jsx';
+    from "./SalesPage.jsx";
 
 
 export default function BranchAnalyticsRouter({
+
     activeSection,
     activeModule,
     activeModuleDefinition,
     activeSectionDefinition,
+
     selectedConnection,
     selectedBranchId,
     selectedBranchName,
+
     fromDate,
     toDate,
+
+    branchOverview,
+    branchOverviewLoading,
+    branchOverviewError,
+
     renderBranchOverview,
-    renderDashboardOverview,
     renderBranchConnections,
-    renderCacheStatus,
-    renderSales
+    renderCacheStatus
+
 }) {
 
     /*
      * =========================================================
-     * SYSTEM
+     * CRM / WHATSAPP
      * =========================================================
      */
 
     if (
         activeSection ===
-        'system'
-    ) {
-
-        if (
-            activeModule ===
-            'connections'
-        ) {
-            return renderBranchConnections();
-        }
-
-        if (
-            activeModule ===
-            'cache'
-        ) {
-            return renderCacheStatus();
-        }
-
-    }
-
-
-
-    /*
-     * =========================================================
-     * MASTER ITEMS
-     * GROUP-WIDE
-     * =========================================================
-     */
-
-    if (
-        activeSection ===
-        'products' &&
-        activeModule ===
-        'master-items'
+        "crm"
     ) {
 
         return (
-            <MasterItemPage />
-        );
 
-    }
+            <WhatsAppPage
 
-    /*
-     * =========================================================
-     * SALES OVERVIEW
-     * =========================================================
-     */
-
-    if (
-        activeSection ===
-        'sales' &&
-        activeModule ===
-        'sales-overview'
-    ) {
-
-        return (
-            <SalesPage
                 selectedBranchId={
                     selectedBranchId
                 }
 
-                selectedConnection={
+            />
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * DASHBOARD
+     * =========================================================
+     */
+
+    if (
+        activeSection ===
+        "dashboard"
+    ) {
+
+        if (
+            activeModule ===
+            "overview"
+        ) {
+
+            return renderBranchOverview();
+
+        }
+
+
+        return (
+
+            <section className="page-card empty-state">
+
+                <div className="page-eyebrow">
+                    لوحة التحكم
+                </div>
+
+
+                <h2>
+                    {
+                        activeModuleDefinition?.label ||
+                        activeModule
+                    }
+                </h2>
+
+
+                <p>
+                    هذا التحليل غير مرتبط بعد بمكوّن عرض فعلي.
+                </p>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * SALES
+     * =========================================================
+     */
+
+    if (
+        activeSection ===
+        "sales"
+    ) {
+
+        /*
+         * Sales Overview stays on the dedicated SalesPage.
+         */
+
+        if (
+            activeModule ===
+                "sales-overview" ||
+            activeModule ===
+                "overview" ||
+            activeModule ===
+                "sales"
+        ) {
+
+            return (
+
+                <SalesPage
+
+                    selectedBranchId={
+                        selectedBranchId
+                    }
+
+                    selectedConnection={
+                        selectedConnection
+                    }
+
+                    fromDate={
+                        fromDate
+                    }
+
+                    toDate={
+                        toDate
+                    }
+
+                    activeModule={
+                        "sales-overview"
+                    }
+
+                />
+
+            );
+
+        }
+
+
+        /*
+         * All other sales modules go to AnalyticsHubPanel.
+         */
+        if (
+            activeModule ===
+                "sales-shifts"
+        ) {
+
+            return (
+                <SalesShiftsPage
+
+                    selectedBranchId={
+                        selectedBranchId
+                    }
+
+                    selectedConnection={
+                        selectedConnection
+                    }
+
+                    fromDate={
+                        fromDate
+                    }
+
+                    toDate={
+                        toDate
+                    }
+
+                />
+            );
+
+        }
+
+return (
+
+            <AnalyticsHubPanel
+
+                moduleId={
+                    activeModule
+                }
+
+                branchId={
+                    selectedBranchId
+                }
+
+                connection={
                     selectedConnection
                 }
 
@@ -111,10 +227,8 @@ export default function BranchAnalyticsRouter({
                     toDate
                 }
 
-                activeModule={
-                    'sales-overview'
-                }
             />
+
         );
 
     }
@@ -122,72 +236,22 @@ export default function BranchAnalyticsRouter({
 
     /*
      * =========================================================
-     * DASHBOARD OVERVIEW
+     * CUSTOMERS
      * =========================================================
      */
 
     if (
         activeSection ===
-        'dashboard' &&
-        activeModule ===
-        'overview'
+        "customers"
     ) {
-
-        return renderDashboardOverview();
-
-    }
-
-
-    /*
-     * =========================================================
-     * SALES FORECAST
-     *
-     * Forecast is branch-specific.
-     * "All Branches" is not a valid target for the branch
-     * forecast engine.
-     * =========================================================
-     */
-
-    if (
-        activeModule ===
-        'forecast-sales'
-    ) {
-
-        if (
-            String(
-                selectedBranchId
-            ) ===
-            'all'
-        ) {
-
-            return (
-                <section
-                    className="page-card empty-state"
-                >
-
-                    <div className="page-eyebrow">
-                        SALES FORECAST
-                    </div>
-
-                    <h2>
-                        توقع المبيعات
-                    </h2>
-
-                    <p>
-                        اختر فرعًا محددًا لعرض توقع مبيعات الشهر القادم
-                        وإعداد Program A وProgram B.
-                    </p>
-
-                </section>
-            );
-
-        }
-
 
         return (
-            <BranchPerformancePanel
 
-                mode="forecast"
+            <AnalyticsHubPanel
+
+                moduleId={
+                    activeModule
+                }
 
                 branchId={
                     selectedBranchId
@@ -197,12 +261,98 @@ export default function BranchAnalyticsRouter({
                     selectedConnection
                 }
 
+                fromDate={
+                    fromDate
+                }
+
                 toDate={
                     toDate
                 }
 
-                historyMonths={
-                    12
+            />
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * PRODUCTS
+     * =========================================================
+     */
+
+    if (
+        activeSection ===
+        "products"
+    ) {
+
+        if (
+            !selectedConnection
+        ) {
+
+            return (
+
+                <section className="page-card empty-state">
+
+                    <h2>
+                        اختر فرعًا لعرض تحليلات المنتجات
+                    </h2>
+
+                </section>
+
+            );
+
+        }
+
+
+        return (
+
+            <ProductAnalyticsPanel
+
+                connectionPayload={
+                    selectedConnection
+                }
+
+                fromDate={
+                    fromDate
+                }
+
+                toDate={
+                    toDate
+                }
+
+            />
+
+        );
+
+    }
+
+
+    if (
+        activeSection ===
+            "staff" &&
+        activeModule ===
+            "staff-shifts"
+    ) {
+
+        return (
+            <EmployeeShiftsPage
+
+                branchId={
+                    selectedBranchId
+                }
+
+                connection={
+                    selectedConnection
+                }
+
+                fromDate={
+                    fromDate
+                }
+
+                toDate={
+                    toDate
                 }
 
             />
@@ -213,34 +363,129 @@ export default function BranchAnalyticsRouter({
 
     /*
      * =========================================================
-     * DEFAULT ANALYTICS
+     * ANALYTICS HUB SECTIONS
+     * =========================================================
+     */
+
+    if (
+        activeSection ===
+            "profitability" ||
+        activeSection ===
+            "branches" ||
+        activeSection ===
+            "staff" ||
+        activeSection ===
+            "forecast" ||
+        activeSection ===
+            "quality"
+    ) {
+
+        return (
+
+            <AnalyticsHubPanel
+
+                moduleId={
+                    activeModule
+                }
+
+                branchId={
+                    selectedBranchId
+                }
+
+                connection={
+                    selectedConnection
+                }
+
+                fromDate={
+                    fromDate
+                }
+
+                toDate={
+                    toDate
+                }
+
+            />
+
+        );
+
+    }
+
+
+    /*
+     * =========================================================
+     * SYSTEM
+     * =========================================================
+     */
+
+    if (
+        activeSection ===
+        "system"
+    ) {
+
+        if (
+            activeModule ===
+            "connections"
+        ) {
+
+            return renderBranchConnections();
+
+        }
+
+
+        if (
+            activeModule ===
+            "cache"
+        ) {
+
+            return renderCacheStatus();
+
+        }
+
+
+        return renderBranchConnections();
+
+    }
+
+
+    /*
+     * =========================================================
+     * FALLBACK
      * =========================================================
      */
 
     return (
-        <AnalyticsHubPanel
 
-            moduleId={
-                activeModule
-            }
+        <section className="page-card empty-state">
 
-            branchId={
-                selectedBranchId
-            }
+            <div className="page-eyebrow">
 
-            connection={
-                selectedConnection
-            }
+                {
+                    activeSectionDefinition?.label
+                }
 
-            fromDate={
-                fromDate
-            }
+            </div>
 
-            toDate={
-                toDate
-            }
 
-        />
+            <h2>
+
+                {
+                    activeModuleDefinition?.label ||
+                    activeModule ||
+                    activeSection ||
+                    "Analytics"
+                }
+
+            </h2>
+
+
+            <p>
+
+                هذا التحليل موجود في القائمة ولكنه غير مرتبط حاليًا بمكوّن عرض.
+
+            </p>
+
+        </section>
+
     );
 
 }

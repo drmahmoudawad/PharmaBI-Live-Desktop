@@ -1,0 +1,119 @@
+app\BranchAnalyticsRouter.jsx:145: * Forecast is branch-specific.
+app\BranchAnalyticsRouter.jsx:146: * "All Branches" is not a valid target for the branch
+app\navigation.js:30: { id: "customer-rfm", label: "تحليل RFM", sectionId: "customers" },
+components\AnalyticsHubPanel.jsx:84: 'customer-rfm': 'تحليل RFM',
+components\AnalyticsHubPanel.jsx:2288: Saved Branches
+components\AnalyticsHubPanel.jsx:2303: Active Connections
+components\AnalyticsHubPanel.jsx:2331: Data Coverage
+components\AnalyticsHubPanel.jsx:2812: 'Net Profit',
+components\AnalyticsHubPanel.jsx:2974: 'Missing Cost',
+components\AnalyticsHubPanel.jsx:2983: 'Zero Cost',
+components\AnalyticsHubPanel.jsx:4426: PharmaBI Analytics
+components\BranchPerformancePanel.jsx:2340: PharmaBI Analytics
+components\BranchPerformancePanel.jsx:2482: PharmaBI Analytics
+components\BranchPerformancePanel.jsx:2646: PharmaBI Analytics
+components\CustomerAnalyticsModulePanel.jsx:878: كل فئات RFM
+components\CustomerAnalyticsModulePanel.jsx:1279: * RFM + Customer Overview
+components\CustomerAnalyticsModulePanel.jsx:1283: * the heavy RFM V2 calculation.
+components\CustomerAnalyticsModulePanel.jsx:1288: * RFM:
+components\CustomerAnalyticsModulePanel.jsx:1289: *     -> RFM V2
+components\CustomerAnalyticsModulePanel.jsx:1578: throw new Error(
+components\CustomerAnalyticsModulePanel.jsx:1590: throw new Error(
+components\CustomerAnalyticsModulePanel.jsx:1712: throw new Error(
+components\CustomerAnalyticsModulePanel.jsx:1774: "تحليل RFM",
+components\CustomerAnalyticsModulePanel.jsx:2146: "فئات RFM",
+components\CustomerAnalyticsModulePanel.jsx:2218: * RFM
+components\CustomerAnalyticsModulePanel.jsx:2246: تحليل RFM
+components\CustomerAnalyticsModulePanel.jsx:2250: اختر فئة RFM لعرض العملاء التابعين لها
+components\CustomerAnalyticsModulePanel.jsx:2324: فئات RFM
+components\CustomerAnalyticsModulePanel.jsx:2705: "Known Customers",
+components\CustomerAnalyticsModulePanel.jsx:3629: تحليل RFM
+components\CustomerAnalyticsPanel.jsx:337: Previous Customers
+components\CustomerAnalyticsPanel.jsx:413: Current Customers
+components\CustomerAnalyticsPanel.jsx:525: Known Customers
+components\CustomerAnalyticsPanel.jsx:544: Active ≤ 30 Days
+components\CustomerAnalyticsPanel.jsx:563: Inactive ≥ 30 Days
+components\CustomerAnalyticsPanel.jsx:582: Inactive ≥ 60 Days
+components\CustomerAnalyticsPanel.jsx:601: Inactive ≥ 90 Days
+components\CustomerAnalyticsPanel.jsx:681: Inactive 90 Days
+components\CustomerClvPanel.jsx:215: Observed Net Sales
+components\CustomerClvPanel.jsx:358: Top Customers by Observed Value
+components\CustomerCohortPanel.jsx:309: Initial Cohort Sales
+components\CustomerCohortPanel.jsx:328: Observed Cohort Sales
+components\CustomerCohortPanel.jsx:415: Initial Sales
+components\CustomerCohortPanel.jsx:419: Observed Sales
+components\CustomerCohortPanel.jsx:529: Sales / Active Customer
+components\CustomerRfmPanel.jsx:252: "[UI] Customer RFM failed:",
+components\CustomerRfmPanel.jsx:264: "فشل تحليل Customer RFM."
+components\CustomerRfmPanel.jsx:354: : "تحليل Customer RFM"
+components\CustomerRfmPanel.jsx:550: فئات RFM - اختر الفئة
+components\CustomerRfmPanel.jsx:624: كل فئات RFM
+components\CustomerRfmPanel.jsx:909: : "Priority Customers"
+components\MasterItemPage.jsx:605: * Search/sort/filter are executed by the backend
+components\MasterItemPage.jsx:1143: "[MasterItemPage] Search failed:",
+components\ProductMixPanel.jsx:167: "[UI] Product Mix failed:",
+components\ProductMixPanel.jsx:180: "فشل تحليل Product Mix."
+components\ProductMixPanel.jsx:201: Product Mix Analytics
+components\ProductMixPanel.jsx:218: : "تحليل Product Mix"
+components\ProductMixPanel.jsx:249: Current Sales
+components\ProductMixPanel.jsx:266: Last Year Sales
+components\ProductMixPanel.jsx:283: YoY Sales
+components\ProductMixPanel.jsx:306: Product Mix Change
+components\ProductMixPanel.jsx:333: Current Products
+components\ProductProfitabilityPanel.jsx:123: "[UI] Product Profitability failed:",
+components\ProductProfitabilityPanel.jsx:155: Product Profitability
+components\ProductProfitabilityPanel.jsx:172: : "تحليل Product Profitability"
+components\ProductProfitabilityPanel.jsx:203: Gross Sales
+components\ProductProfitabilityPanel.jsx:340: Negative Margin Products
+components\ProductProfitabilityPanel.jsx:363: Most Profitable Products
+components\SalesAnalyticsPanel.jsx:136: return "Sales Trend";
+components\SalesAnalyticsPanel.jsx:142: return "Sellers";
+components\SalesAnalyticsPanel.jsx:145: return "Returns";
+components\SalesAnalyticsPanel.jsx:149: return "Sales Overview";
+components\SalesAnalyticsPanel.jsx:517: throw new Error(
+components\SalesAnalyticsPanel.jsx:529: throw new Error(
+components\SalesAnalyticsPanel.jsx:599: "فشل تحميل Sales Overview."
+components\SalesAnalyticsPanel.jsx:669: "فشل تحميل Sales Trend."
+components\SalesAnalyticsPanel.jsx:832: "فشل تحميل Returns."
+components\SalesAnalyticsPanel.jsx:1125: * 2. Summary
+components\SalesAnalyticsPanel.jsx:1183: * This is intentionally executed after Summary,
+components\SalesAnalyticsPanel.jsx:1783: text="لم يتم إرجاع بيانات Sales Summary."
+components\SalesAnalyticsPanel.jsx:1812: Sales Overview
+components\SalesAnalyticsPanel.jsx:1882: : "SQL Performance Test"
+components\SalesAnalyticsPanel.jsx:1961: SQL Performance Test
+components\SalesAnalyticsPanel.jsx:1965: قياس زمني للـSales APIs على الفرع الحالي
+components\SalesAnalyticsPanel.jsx:2033: "Sales + reconciliation"
+components\SalesAnalyticsPanel.jsx:2106: Total Test Time
+components\SalesAnalyticsPanel.jsx:2171: ولو Preview سريع وSummary بطيء جدًا،
+components\SalesAnalyticsPanel.jsx:2172: فالمشكلة إضافية في الـSummary/Reconciliation.
+components\SalesAnalyticsPanel.jsx:2187: Gross Sales
+components\SalesAnalyticsPanel.jsx:2238: Net Cost
+components\SalesAnalyticsPanel.jsx:2255: Net Profit
+components\SalesAnalyticsPanel.jsx:2327: Average Ticket
+components\SalesAnalyticsPanel.jsx:2532: Recent Sales Preview
+components\SalesAnalyticsPanel.jsx:2697: Sales Trend
+components\SalesAnalyticsPanel.jsx:2908: Daily Performance
+components\SalesAnalyticsPanel.jsx:3017: Hourly Performance
+components\SalesAnalyticsPanel.jsx:3205: Gross Sales
+components\SalesAnalyticsPanel.jsx:3300: Net Sales after Returns
+components\SalesAnalyticsPanel.jsx:3334: Return Cost
+components\SalesAnalyticsPanel.jsx:3404: Sellers Analytics
+components\TicketReconciliation.jsx:227: Header Total
+components\TopProductsPanel.jsx:116: "[UI] Top Products failed:",
+components\TopProductsPanel.jsx:129: "فشل تحميل Top Products."
+components\TopProductsPanel.jsx:167: : "تحليل Top Products"
+components\TopProductsPanel.jsx:196: Top {result.limit} Products
+hooks\useBranchState.js:487: throw new Error(
+hooks\useBranchState.js:603: throw new Error(
+hooks\useBranchState.js:735: throw new Error(
+hooks\useBranchState.js:752: throw new Error(
+hooks\useBranchState.js:769: throw new Error(
+hooks\useBranchState.js:785: throw new Error(
+hooks\useBranchState.js:798: throw new Error(
+hooks\useBranchState.js:811: throw new Error(
+hooks\useBranchState.js:873: throw new Error(
+hooks\useBranchState.js:897: throw new Error(
+hooks\useBranchState.js:919: throw new Error(
+hooks\useBranchState.js:1051: throw new Error(
+hooks\useBranchState.js:1323: throw new Error(
+pages\ProductsPage.jsx:23: Products Analytics

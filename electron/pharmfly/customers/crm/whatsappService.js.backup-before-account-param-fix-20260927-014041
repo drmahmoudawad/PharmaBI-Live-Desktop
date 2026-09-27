@@ -1,0 +1,3982 @@
+﻿import pkg from "whatsapp-web.js";
+
+const {
+    Client,
+    LocalAuth
+} = pkg;
+
+import qrcode from "qrcode";
+
+import {
+    app
+} from "electron";
+
+import path from "node:path";
+
+import {
+    initializeCrmSchema,
+    getCrmDatabase
+} from "./crmDb.js";
+
+import {
+    initializeCrmOperationalSchema
+} from "./crmOperationalSchema.js";
+
+
+let serviceInstance = null;
+
+
+/*
+ * =========================================================
+ * CONSTANTS
+ * =========================================================
+ */
+
+const PROVIDER =
+    "whatsapp-web.js";
+
+const SESSION_DIR =
+    path.join(
+        app.getPath("userData"),
+        "whatsapp-session"
+    );
+
+const CLIENT_ID =
+    "pharmabi";
+
+const DEFAULT_BULK_DELAY_MS =
+    3000;
+
+
+/*
+ * =========================================================
+ * HELPERS
+ * =========================================================
+ */
+
+function toPositiveInteger(
+    value
+) {
+
+    const number =
+        Number(value);
+
+    return Number.isInteger(number) &&
+        number > 0
+        ? number
+        : null;
+
+}
+
+
+function normalizePhone(
+    phone
+) {
+
+    let cleaned =
+        String(
+            phone ?? ""
+        )
+            .replace(
+                /\D/g,
+                ""
+            );
+
+    if (
+        !cleaned
+    ) {
+
+        return null;
+
+    }
+
+    if (
+        cleaned.startsWith("00")
+    ) {
+
+        cleaned =
+            cleaned.slice(2);
+
+    }
+
+    /*
+     * Egypt local mobile format:
+     * 010xxxxxxxx
+     * 011xxxxxxxx
+     * 012xxxxxxxx
+     * 015xxxxxxxx
+     *
+     * becomes:
+     * 2010xxxxxxxx
+     * 2011xxxxxxxx
+     * 2012xxxxxxxx
+     * 2015xxxxxxxx
+     */
+
+    if (
+        cleaned.startsWith("0")
+    ) {
+
+        cleaned =
+            `20${cleaned.slice(1)}`;
+
+    }
+
+    return cleaned;
+
+}
+
+
+function toChatId(
+    phone
+) {
+
+    const normalized =
+        normalizePhone(
+            phone
+        );
+
+    if (
+        !normalized
+    ) {
+
+        throw new Error(
+            "ط±ظ‚ظ… ط§ظ„ظ‡ط§طھظپ ط؛ظٹط± طµط§ظ„ط­."
+        );
+
+    }
+
+    return `${normalized}@c.us`;
+
+}
+
+
+function formatDateFromUnixTimestamp(
+    timestamp
+) {
+
+    const number =
+        Number(timestamp);
+
+    if (
+        !Number.isFinite(number) ||
+        number <= 0
+    ) {
+
+        return new Date().toISOString();
+
+    }
+
+    return new Date(
+        number * 1000
+    ).toISOString();
+
+}
+
+
+function sleep(
+    milliseconds
+) {
+
+    return new Promise(
+        resolve => {
+            setTimeout(
+                resolve,
+                milliseconds
+            );
+        }
+    );
+
+}
+
+
+function sanitizeText(
+    value
+) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
+        return "";
+
+    }
+
+    return String(
+        value
+    );
+
+}
+
+
+function serializeMessageId(
+    id
+) {
+
+    if (
+        !id
+    ) {
+
+        return null;
+
+    }
+
+    if (
+        typeof id === "string"
+    ) {
+
+        return id;
+
+    }
+
+    return (
+        id._serialized ||
+        id.id ||
+        null
+    );
+
+}
+
+
+function getMessageType(
+    type
+) {
+
+    const normalized =
+        String(
+            type || "TEXT"
+        )
+            .trim()
+            .toUpperCase();
+
+    return normalized || "TEXT";
+
+}
+
+
+function getAckStatus(
+    ack
+) {
+
+    const value =
+        Number(ack);
+
+    /*
+     * whatsapp-web.js 1.34.x:
+     * -1 = ERROR
+     *  0 = PENDING
+     *  1 = SERVER
+     *  2 = DEVICE
+     *  3 = READ
+     *  4 = PLAYED
+     */
+
+    if (
+        value < 0
+    ) {
+
+        return "failed";
+
+    }
+
+    if (
+        value >= 3
+    ) {
+
+        return "read";
+
+    }
+
+    if (
+        value >= 2
+    ) {
+
+        return "delivered";
+
+    }
+
+    if (
+        value >= 1
+    ) {
+
+        return "sent";
+
+    }
+
+    return "queued";
+
+}
+
+
+/*
+ * =========================================================
+ * DATABASE
+ * =========================================================
+ */
+
+function getDatabase() {
+
+    initializeCrmSchema();
+
+    initializeCrmOperationalSchema();
+
+    return getCrmDatabase();
+
+}
+
+
+function findCustomerProfile(
+    db,
+    {
+        branchId = null,
+        customerId = null,
+        phone = null
+    } = {}
+) {
+
+    if (
+        branchId &&
+        customerId
+    ) {
+
+        const exact =
+            db.prepare(
+                `
+                SELECT
+                    branch_id,
+                    customer_id,
+                    customer_name,
+                    whatsapp_phone,
+                    whatsapp_phone_normalized,
+                    whatsapp_opt_in
+                FROM crm_customer_profiles
+                WHERE
+                    branch_id = ?
+                    AND customer_id = ?
+                LIMIT 1
+                `
+            )
+                .get(
+                    branchId,
+                    String(customerId)
+                );
+
+        if (
+            exact
+        ) {
+
+            return exact;
+
+        }
+
+    }
+
+    if (
+        customerId
+    ) {
+
+        const byCustomer =
+            db.prepare(
+                `
+                SELECT
+                    branch_id,
+                    customer_id,
+                    customer_name,
+                    whatsapp_phone,
+                    whatsapp_phone_normalized,
+                    whatsapp_opt_in
+                FROM crm_customer_profiles
+                WHERE customer_id = ?
+                ORDER BY branch_id
+                LIMIT 1
+                `
+            )
+                .get(
+                    String(customerId)
+                );
+
+        if (
+            byCustomer
+        ) {
+
+            return byCustomer;
+
+        }
+
+    }
+
+    const normalizedPhone =
+        normalizePhone(
+            phone
+        );
+
+    if (
+        normalizedPhone
+    ) {
+
+        const byPhone =
+            db.prepare(
+                `
+                SELECT
+                    branch_id,
+                    customer_id,
+                    customer_name,
+                    whatsapp_phone,
+                    whatsapp_phone_normalized,
+                    whatsapp_opt_in
+                FROM crm_customer_profiles
+                WHERE
+                    whatsapp_phone_normalized = ?
+                ORDER BY
+                    CASE
+                        WHEN branch_id = ? THEN 0
+                        ELSE 1
+                    END,
+                    branch_id
+                LIMIT 1
+                `
+            )
+                .get(
+                    normalizedPhone,
+                    branchId || -1
+                );
+
+        if (
+            byPhone
+        ) {
+
+            return byPhone;
+
+        }
+
+    }
+
+    return null;
+
+}
+
+
+function getTemplate(
+    db,
+    {
+        templateId = null,
+        templateName = null
+    } = {}
+) {
+
+    const id =
+        toPositiveInteger(
+            templateId
+        );
+
+    if (
+        id
+    ) {
+
+        return db.prepare(
+            `
+            SELECT
+                *
+            FROM crm_whatsapp_templates
+            WHERE id = ?
+            LIMIT 1
+            `
+        )
+            .get(
+                id
+            );
+
+    }
+
+    const name =
+        sanitizeText(
+            templateName
+        )
+            .trim();
+
+    if (
+        name
+    ) {
+
+        return db.prepare(
+            `
+            SELECT
+                *
+            FROM crm_whatsapp_templates
+            WHERE template_name = ?
+            ORDER BY id DESC
+            LIMIT 1
+            `
+        )
+            .get(
+                name
+            );
+
+    }
+
+    return null;
+
+}
+
+
+function ensureWhatsAppAccount(
+    db,
+    {
+        branchId = null,
+        accountName = null,
+        displayPhoneNumber = null,
+        status = null
+    } = {}
+) {
+
+    const normalizedBranchId =
+        toPositiveInteger(
+            branchId
+        );
+
+    const existing =
+        db.prepare(
+            `
+            SELECT
+                id
+            FROM crm_whatsapp_accounts
+            WHERE
+                provider = ?
+            ORDER BY
+                id
+            LIMIT 1
+            `
+        )
+            .get(
+                PROVIDER
+            );
+
+    const name =
+        sanitizeText(
+            accountName
+        )
+            .trim() ||
+        "PharmaBI WhatsApp";
+
+    if (
+        existing?.id
+    ) {
+
+        db.prepare(
+            `
+            UPDATE crm_whatsapp_accounts
+            SET
+                branch_id = NULL,
+                account_name = ?,
+                display_phone_number =
+                    COALESCE(
+                        ?,
+                        display_phone_number
+                    ),
+                status =
+                    COALESCE(
+                        ?,
+                        status
+                    ),
+                last_connected_at =
+                    CASE
+                        WHEN ? = 'ready'
+                        THEN datetime('now')
+                        ELSE last_connected_at
+                    END,
+                updated_at =
+                    datetime('now')
+            WHERE id = ?
+            `
+        )
+            .run(
+                normalizedBranchId,
+                name,
+                displayPhoneNumber || null,
+                status || null,
+                status || null,
+                existing.id
+            );
+
+        return existing.id;
+
+    }
+
+    const result =
+        db.prepare(
+            `
+            INSERT INTO crm_whatsapp_accounts (
+                branch_id,
+                provider,
+                account_name,
+                display_phone_number,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                datetime('now'),
+                datetime('now')
+            )
+            `
+        )
+            .run(
+                normalizedBranchId,
+                PROVIDER,
+                name,
+                displayPhoneNumber || null,
+                status || "disconnected"
+            );
+
+    return result.lastInsertRowid;
+
+}
+
+
+/*
+ * =========================================================
+ * MESSAGE FORMATTING
+ * =========================================================
+ */
+
+function replaceToken(
+    message,
+    token,
+    value
+) {
+
+    const safeValue =
+        sanitizeText(
+            value
+        );
+
+    const escapedToken =
+        token.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&"
+        );
+
+    return message.replace(
+        new RegExp(
+            `\\{\\{?${escapedToken}\\}\\}?`,
+            "gi"
+        ),
+        safeValue
+    );
+
+}
+
+
+function formatMessage(
+    {
+        message = "",
+        templateText = "",
+        customerName = "",
+        branchName = "",
+        amount = "",
+        dueDate = "",
+        itemName = ""
+    } = {}
+) {
+
+    let finalMessage =
+        sanitizeText(
+            message
+        );
+
+    if (
+        !finalMessage.trim()
+    ) {
+
+        finalMessage =
+            sanitizeText(
+                templateText
+            );
+
+    }
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "name",
+            customerName ||
+                "ط¹ظ…ظٹظ„ظ†ط§ ط§ظ„ط¹ط²ظٹط²"
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "customer_name",
+            customerName ||
+                "ط¹ظ…ظٹظ„ظ†ط§ ط§ظ„ط¹ط²ظٹط²"
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "branch",
+            branchName
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "branch_name",
+            branchName
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "amount",
+            amount
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "dueDate",
+            dueDate
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "due_date",
+            dueDate
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "itemName",
+            itemName
+        );
+
+    finalMessage =
+        replaceToken(
+            finalMessage,
+            "item_name",
+            itemName
+        );
+
+    return finalMessage.trim();
+
+}
+
+
+/*
+ * =========================================================
+ * SERVICE
+ * =========================================================
+ */
+
+function createWhatsAppService() {
+
+    let client =
+        null;
+
+    let status =
+        "disconnected";
+
+    let qrCodeData =
+        null;
+
+    let isReady =
+        false;
+
+    let initializing =
+        false;
+
+    let eventSink =
+        null;
+
+    let initializedListeners =
+        false;
+
+
+    function emitEvent(
+        event,
+        payload = {}
+    ) {
+
+        if (
+            typeof eventSink !==
+            "function"
+        ) {
+
+            return;
+
+        }
+
+        try {
+
+            eventSink(
+                event,
+                payload
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+                "[WhatsApp] Event sink error:",
+                error?.message ||
+                    error
+            );
+
+        }
+
+    }
+
+
+    function getState() {
+
+        return {
+            status,
+            isReady,
+            qr:
+                qrCodeData,
+            provider:
+                PROVIDER
+        };
+
+    }
+
+
+    function ensureClient() {
+
+        if (
+            client
+        ) {
+
+            return client;
+
+        }
+
+        client =
+            new Client(
+                {
+                    authStrategy:
+                        new LocalAuth(
+                            {
+                                clientId:
+                                    CLIENT_ID,
+                                dataPath:
+                                    SESSION_DIR
+                            }
+                        ),
+
+                    puppeteer:
+                        {
+                            headless:
+                                true,
+
+                            args:
+                                [
+                                    "--no-sandbox",
+                                    "--disable-setuid-sandbox",
+                                    "--disable-dev-shm-usage"
+                                ]
+                        }
+                }
+            );
+
+
+        if (
+            initializedListeners
+        ) {
+
+            return client;
+
+        }
+
+        initializedListeners =
+            true;
+
+
+        /*
+         * =====================================================
+         * QR
+         * =====================================================
+         */
+
+        client.on(
+            "qr",
+            async qr => {
+
+                status =
+                    "connecting";
+
+                isReady =
+                    false;
+
+                try {
+
+                    qrCodeData =
+                        await qrcode.toDataURL(
+                            qr
+                        );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] QR generation failed:",
+                        error?.message ||
+                            error
+                    );
+
+                    qrCodeData =
+                        qr;
+
+                }
+
+
+                emitEvent(
+                    "qr",
+                    {
+                        qr:
+                            qrCodeData,
+                        status
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * AUTHENTICATED
+         * =====================================================
+         */
+
+        client.on(
+            "authenticated",
+            () => {
+
+                status =
+                    "authenticated";
+
+                emitEvent(
+                    "authenticated",
+                    {
+                        status
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * READY
+         * =====================================================
+         */
+
+        client.on(
+            "ready",
+            () => {
+
+                isReady =
+                    true;
+
+                status =
+                    "ready";
+
+                qrCodeData =
+                    null;
+
+                const info =
+                    client.info ||
+                    null;
+
+                const displayPhoneNumber =
+                    normalizePhone(
+                        info?.wid?.user
+                    );
+
+                let accountId =
+                    null;
+
+                try {
+
+                    const db =
+                        getDatabase();
+
+                    accountId =
+                        ensureWhatsAppAccount(
+                            db,
+                            {
+                                accountName:
+                                    info?.pushname ||
+                                    info?.me?.pushname ||
+                                    "PharmaBI WhatsApp",
+
+                                displayPhoneNumber:
+                                    displayPhoneNumber,
+
+                                status:
+                                    "ready"
+                            }
+                        );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.warn(
+                        "[WhatsApp] Account persistence failed:",
+                        error?.message ||
+                            error
+                    );
+
+                }
+
+
+                console.log(
+                    "[WhatsApp] Ready:",
+                    {
+                        phone:
+                            displayPhoneNumber,
+                        accountId
+                    }
+                );
+
+
+                emitEvent(
+                    "ready",
+                    {
+                        status,
+                        isReady,
+                        phone:
+                            displayPhoneNumber,
+                        accountId
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * AUTH FAILURE
+         * =====================================================
+         */
+
+        client.on(
+            "auth_failure",
+            message => {
+
+                isReady =
+                    false;
+
+                status =
+                    "error";
+
+                qrCodeData =
+                    null;
+
+                console.error(
+                    "[WhatsApp] Auth failure:",
+                    message
+                );
+
+
+                emitEvent(
+                    "auth_failure",
+                    {
+                        status,
+                        message:
+                            sanitizeText(
+                                message
+                            )
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * DISCONNECTED
+         * =====================================================
+         */
+
+        client.on(
+            "disconnected",
+            reason => {
+
+                isReady =
+                    false;
+
+                status =
+                    "disconnected";
+
+                qrCodeData =
+                    null;
+
+
+                try {
+
+                    const db =
+                        getDatabase();
+
+                    db.prepare(
+                        `
+                        UPDATE crm_whatsapp_accounts
+                        SET
+                            status = 'disconnected',
+                            updated_at = datetime('now')
+                        WHERE
+                            provider = ?
+                        `
+                    )
+                        .run(
+                            PROVIDER
+                        );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.warn(
+                        "[WhatsApp] Account disconnect persistence failed:",
+                        error?.message ||
+                            error
+                    );
+
+                }
+
+
+                emitEvent(
+                    "disconnected",
+                    {
+                        status,
+                        reason:
+                            sanitizeText(
+                                reason
+                            )
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * STATE CHANGE
+         * =====================================================
+         */
+
+        client.on(
+            "change_state",
+            state => {
+
+                emitEvent(
+                    "state_changed",
+                    {
+                        status,
+                        state:
+                            sanitizeText(
+                                state
+                            )
+                    }
+                );
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * INBOUND MESSAGE
+         * =====================================================
+         */
+
+        client.on(
+            "message",
+            async message => {
+
+                try {
+
+                    await handleInboundMessage(
+                        message
+                    );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] Inbound message handler failed:",
+                        error
+                    );
+
+                }
+
+            }
+        );
+
+
+        /*
+         * =====================================================
+         * MESSAGE ACK
+         * =====================================================
+         */
+
+        client.on(
+            "message_ack",
+            async (
+                message,
+                ack
+            ) => {
+
+                try {
+
+                    await handleMessageAck(
+                        message,
+                        ack
+                    );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+                        "[WhatsApp] Message ACK handler failed:",
+                        error
+                    );
+
+                }
+
+            }
+        );
+
+
+        return client;
+
+    }
+
+
+    /*
+     * =========================================================
+     * INBOUND MESSAGE
+     * =========================================================
+     */
+
+    async function handleInboundMessage(
+        message
+    ) {
+
+        if (
+            !message
+        ) {
+
+            return null;
+
+        }
+
+
+        const from =
+            normalizePhone(
+                message.from
+                    ?.replace(
+                        /@c\.us$/i,
+                        ""
+                    )
+            );
+
+        if (
+            !from
+        ) {
+
+            return null;
+
+        }
+
+
+        const db =
+            getDatabase();
+
+
+        const providerMessageId =
+            serializeMessageId(
+                message.id
+            );
+
+
+        const body =
+            sanitizeText(
+                message.body
+            );
+
+
+        const messageType =
+            getMessageType(
+                message.type
+            );
+
+
+        /*
+         * =====================================================
+         * GLOBAL WHATSAPP ACCOUNT
+         * =====================================================
+         */
+
+        const account =
+            db.prepare(
+                `
+                SELECT
+                    id
+                FROM crm_whatsapp_accounts
+                WHERE
+                    provider = ?
+                ORDER BY
+                    id
+                LIMIT 1
+                `
+            )
+                .get(
+                    PROVIDER
+                );
+
+
+        const whatsappAccountId =
+            toPositiveInteger(
+                account?.id
+            );
+
+
+        /*
+         * =====================================================
+         * RESOLVE CUSTOMER
+         *
+         * Priority:
+         *
+         * 1. Latest outbound message to this number.
+         * 2. Unique CRM phone match.
+         * 3. Otherwise NEW CUSTOMER.
+         *
+         * =====================================================
+         */
+
+        let branchId =
+            null;
+
+        let customerId =
+            null;
+
+        let customerName =
+            null;
+
+        let resolutionSource =
+            null;
+
+
+        const latestOutbound =
+            db.prepare(
+                `
+                SELECT
+                    branch_id,
+                    customer_id
+                FROM crm_whatsapp_messages
+                WHERE
+                    direction = 'OUTBOUND'
+                    AND recipient_phone = ?
+                    AND branch_id IS NOT NULL
+                    AND customer_id IS NOT NULL
+                ORDER BY
+                    id DESC
+                LIMIT 1
+                `
+            )
+                .get(
+                    from
+                );
+
+
+        if (
+            latestOutbound?.branch_id &&
+            latestOutbound?.customer_id !== null &&
+            latestOutbound?.customer_id !== undefined
+        ) {
+
+            branchId =
+                toPositiveInteger(
+                    latestOutbound.branch_id
+                );
+
+            customerId =
+                String(
+                    latestOutbound.customer_id
+                );
+
+            resolutionSource =
+                "LATEST_OUTBOUND";
+
+
+            const outboundProfile =
+                db.prepare(
+                    `
+                    SELECT
+                        customer_name
+                    FROM crm_customer_profiles
+                    WHERE
+                        branch_id = ?
+                        AND customer_id = ?
+                    LIMIT 1
+                    `
+                )
+                    .get(
+                        branchId,
+                        customerId
+                    );
+
+
+            customerName =
+                outboundProfile?.customer_name ||
+                null;
+
+        }
+
+
+        if (
+            !branchId ||
+            !customerId
+        ) {
+
+            const phoneMatches =
+                db.prepare(
+                    `
+                    SELECT
+                        branch_id,
+                        customer_id,
+                        customer_name
+                    FROM crm_customer_profiles
+                    WHERE
+                        whatsapp_phone_normalized = ?
+                    ORDER BY
+                        branch_id,
+                        customer_id
+                    `
+                )
+                    .all(
+                        from
+                    );
+
+
+            if (
+                phoneMatches.length === 1
+            ) {
+
+                branchId =
+                    toPositiveInteger(
+                        phoneMatches[0].branch_id
+                    );
+
+                customerId =
+                    phoneMatches[0].customer_id !== null &&
+                    phoneMatches[0].customer_id !== undefined
+                        ? String(
+                            phoneMatches[0].customer_id
+                        )
+                        : null;
+
+                customerName =
+                    phoneMatches[0].customer_name ||
+                    null;
+
+                resolutionSource =
+                    "CRM_PHONE";
+
+            }
+
+        }
+
+
+        /*
+         * =====================================================
+         * UNMATCHED / NEW CUSTOMER
+         * =====================================================
+         */
+
+        if (
+            !branchId ||
+            !customerId
+        ) {
+
+            const status =
+                "NEW";
+
+
+            let unmatchedId =
+                null;
+
+
+            try {
+
+                const result =
+                    db.prepare(
+                        `
+                        INSERT OR IGNORE INTO
+                            crm_whatsapp_unmatched_messages (
+                                whatsapp_account_id,
+                                phone,
+                                message_type,
+                                body_text,
+                                provider_message_id,
+                                message_timestamp,
+                                status
+                            )
+                        VALUES (
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
+                            ?
+                        )
+                        `
+                    )
+                        .run(
+                            whatsappAccountId,
+                            from,
+                            messageType,
+                            body,
+                            providerMessageId,
+                            Number(
+                                message.timestamp ||
+                                0
+                            ) || null,
+                            status
+                        );
+
+
+                unmatchedId =
+                    result.lastInsertRowid;
+
+
+                if (
+                    !unmatchedId &&
+                    providerMessageId
+                ) {
+
+                    const existing =
+                        db.prepare(
+                            `
+                            SELECT
+                                id
+                            FROM crm_whatsapp_unmatched_messages
+                            WHERE
+                                provider_message_id = ?
+                            LIMIT 1
+                            `
+                        )
+                            .get(
+                                providerMessageId
+                            );
+
+
+                    unmatchedId =
+                        existing?.id ||
+                        null;
+
+                }
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[WhatsApp] Failed to save unmatched inbound message:",
+                    error
+                );
+
+                return null;
+
+            }
+
+
+            emitEvent(
+                "message",
+                {
+                    direction:
+                        "INBOUND",
+
+                    messageId:
+                        null,
+
+                    unmatchedMessageId:
+                        unmatchedId,
+
+                    providerMessageId,
+
+                    branchId:
+                        null,
+
+                    customerId:
+                        null,
+
+                    customerName:
+                        "ط¹ظ…ظٹظ„ ط¬ط¯ظٹط¯",
+
+                    phone:
+                        from,
+
+                    body,
+
+                    messageType,
+
+                    status:
+                        "NEW",
+
+                    resolutionSource:
+                        null,
+
+                    timestamp:
+                        formatDateFromUnixTimestamp(
+                            message.timestamp
+                        )
+                }
+            );
+
+
+            return {
+                messageId:
+                    null,
+
+                unmatchedMessageId:
+                    unmatchedId,
+
+                interactionId:
+                    null,
+
+                providerMessageId,
+
+                matched:
+                    false,
+
+                status:
+                    "NEW"
+            };
+
+        }
+
+
+        /*
+         * =====================================================
+         * MATCHED CUSTOMER
+         * =====================================================
+         */
+
+        let messageRow =
+            null;
+
+
+        try {
+
+            const result =
+                db.prepare(
+                    `
+                    INSERT INTO crm_whatsapp_messages (
+                        branch_id,
+                        customer_id,
+                        campaign_id,
+                        campaign_target_id,
+                        interaction_id,
+                        whatsapp_account_id,
+                        direction,
+                        message_type,
+                        template_name,
+                        template_language,
+                        body_text,
+                        provider_message_id,
+                        recipient_phone,
+                        status,
+                        inbound_reply,
+                        created_at
+                    )
+                    VALUES (
+                        ?,
+                        ?,
+                        NULL,
+                        NULL,
+                        NULL,
+                        ?,
+                        'INBOUND',
+                        ?,
+                        NULL,
+                        'ar',
+                        ?,
+                        ?,
+                        ?,
+                        'received',
+                        1,
+                        datetime('now')
+                    )
+                    `
+                )
+                    .run(
+                        branchId,
+                        customerId,
+                        whatsappAccountId,
+                        messageType,
+                        body,
+                        providerMessageId,
+                        from
+                    );
+
+
+            messageRow =
+                result.lastInsertRowid;
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+                "[WhatsApp] Matched inbound message DB insert failed:",
+                error
+            );
+
+            return null;
+
+        }
+
+
+        let interactionId =
+            null;
+
+
+        try {
+
+            const result =
+                db.prepare(
+                    `
+                    INSERT INTO crm_interactions (
+                        branch_id,
+                        customer_id,
+                        campaign_id,
+                        campaign_target_id,
+                        channel,
+                        direction,
+                        interaction_type,
+                        outcome,
+                        phone,
+                        message_id,
+                        subject,
+                        content,
+                        employee_id,
+                        occurred_at,
+                        metadata_json,
+                        created_at
+                    )
+                    VALUES (
+                        ?,
+                        ?,
+                        NULL,
+                        NULL,
+                        'WHATSAPP',
+                        'INBOUND',
+                        'MESSAGE',
+                        'RECEIVED',
+                        ?,
+                        ?,
+                        NULL,
+                        ?,
+                        NULL,
+                        datetime('now'),
+                        ?,
+                        datetime('now')
+                    )
+                    `
+                )
+                    .run(
+                        branchId,
+                        customerId,
+                        from,
+                        providerMessageId,
+                        body,
+                        JSON.stringify(
+                            {
+                                whatsappMessageId:
+                                    messageRow,
+
+                                messageType,
+
+                                from,
+
+                                timestamp:
+                                    message.timestamp ||
+                                    null,
+
+                                resolutionSource
+                            }
+                        )
+                    );
+
+
+            interactionId =
+                result.lastInsertRowid;
+
+
+            if (
+                messageRow &&
+                interactionId
+            ) {
+
+                db.prepare(
+                    `
+                    UPDATE crm_whatsapp_messages
+                    SET
+                        interaction_id = ?
+                    WHERE id = ?
+                    `
+                )
+                    .run(
+                        interactionId,
+                        messageRow
+                    );
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+                "[WhatsApp] Inbound CRM interaction insert failed:",
+                error?.message ||
+                    error
+            );
+
+        }
+
+
+        try {
+
+            db.prepare(
+                `
+                UPDATE crm_customer_profiles
+                SET
+                    last_crm_campaign_id =
+                        COALESCE(
+                            last_crm_campaign_id,
+                            NULL
+                        )
+                WHERE
+                    branch_id = ?
+                    AND customer_id = ?
+                `
+            )
+                .run(
+                    branchId,
+                    customerId
+                );
+
+        }
+        catch {
+            // Optional profile update.
+        }
+
+
+        emitEvent(
+            "message",
+            {
+                direction:
+                    "INBOUND",
+
+                messageId:
+                    messageRow,
+
+                providerMessageId,
+
+                branchId,
+
+                customerId,
+
+                customerName:
+                    customerName ||
+                    from,
+
+                phone:
+                    from,
+
+                body,
+
+                messageType,
+
+                status:
+                    "received",
+
+                matched:
+                    true,
+
+                resolutionSource,
+
+                timestamp:
+                    formatDateFromUnixTimestamp(
+                        message.timestamp
+                    )
+            }
+        );
+
+
+        return {
+            messageId:
+                messageRow,
+
+            interactionId,
+
+            providerMessageId,
+
+            matched:
+                true,
+
+            branchId,
+
+            customerId
+        };
+
+    }
+
+    async function handleMessageAck(
+        message,
+        ack
+    ) {
+
+        const providerMessageId =
+            serializeMessageId(
+                message?.id
+            );
+
+        if (
+            !providerMessageId
+        ) {
+
+            return null;
+
+        }
+
+        const statusFromAck =
+            getAckStatus(
+                ack
+            );
+
+        const db =
+            getDatabase();
+
+
+        const existing =
+            db.prepare(
+                `
+                SELECT
+                    id,
+                    branch_id,
+                    customer_id,
+                    campaign_id,
+                    campaign_target_id,
+                    interaction_id
+                FROM crm_whatsapp_messages
+                WHERE provider_message_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                `
+            )
+                .get(
+                    providerMessageId
+                );
+
+
+        if (
+            !existing
+        ) {
+
+            return null;
+
+        }
+
+
+        const updates =
+            {
+                status:
+                    statusFromAck,
+
+                deliveredAt:
+                    null,
+
+                readAt:
+                    null,
+
+                failedAt:
+                    null
+            };
+
+
+        if (
+            statusFromAck ===
+            "delivered" ||
+            statusFromAck ===
+            "read"
+        ) {
+
+            updates.deliveredAt =
+                "datetime('now')";
+
+        }
+
+        if (
+            statusFromAck ===
+            "read"
+        ) {
+
+            updates.readAt =
+                "datetime('now')";
+
+        }
+
+        if (
+            statusFromAck ===
+            "failed"
+        ) {
+
+            updates.failedAt =
+                "datetime('now')";
+
+        }
+
+
+        if (
+            statusFromAck ===
+            "delivered"
+        ) {
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_messages
+                SET
+                    status = 'delivered',
+                    delivered_at =
+                        COALESCE(
+                            delivered_at,
+                            datetime('now')
+                        )
+                WHERE id = ?
+                `
+            )
+                .run(
+                    existing.id
+                );
+
+        }
+        else if (
+            statusFromAck ===
+            "read"
+        ) {
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_messages
+                SET
+                    status = 'read',
+                    delivered_at =
+                        COALESCE(
+                            delivered_at,
+                            datetime('now')
+                        ),
+                    read_at =
+                        COALESCE(
+                            read_at,
+                            datetime('now')
+                        )
+                WHERE id = ?
+                `
+            )
+                .run(
+                    existing.id
+                );
+
+        }
+        else if (
+            statusFromAck ===
+            "failed"
+        ) {
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_messages
+                SET
+                    status = 'failed',
+                    failed_at =
+                        COALESCE(
+                            failed_at,
+                            datetime('now')
+                        )
+                WHERE id = ?
+                `
+            )
+                .run(
+                    existing.id
+                );
+
+        }
+
+
+        try {
+
+            db.prepare(
+                `
+                INSERT INTO crm_whatsapp_events (
+                    whatsapp_message_id,
+                    branch_id,
+                    customer_id,
+                    provider_event_id,
+                    provider_message_id,
+                    event_type,
+                    event_at,
+                    payload_json,
+                    created_at
+                )
+                VALUES (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    datetime('now'),
+                    ?,
+                    datetime('now')
+                )
+                `
+            )
+                .run(
+                    existing.id,
+                    existing.branch_id ||
+                        null,
+                    existing.customer_id,
+                    null,
+                    providerMessageId,
+                    statusFromAck.toUpperCase(),
+                    JSON.stringify(
+                        {
+                            ack:
+                                Number(
+                                    ack
+                                )
+                        }
+                    )
+                );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+                "[WhatsApp] ACK event persistence failed:",
+                error?.message ||
+                    error
+            );
+
+        }
+
+
+        if (
+            existing.interaction_id
+        ) {
+
+            try {
+
+                db.prepare(
+                    `
+                    UPDATE crm_interactions
+                    SET
+                        outcome = ?,
+                        occurred_at = datetime('now')
+                    WHERE id = ?
+                    `
+                )
+                    .run(
+                        statusFromAck.toUpperCase(),
+                        existing.interaction_id
+                    );
+
+            }
+            catch {
+                // Non-critical.
+            }
+
+        }
+
+
+        emitEvent(
+            "message_ack",
+            {
+                messageId:
+                    existing.id,
+
+                providerMessageId,
+
+                branchId:
+                    existing.branch_id ||
+                    null,
+
+                customerId:
+                    existing.customer_id ||
+                    null,
+
+                campaignId:
+                    existing.campaign_id ||
+                    null,
+
+                campaignTargetId:
+                    existing.campaign_target_id ||
+                    null,
+
+                ack:
+                    Number(
+                        ack
+                    ),
+
+                status:
+                    statusFromAck
+            }
+        );
+
+
+        return {
+            messageId:
+                existing.id,
+            providerMessageId,
+            status:
+                statusFromAck
+        };
+
+    }
+
+
+    /*
+     * =========================================================
+     * SAVE OUTBOUND QUEUED
+     * =========================================================
+     */
+
+    function createOutboundLog(
+        db,
+        {
+            branchId = null,
+            customerId = null,
+            campaignId = null,
+            campaignTargetId = null,
+            accountId = null,
+            phone,
+            messageType = "TEXT",
+            templateName = null,
+            templateLanguage = "ar",
+            bodyText,
+            interactionId = null
+        } = {}
+    ) {
+
+        const result =
+            db.prepare(
+                `
+                INSERT INTO crm_whatsapp_messages (
+                    branch_id,
+                    customer_id,
+                    campaign_id,
+                    campaign_target_id,
+                    interaction_id,
+                    whatsapp_account_id,
+                    direction,
+                    message_type,
+                    template_name,
+                    template_language,
+                    body_text,
+                    provider_message_id,
+                    recipient_phone,
+                    status,
+                    queued_at,
+                    created_at
+                )
+                VALUES (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    'OUTBOUND',
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    NULL,
+                    ?,
+                    'queued',
+                    datetime('now'),
+                    datetime('now')
+                )
+                `
+            )
+                .run(
+                    branchId,
+                    customerId ||
+                        `PHONE:${phone}`,
+                    campaignId,
+                    campaignTargetId,
+                    interactionId,
+                    accountId,
+                    messageType,
+                    templateName,
+                    templateLanguage,
+                    bodyText,
+                    phone
+                );
+
+        return result.lastInsertRowid;
+
+    }
+
+
+    /*
+     * =========================================================
+     * CREATE OUTBOUND INTERACTION
+     * =========================================================
+     */
+
+    function createOutboundInteraction(
+        db,
+        {
+            branchId = null,
+            customerId = null,
+            campaignId = null,
+            campaignTargetId = null,
+            phone,
+            bodyText,
+            messageType = "TEXT"
+        } = {}
+    ) {
+
+        const result =
+            db.prepare(
+                `
+                INSERT INTO crm_interactions (
+                    branch_id,
+                    customer_id,
+                    campaign_id,
+                    campaign_target_id,
+                    channel,
+                    direction,
+                    interaction_type,
+                    outcome,
+                    phone,
+                    message_id,
+                    subject,
+                    content,
+                    employee_id,
+                    occurred_at,
+                    metadata_json,
+                    created_at
+                )
+                VALUES (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    'WHATSAPP',
+                    'OUTBOUND',
+                    'MESSAGE',
+                    'QUEUED',
+                    ?,
+                    NULL,
+                    NULL,
+                    ?,
+                    NULL,
+                    datetime('now'),
+                    ?,
+                    datetime('now')
+                )
+                `
+            )
+                .run(
+                    branchId,
+                    customerId ||
+                        `PHONE:${phone}`,
+                    campaignId,
+                    campaignTargetId,
+                    phone,
+                    bodyText,
+                    JSON.stringify(
+                        {
+                            messageType
+                        }
+                    )
+                );
+
+        return result.lastInsertRowid;
+
+    }
+
+
+    /*
+     * =========================================================
+     * SEND ONE
+     * =========================================================
+     */
+
+    async function sendMessage(
+        data = {}
+    ) {
+
+        const {
+            phone,
+            message = "",
+            type = "TEXT",
+            template,
+            templateId = null,
+            templateName = null,
+            customerId = null,
+            customerName = null,
+            branchId = null,
+            branchName = "",
+            amount = "",
+            dueDate = "",
+            itemName = "",
+            campaignId = null,
+            campaignTargetId = null,
+            employeeId = null
+        } = data;
+
+
+        if (
+            !isReady ||
+            !client
+        ) {
+
+            throw new Error(
+                "ظˆط§طھط³ط§ط¨ ط؛ظٹط± ظ…طھطµظ„ ط­ط§ظ„ظٹط§ظ‹."
+            );
+
+        }
+
+
+        const normalizedPhone =
+            normalizePhone(
+                phone
+            );
+
+        if (
+            !normalizedPhone
+        ) {
+
+            throw new Error(
+                "ط±ظ‚ظ… ط§ظ„ظ‡ط§طھظپ ظ…ط·ظ„ظˆط¨ ظˆطµط§ظ„ط­."
+            );
+
+        }
+
+
+        let db =
+            getDatabase();
+
+
+        const profile =
+            findCustomerProfile(
+                db,
+                {
+                    branchId,
+                    customerId,
+                    phone:
+                        normalizedPhone
+                }
+            );
+
+
+        const effectiveBranchId =
+            toPositiveInteger(
+                branchId
+            ) ||
+            toPositiveInteger(
+                profile?.branch_id
+            );
+
+
+        const effectiveCustomerId =
+            customerId ||
+            profile?.customer_id ||
+            `PHONE:${normalizedPhone}`;
+
+
+        const effectiveCustomerName =
+            customerName ||
+            profile?.customer_name ||
+            "";
+
+
+        const effectiveTemplateName =
+            templateName ||
+            template ||
+            null;
+
+
+        const templateRow =
+            getTemplate(
+                db,
+                {
+                    templateId,
+                    templateName:
+                        effectiveTemplateName
+                }
+            );
+
+
+        const templateText =
+            templateRow?.body_text ||
+            "";
+
+
+        let effectiveMessage =
+            formatMessage(
+                {
+                    message,
+                    templateText,
+                    customerName:
+                        effectiveCustomerName,
+                    branchName,
+                    amount,
+                    dueDate,
+                    itemName
+                }
+            );
+
+
+        if (
+            !effectiveMessage
+        ) {
+
+            throw new Error(
+                "ط§ظ„ط±ط³ط§ظ„ط© ظ…ط·ظ„ظˆط¨ط©."
+            );
+
+        }
+
+
+        const accountId =
+            ensureWhatsAppAccount(
+                db,
+                {
+                    branchId:
+                        effectiveBranchId,
+                    status:
+                        "ready"
+                }
+            );
+
+
+        const interactionId =
+            createOutboundInteraction(
+                db,
+                {
+                    branchId:
+                        effectiveBranchId,
+                    customerId:
+                        effectiveCustomerId,
+                    campaignId,
+                    campaignTargetId,
+                    phone:
+                        normalizedPhone,
+                    bodyText:
+                        effectiveMessage,
+                    messageType:
+                        getMessageType(
+                            type
+                        )
+                }
+            );
+
+
+        const logId =
+            createOutboundLog(
+                db,
+                {
+                    branchId:
+                        effectiveBranchId,
+                    customerId:
+                        effectiveCustomerId,
+                    campaignId,
+                    campaignTargetId,
+                    accountId,
+                    phone:
+                        normalizedPhone,
+                    messageType:
+                        getMessageType(
+                            type
+                        ),
+                    templateName:
+                        templateRow?.template_name ||
+                        effectiveTemplateName,
+                    templateLanguage:
+                        templateRow?.language_code ||
+                        "ar",
+                    bodyText:
+                        effectiveMessage,
+                    interactionId
+                }
+            );
+
+
+        const chatId =
+            toChatId(
+                normalizedPhone
+            );
+
+
+        try {
+
+            if (
+                typeof client.isRegisteredUser ===
+                "function"
+            ) {
+
+                const registered =
+                    await client.isRegisteredUser(
+                        chatId
+                    );
+
+                if (
+                    !registered
+                ) {
+
+                    throw new Error(
+                        "ط±ظ‚ظ… ط§ظ„ظ‡ط§طھظپ ط؛ظٹط± ظ…ط³ط¬ظ„ ط¹ظ„ظ‰ WhatsApp."
+                    );
+
+                }
+
+            }
+
+
+            const sent =
+                await client.sendMessage(
+                    chatId,
+                    effectiveMessage
+                );
+
+
+            const providerMessageId =
+                serializeMessageId(
+                    sent?.id
+                );
+
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_messages
+                SET
+                    status = 'sent',
+                    provider_message_id = ?,
+                    sent_at = datetime('now')
+                WHERE id = ?
+                `
+            )
+                .run(
+                    providerMessageId,
+                    logId
+                );
+
+
+            db.prepare(
+                `
+                UPDATE crm_interactions
+                SET
+                    outcome = 'SENT',
+                    message_id = ?,
+                    occurred_at = datetime('now')
+                WHERE id = ?
+                `
+            )
+                .run(
+                    providerMessageId,
+                    interactionId
+                );
+
+
+            try {
+
+                db.prepare(
+                    `
+                    INSERT INTO crm_whatsapp_events (
+                        whatsapp_message_id,
+                        branch_id,
+                        customer_id,
+                        provider_event_id,
+                        provider_message_id,
+                        event_type,
+                        event_at,
+                        payload_json,
+                        created_at
+                    )
+                    VALUES (
+                        ?,
+                        ?,
+                        ?,
+                        NULL,
+                        ?,
+                        'SENT',
+                        datetime('now'),
+                        ?,
+                        datetime('now')
+                    )
+                    `
+                )
+                    .run(
+                        logId,
+                        effectiveBranchId,
+                        String(
+                            effectiveCustomerId
+                        ),
+                        providerMessageId,
+                        JSON.stringify(
+                            {
+                                phone:
+                                    normalizedPhone,
+                                messageType:
+                                    getMessageType(
+                                        type
+                                    )
+                            }
+                        )
+                    );
+
+            }
+            catch {
+                // Non-critical.
+            }
+
+
+            if (
+                campaignTargetId
+            ) {
+
+                db.prepare(
+                    `
+                    UPDATE crm_campaign_targets
+                    SET
+                        contact_status = 'SENT',
+                        last_contact_at = datetime('now'),
+                        last_contact_result = 'SENT',
+                        updated_at = datetime('now')
+                    WHERE id = ?
+                    `
+                )
+                    .run(
+                        campaignTargetId
+                    );
+
+            }
+
+
+            emitEvent(
+                "sent",
+                {
+                    id:
+                        logId,
+                    interactionId,
+                    providerMessageId,
+                    branchId:
+                        effectiveBranchId ||
+                        null,
+                    customerId:
+                        String(
+                            effectiveCustomerId
+                        ),
+                    phone:
+                        normalizedPhone,
+                    bodyText:
+                        effectiveMessage,
+                    status:
+                        "sent"
+                }
+            );
+
+
+            return {
+                success:
+                    true,
+                id:
+                    logId,
+                interactionId,
+                providerMessageId,
+                phone:
+                    normalizedPhone,
+                message:
+                    effectiveMessage,
+                timestamp:
+                    new Date().toISOString()
+            };
+
+        }
+        catch (
+            error
+        ) {
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_messages
+                SET
+                    status = 'failed',
+                    error_message = ?,
+                    failed_at = datetime('now')
+                WHERE id = ?
+                `
+            )
+                .run(
+                    error?.message ||
+                        String(error),
+                    logId
+                );
+
+
+            db.prepare(
+                `
+                UPDATE crm_interactions
+                SET
+                    outcome = 'FAILED',
+                    occurred_at = datetime('now')
+                WHERE id = ?
+                `
+            )
+                .run(
+                    interactionId
+                );
+
+
+            if (
+                campaignTargetId
+            ) {
+
+                try {
+
+                    db.prepare(
+                        `
+                        UPDATE crm_campaign_targets
+                        SET
+                            contact_status = 'FAILED',
+                            last_contact_at = datetime('now'),
+                            last_contact_result = 'FAILED',
+                            updated_at = datetime('now')
+                        WHERE id = ?
+                        `
+                    )
+                        .run(
+                            campaignTargetId
+                        );
+
+                }
+                catch {
+                    // Non-critical.
+                }
+
+            }
+
+
+            emitEvent(
+                "failed",
+                {
+                    id:
+                        logId,
+                    interactionId,
+                    branchId:
+                        effectiveBranchId ||
+                        null,
+                    customerId:
+                        String(
+                            effectiveCustomerId
+                        ),
+                    phone:
+                        normalizedPhone,
+                    error:
+                        error?.message ||
+                        String(error),
+                    status:
+                        "failed"
+                }
+            );
+
+
+            throw error;
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * SEND BULK
+     * =========================================================
+     */
+
+    async function sendBulkMessages(
+        data = {}
+    ) {
+
+        const {
+            phones = [],
+            message = "",
+            type = "TEXT",
+            template = null,
+            templateId = null,
+            templateName = null,
+            branchId = null,
+            branchName = "",
+            campaignId = null,
+            delayMs =
+                DEFAULT_BULK_DELAY_MS
+        } = data;
+
+
+        if (
+            !Array.isArray(phones) ||
+            phones.length === 0
+        ) {
+
+            throw new Error(
+                "ظ‚ط§ط¦ظ…ط© ط§ظ„ط¹ظ…ظ„ط§ط، ط£ظˆ ط§ظ„ط£ط±ظ‚ط§ظ… ظ…ط·ظ„ظˆط¨ط©."
+            );
+
+        }
+
+
+        if (
+            !isReady ||
+            !client
+        ) {
+
+            throw new Error(
+                "ظˆط§طھط³ط§ط¨ ط؛ظٹط± ظ…طھطµظ„ ط­ط§ظ„ظٹط§ظ‹."
+            );
+
+        }
+
+
+        const results =
+            [];
+
+        const total =
+            phones.length;
+
+        const effectiveDelay =
+            Math.max(
+                0,
+                Number(
+                    delayMs
+                ) ||
+                DEFAULT_BULK_DELAY_MS
+            );
+
+
+        for (
+            let index = 0;
+            index < total;
+            index += 1
+        ) {
+
+            const raw =
+                phones[index];
+
+
+            const target =
+                typeof raw ===
+                "object" &&
+                raw !== null
+                    ? raw
+                    : {
+                        phone:
+                            raw
+                    };
+
+
+            try {
+
+                const result =
+                    await sendMessage(
+                        {
+                            phone:
+                                target.phone,
+
+                            message:
+                                target.message ??
+                                message,
+
+                            type:
+                                target.type ??
+                                type,
+
+                            template:
+                                target.template ??
+                                template,
+
+                            templateId:
+                                target.templateId ??
+                                templateId,
+
+                            templateName:
+                                target.templateName ??
+                                templateName,
+
+                            customerId:
+                                target.customerId ??
+                                null,
+
+                            customerName:
+                                target.customerName ??
+                                target.name ??
+                                null,
+
+                            branchId:
+                                target.branchId ??
+                                branchId,
+
+                            branchName:
+                                target.branchName ??
+                                branchName,
+
+                            amount:
+                                target.amount ??
+                                "",
+
+                            dueDate:
+                                target.dueDate ??
+                                "",
+
+                            itemName:
+                                target.itemName ??
+                                "",
+
+                            campaignId:
+                                target.campaignId ??
+                                campaignId,
+
+                            campaignTargetId:
+                                target.campaignTargetId ??
+                                null
+                        }
+                    );
+
+
+                results.push(
+                    {
+                        index,
+                        phone:
+                            target.phone,
+                        success:
+                            true,
+                        messageId:
+                            result.providerMessageId,
+                        result
+                    }
+                );
+
+            }
+            catch (
+                error
+            ) {
+
+                results.push(
+                    {
+                        index,
+                        phone:
+                            target.phone,
+                        success:
+                            false,
+                        error:
+                            error?.message ||
+                            String(error)
+                    }
+                );
+
+            }
+
+
+            emitEvent(
+                "bulk_progress",
+                {
+                    current:
+                        index + 1,
+                    total,
+                    successCount:
+                        results.filter(
+                            row =>
+                                row.success
+                        ).length,
+                    failedCount:
+                        results.filter(
+                            row =>
+                                !row.success
+                        ).length,
+                    last:
+                        results[
+                            results.length - 1
+                        ] || null
+                }
+            );
+
+
+            if (
+                index <
+                total - 1 &&
+                effectiveDelay > 0
+            ) {
+
+                await sleep(
+                    effectiveDelay
+                );
+
+            }
+
+        }
+
+
+        return {
+            success:
+                true,
+
+            total,
+
+            sent:
+                results.filter(
+                    row =>
+                        row.success
+                ).length,
+
+            failed:
+                results.filter(
+                    row =>
+                        !row.success
+                ).length,
+
+            results
+        };
+
+    }
+
+
+    /*
+     * =========================================================
+     * HISTORY
+     * =========================================================
+     */
+
+    async function getHistory(
+        filters = {}
+    ) {
+
+        const db =
+            getDatabase();
+
+
+        const {
+            branchId = null,
+            customerId = null,
+            campaignId = null,
+            status = null,
+            direction = null,
+            phone = null,
+            limit = 100,
+            offset = 0
+        } = filters;
+
+
+        const normalizedBranchId =
+            toPositiveInteger(
+                branchId
+            );
+
+
+        const normalizedCustomerId =
+            customerId !== null &&
+            customerId !== undefined &&
+            String(
+                customerId
+            ).trim() !== ""
+                ? String(
+                    customerId
+                )
+                : null;
+
+
+        const normalizedCampaignId =
+            toPositiveInteger(
+                campaignId
+            );
+
+
+        const normalizedStatus =
+            status
+                ? String(
+                    status
+                ).toLowerCase()
+                : null;
+
+
+        const normalizedDirection =
+            direction
+                ? String(
+                    direction
+                ).toUpperCase()
+                : null;
+
+
+        const normalizedPhone =
+            normalizePhone(
+                phone
+            );
+
+
+        const safeLimit =
+            Math.min(
+                500,
+                Math.max(
+                    1,
+                    Number(
+                        limit
+                    ) || 100
+                )
+            );
+
+
+        const safeOffset =
+            Math.max(
+                0,
+                Number(
+                    offset
+                ) || 0
+            );
+
+
+        /*
+         * =====================================================
+         * MATCHED HISTORY
+         * =====================================================
+         */
+
+        const matchedWhere =
+            [
+                "1 = 1"
+            ];
+
+        const matchedParams =
+            [];
+
+
+        if (
+            normalizedBranchId
+        ) {
+
+            matchedWhere.push(
+                "branch_id = ?"
+            );
+
+            matchedParams.push(
+                normalizedBranchId
+            );
+
+        }
+
+
+        if (
+            normalizedCustomerId
+        ) {
+
+            matchedWhere.push(
+                "customer_id = ?"
+            );
+
+            matchedParams.push(
+                normalizedCustomerId
+            );
+
+        }
+
+
+        if (
+            normalizedCampaignId
+        ) {
+
+            matchedWhere.push(
+                "campaign_id = ?"
+            );
+
+            matchedParams.push(
+                normalizedCampaignId
+            );
+
+        }
+
+
+        if (
+            normalizedStatus
+        ) {
+
+            matchedWhere.push(
+                "LOWER(status) = ?"
+            );
+
+            matchedParams.push(
+                normalizedStatus
+            );
+
+        }
+
+
+        if (
+            normalizedDirection
+        ) {
+
+            matchedWhere.push(
+                "direction = ?"
+            );
+
+            matchedParams.push(
+                normalizedDirection
+            );
+
+        }
+
+
+        if (
+            normalizedPhone
+        ) {
+
+            matchedWhere.push(
+                "recipient_phone = ?"
+            );
+
+            matchedParams.push(
+                normalizedPhone
+            );
+
+        }
+
+
+        /*
+         * =====================================================
+         * NEW CUSTOMER HISTORY
+         *
+         * Only unresolved rows are returned here.
+         *
+         * RESOLVED rows already have a normal linked copy in
+         * crm_whatsapp_messages, so returning them too would
+         * duplicate the conversation.
+         * =====================================================
+         */
+
+        const unmatchedWhere =
+            [
+                "status <> 'RESOLVED'"
+            ];
+
+        const unmatchedParams =
+            [];
+
+
+        if (
+            normalizedBranchId
+        ) {
+
+            unmatchedWhere.push(
+                `
+                (
+                    resolved_branch_id = ?
+                    OR
+                    resolved_branch_id IS NULL
+                )
+                `
+            );
+
+            unmatchedParams.push(
+                normalizedBranchId
+            );
+
+        }
+
+
+        if (
+            normalizedCustomerId
+        ) {
+
+            /*
+             * An unresolved message has no customer yet,
+             * therefore it cannot match a customer filter.
+             */
+            unmatchedWhere.push(
+                "1 = 0"
+            );
+
+        }
+
+
+        if (
+            normalizedCampaignId
+        ) {
+
+            /*
+             * Unmatched messages are not campaign-attributed.
+             */
+            unmatchedWhere.push(
+                "1 = 0"
+            );
+
+        }
+
+
+        if (
+            normalizedStatus
+        ) {
+
+            unmatchedWhere.push(
+                "LOWER(status) = ?"
+            );
+
+            unmatchedParams.push(
+                normalizedStatus
+            );
+
+        }
+
+
+        if (
+            normalizedDirection &&
+            normalizedDirection !== "INBOUND"
+        ) {
+
+            unmatchedWhere.push(
+                "1 = 0"
+            );
+
+        }
+
+
+        if (
+            normalizedPhone
+        ) {
+
+            unmatchedWhere.push(
+                "phone = ?"
+            );
+
+            unmatchedParams.push(
+                normalizedPhone
+            );
+
+        }
+
+
+        const matchedSql =
+            `
+            SELECT
+                id,
+                branch_id,
+                customer_id,
+                campaign_id,
+                campaign_target_id,
+                interaction_id,
+                whatsapp_account_id,
+                direction,
+                message_type,
+                template_name,
+                template_language,
+                body_text,
+                provider_message_id,
+                recipient_phone,
+                status,
+                inbound_reply,
+                created_at,
+
+                NULL AS unmatched_message_id,
+
+                0 AS is_unmatched,
+
+                NULL AS unmatched_status,
+
+                NULL AS resolution_source
+
+            FROM crm_whatsapp_messages
+
+            WHERE
+                ${matchedWhere.join(
+                    " AND "
+                )}
+            `;
+
+
+        const unmatchedSql =
+            `
+            SELECT
+                NULL AS id,
+                resolved_branch_id AS branch_id,
+                resolved_customer_id AS customer_id,
+                NULL AS campaign_id,
+                NULL AS campaign_target_id,
+                NULL AS interaction_id,
+                whatsapp_account_id,
+                'INBOUND' AS direction,
+                message_type,
+                NULL AS template_name,
+                'ar' AS template_language,
+                body_text,
+                provider_message_id,
+                phone AS recipient_phone,
+                'received' AS status,
+                1 AS inbound_reply,
+                created_at,
+
+                id AS unmatched_message_id,
+
+                1 AS is_unmatched,
+
+                status AS unmatched_status,
+
+                NULL AS resolution_source
+
+            FROM crm_whatsapp_unmatched_messages
+
+            WHERE
+                ${unmatchedWhere.join(
+                    " AND "
+                )}
+            `;
+
+
+        const sql =
+            `
+            SELECT
+                history.*,
+
+                CASE
+                    WHEN history.is_unmatched = 1
+                        THEN 'ط¹ظ…ظٹظ„ ط¬ط¯ظٹط¯'
+                    ELSE COALESCE(
+                        (
+                            SELECT
+                                customer_name
+                            FROM crm_customer_profiles p
+                            WHERE
+                                p.branch_id =
+                                    history.branch_id
+                                AND
+                                p.customer_id =
+                                    history.customer_id
+                            LIMIT 1
+                        ),
+                        history.recipient_phone
+                    )
+                END AS customer_name
+
+            FROM (
+                ${matchedSql}
+
+                UNION ALL
+
+                ${unmatchedSql}
+
+            ) history
+
+            ORDER BY
+                history.created_at DESC,
+                COALESCE(
+                    history.id,
+                    history.unmatched_message_id
+                ) DESC
+
+            LIMIT ${safeLimit}
+
+            OFFSET ${safeOffset}
+            `;
+
+
+        const rows =
+            db.prepare(
+                sql
+            )
+                .all(
+                    ...matchedParams,
+                    ...unmatchedParams
+                );
+
+
+        return rows;
+
+    }
+
+    /*
+     * =========================================================
+     * STATUS
+     * =========================================================
+     */
+
+    async function getStatus() {
+
+        return getState();
+
+    }
+
+
+    /*
+     * =========================================================
+     * INITIALIZE
+     * =========================================================
+     */
+
+    async function initialize() {
+
+        if (
+            isReady &&
+            client
+        ) {
+
+            return getState();
+
+        }
+
+
+        if (
+            initializing
+        ) {
+
+            return getState();
+
+        }
+
+
+        initializing =
+            true;
+
+        status =
+            "connecting";
+
+        try {
+
+            getDatabase();
+
+            const whatsappClient =
+                ensureClient();
+
+
+            whatsappClient
+                .initialize()
+                .catch(
+                    error => {
+
+                        initializing =
+                            false;
+
+                        isReady =
+                            false;
+
+                        status =
+                            "error";
+
+                        console.error(
+                            "[WhatsApp] Initialize failed:",
+                            error
+                        );
+
+
+                        emitEvent(
+                            "error",
+                            {
+                                status,
+                                error:
+                                    error?.message ||
+                                    String(error)
+                            }
+                        );
+
+                    }
+                );
+
+
+            emitEvent(
+                "initializing",
+                {
+                    status
+                }
+            );
+
+
+            return getState();
+
+        }
+        catch (
+            error
+        ) {
+
+            initializing =
+                false;
+
+            isReady =
+                false;
+
+            status =
+                "error";
+
+            throw error;
+
+        }
+        finally {
+
+            /*
+             * The actual ready/failed lifecycle is event-driven.
+             * We only release the initialization guard here.
+             */
+
+            initializing =
+                false;
+
+        }
+
+    }
+
+
+    /*
+     * =========================================================
+     * LOGOUT
+     * =========================================================
+     */
+
+    async function logout() {
+
+        if (
+            client
+        ) {
+
+            try {
+
+                await client.logout();
+
+            }
+            catch (
+                error
+            ) {
+
+                console.warn(
+                    "[WhatsApp] logout() warning:",
+                    error?.message ||
+                        error
+                );
+
+            }
+
+
+            try {
+
+                await client.destroy();
+
+            }
+            catch (
+                error
+            ) {
+
+                console.warn(
+                    "[WhatsApp] destroy() warning:",
+                    error?.message ||
+                        error
+                );
+
+            }
+
+        }
+
+
+        client =
+            null;
+
+        initializedListeners =
+            false;
+
+        isReady =
+            false;
+
+        status =
+            "disconnected";
+
+        qrCodeData =
+            null;
+
+
+        try {
+
+            const db =
+                getDatabase();
+
+            db.prepare(
+                `
+                UPDATE crm_whatsapp_accounts
+                SET
+                    status = 'disconnected',
+                    updated_at = datetime('now')
+                WHERE
+                    provider = ?
+                `
+            )
+                .run(
+                    PROVIDER
+                );
+
+        }
+        catch {
+            // Non-critical.
+        }
+
+
+        emitEvent(
+            "logged_out",
+            {
+                status
+            }
+        );
+
+
+        return {
+            success:
+                true,
+            status
+        };
+
+    }
+
+
+    /*
+     * =========================================================
+     * DESTROY / SHUTDOWN
+     * =========================================================
+     */
+
+    async function destroy() {
+
+        if (
+            client
+        ) {
+
+            try {
+
+                await client.destroy();
+
+            }
+            catch (
+                error
+            ) {
+
+                console.warn(
+                    "[WhatsApp] shutdown warning:",
+                    error?.message ||
+                        error
+                );
+
+            }
+
+        }
+
+
+        client =
+            null;
+
+        initializedListeners =
+            false;
+
+        isReady =
+            false;
+
+        status =
+            "disconnected";
+
+        qrCodeData =
+            null;
+
+    }
+
+
+    /*
+     * =========================================================
+     * EVENT SINK
+     * =========================================================
+     */
+
+    function setEventSink(
+        handler
+    ) {
+
+        eventSink =
+            typeof handler ===
+            "function"
+                ? handler
+                : null;
+
+    }
+
+
+    return {
+        initialize,
+        getStatus,
+        sendMessage,
+        sendBulkMessages,
+        getHistory,
+        logout,
+        destroy,
+        setEventSink,
+        normalizePhone
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SINGLETON
+ * =========================================================
+ */
+
+export default function getWhatsAppService() {
+
+    if (
+        !serviceInstance
+    ) {
+
+        serviceInstance =
+            createWhatsAppService();
+
+    }
+
+    return serviceInstance;
+
+}
+
+

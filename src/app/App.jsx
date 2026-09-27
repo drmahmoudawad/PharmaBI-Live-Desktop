@@ -50,6 +50,10 @@ import MasterItemPage
     from "../components/MasterItemPage.jsx";
 
 
+import WhatsAppPage
+    from "../components/WhatsAppPage.jsx";
+
+
 import {
     buildTodayRange,
     isValidSavedBranch,
@@ -914,7 +918,13 @@ function App() {
 
                                             : activeSection === "sales"
     ? renderSales()
-    : activeSection === "products" && activeModule === "master-items"
+    
+    : activeSection === "crm"
+        ? (
+            <WhatsAppPage
+                selectedBranchId={selectedBranchId}
+            />
+        ): activeSection === "products" && activeModule === "master-items"
         ? <MasterItemPage />
         : (
 

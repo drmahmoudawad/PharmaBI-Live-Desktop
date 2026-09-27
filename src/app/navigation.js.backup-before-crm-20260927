@@ -1,0 +1,113 @@
+export const NAVIGATION = [
+
+    {
+        id: "dashboard",
+        label: "لوحة التحكم",
+        children: [
+            { id: "overview", label: "نظرة عامة على النشاط", sectionId: "dashboard" },
+            { id: "branch-health", label: "صحة الفروع", sectionId: "dashboard" },
+            { id: "alerts", label: "التنبيهات والفرص", sectionId: "dashboard" }
+        ]
+    },
+
+    {
+        id: "sales",
+        label: "المبيعات",
+        children: [
+            { id: "sales-overview", label: "نظرة عامة على المبيعات", sectionId: "sales" },
+            { id: "sales-trend", label: "اتجاه المبيعات", sectionId: "sales" },
+            { id: "sales-day-hour", label: "اليوم / الساعة", sectionId: "sales" },
+            { id: "sales-sellers", label: "البائعون", sectionId: "sales" },
+            { id: "sales-returns", label: "المرتجعات", sectionId: "sales" }
+        ]
+    },
+
+    {
+        id: "customers",
+        label: "العملاء",
+        children: [
+            { id: "customer-overview", label: "نظرة عامة على العملاء", sectionId: "customers" },
+            { id: "customer-rfm", label: "تحليل سلوك العملاء", sectionId: "customers" },
+            { id: "customer-retention", label: "الاحتفاظ بالعملاء", sectionId: "customers" },
+            { id: "customer-churn", label: "التوقف / عدم النشاط", sectionId: "customers" },
+            { id: "customer-clv", label: "القيمة العمرية للعميل", sectionId: "customers" },
+            { id: "customer-cohort", label: "تحليل مجموعات العملاء", sectionId: "customers" }
+        ]
+    },
+
+    {
+        id: "products",
+        label: "المنتجات",
+        children: [
+            { id: "product-overview", label: "نظرة عامة على المنتجات", sectionId: "products" },
+            { id: "product-top", label: "أفضل المنتجات", sectionId: "products" },
+            { id: "product-profitability", label: "الربحية", sectionId: "products" },
+            { id: "product-abc", label: "تحليل ABC", sectionId: "products" },
+            { id: "product-stock", label: "مخاطر المخزون", sectionId: "products" },
+            { id: "master-items", label: "\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0623\u0635\u0646\u0627\u0641", sectionId: "products" }
+        ]
+    },
+
+    {
+        id: "operations",
+        label: "الحسابات",
+        children: [
+            {
+                id: "purchase-overview",
+                label: "\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629 \u0639\u0644\u0649 \u0627\u0644\u0645\u0634\u062a\u0631\u064a\u0627\u062a \u0648\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a",
+                sectionId: "procurement"
+            },
+            {
+                id: "supplier-performance",
+                label: "\u0623\u062f\u0627\u0621 \u0627\u0644\u0645\u0648\u0631\u062f\u064a\u0646",
+                sectionId: "procurement"
+            },
+            {
+                id: "interbranch-exchanges",
+                label: "\u0627\u0644\u062a\u0628\u0627\u062f\u0644\u0627\u062a \u0628\u064a\u0646 \u0627\u0644\u0641\u0631\u0648\u0639",
+                sectionId: "procurement"
+            }
+        ]
+    },
+
+    {
+        id: "performance",
+        label: "الأداء",
+        children: [
+            { id: "profit-overview", label: "نظرة عامة على الربحية", sectionId: "profitability" },
+            { id: "profit-branch", label: "الربحية حسب الفرع", sectionId: "profitability" },
+            { id: "profit-product", label: "الربحية حسب المنتج", sectionId: "profitability" },
+            { id: "profit-anomalies", label: "شذوذ التكلفة", sectionId: "profitability" },
+            { id: "branch-overview", label: "نظرة عامة على الفروع", sectionId: "branches" },
+            { id: "branch-comparison", label: "مقارنة الفروع", sectionId: "branches" },
+            { id: "branch-ranking", label: "ترتيب الفروع", sectionId: "branches" },
+            { id: "staff-overview", label: "نظرة عامة على الموظفين", sectionId: "staff" },
+            { id: "staff-sales", label: "المبيعات حسب البائع", sectionId: "staff" },
+            { id: "staff-productivity", label: "الإنتاجية", sectionId: "staff" }
+        ]
+    },
+
+    {
+        id: "forecast",
+        label: "التنبؤ",
+        children: [
+            { id: "forecast-sales", label: "توقع المبيعات", sectionId: "forecast" },
+            { id: "forecast-demand", label: "توقع الطلب", sectionId: "forecast" },
+            { id: "forecast-inventory", label: "توقع المخزون", sectionId: "forecast" }
+        ]
+    },
+
+    {
+        id: "system",
+        label: "النظام",
+        children: [
+            { id: "quality-overview", label: "جودة البيانات", sectionId: "quality" },
+            { id: "quality-cost", label: "جودة التكلفة", sectionId: "quality" },
+            { id: "quality-reconciliation", label: "مطابقة المبيعات", sectionId: "quality" },
+            { id: "connections", label: "اتصالات الفروع", sectionId: "system" },
+            { id: "cache", label: "حالة التخزين المؤقت", sectionId: "system" }
+        ]
+    }
+
+];
+

@@ -1,0 +1,171 @@
+
+import {
+    getBranchPool
+} from "../connection/connectionManager.js";
+
+
+const cache =
+    new Map();
+
+
+const CACHE_TTL_MS =
+    5 * 60 * 1000;
+
+
+export async function getEmployeeDirectory({
+    branchId,
+    connection = null
+}) {
+
+    const numericBranchId =
+        Number(branchId);
+
+    if (
+        !Number.isFinite(
+            numericBranchId
+        ) ||
+        numericBranchId <= 0
+    ) {
+        throw new Error(
+            "A valid branch is required."
+        );
+    }
+
+
+    const cached =
+        cache.get(
+            numericBranchId
+        );
+
+    if (
+        cached &&
+        Date.now() -
+            cached.createdAt <
+            CACHE_TTL_MS
+    ) {
+        return {
+            success: true,
+            branchId:
+                numericBranchId,
+            employees:
+                cached.employees,
+            cached: true
+        };
+    }
+
+
+    const pool =
+        await getBranchPool(
+            numericBranchId,
+            connection
+        );
+
+
+    const result =
+        await pool
+            .request()
+            .query(`
+                SET NOCOUNT ON;
+
+                SELECT
+                    CONVERT(
+                        nvarchar(100),
+                        c.ID
+                    ) AS employee_id,
+
+                    LTRIM(
+                        RTRIM(
+                            CONVERT(
+                                nvarchar(400),
+                                c.Name
+                            )
+                        )
+                    ) AS employee_name
+
+                FROM dbo.Cards c
+
+                WHERE
+                    ISNULL(
+                        c.IsEmployee,
+                        0
+                    ) = 1
+
+                AND
+                    NULLIF(
+                        LTRIM(
+                            RTRIM(
+                                CONVERT(
+                                    nvarchar(400),
+                                    c.Name
+                                )
+                            )
+                        ),
+                        ''
+                    ) IS NOT NULL
+
+                ORDER BY
+                    c.Name;
+            `);
+
+
+    const employees =
+        (
+            result?.recordset ||
+            []
+        )
+        .map(
+            row => ({
+
+                employeeId:
+                    String(
+                        row?.employee_id ||
+                        ""
+                    ).trim(),
+
+                employeeName:
+                    String(
+                        row?.employee_name ||
+                        ""
+                    ).trim()
+
+            })
+        )
+        .filter(
+            row =>
+                row.employeeId &&
+                row.employeeName
+        );
+
+
+    cache.set(
+        numericBranchId,
+        {
+            createdAt:
+                Date.now(),
+            employees
+        }
+    );
+
+
+    console.log(
+        "[employeeDirectory] branch=" +
+        numericBranchId +
+        " employees=" +
+        employees.length
+    );
+
+
+    return {
+        success: true,
+        branchId:
+            numericBranchId,
+        employees,
+        cached: false
+    };
+
+}
+
+
+export default {
+    getEmployeeDirectory
+};

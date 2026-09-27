@@ -1,0 +1,1938 @@
+import Database from "better-sqlite3";
+import path from "node:path";
+import {
+    app
+} from "electron";
+
+
+let database =
+    null;
+
+
+/*
+ * =========================================================
+ * DATABASE PATH
+ * =========================================================
+ */
+
+function getDatabasePath() {
+
+    return path.join(
+
+        app.getPath(
+            "userData"
+        ),
+
+        "pharmabi-local.db"
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * OPEN DATABASE
+ * =========================================================
+ */
+
+function openDatabase() {
+
+    if (
+        database
+    ) {
+
+        return database;
+
+    }
+
+
+    database =
+        new Database(
+            getDatabasePath()
+        );
+
+
+    database.pragma(
+        "journal_mode = WAL"
+    );
+
+
+    database.pragma(
+        "synchronous = NORMAL"
+    );
+
+
+    database.pragma(
+        "foreign_keys = ON"
+    );
+
+
+    database.pragma(
+        "busy_timeout = 10000"
+    );
+
+
+    createSchema();
+
+
+    console.log(
+
+        `[localSalesDb] OPEN ${getDatabasePath()}`
+
+    );
+
+
+    return database;
+
+}
+
+
+/*
+ * =========================================================
+ * SCHEMA
+ * =========================================================
+ */
+
+function createSchema() {
+
+    const db =
+        database;
+
+
+    db.exec(`
+
+        CREATE TABLE IF NOT EXISTS sales_history (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            branch_id INTEGER NOT NULL,
+
+            ticket_id TEXT NOT NULL,
+
+            line_id TEXT NOT NULL,
+
+            item_id TEXT,
+
+            item_name TEXT,
+
+            customer_id TEXT,
+
+            customer_name TEXT,
+
+            date TEXT,
+
+            sales_return REAL DEFAULT 0,
+
+            transaction_type TEXT,
+
+            ticket_total REAL DEFAULT 0,
+
+            packs REAL DEFAULT 0,
+
+            units REAL DEFAULT 0,
+
+            parts REAL DEFAULT 1,
+
+            base_units REAL DEFAULT 0,
+
+            bonus REAL DEFAULT 0,
+
+            sales_price REAL DEFAULT 0,
+
+            unit_price REAL DEFAULT 0,
+
+            gross_line_value REAL DEFAULT 0,
+
+            discount REAL DEFAULT 0,
+
+            extra_discount REAL DEFAULT 0,
+
+            net_line_value REAL DEFAULT 0,
+
+            cost_price REAL DEFAULT 0,
+
+            unit_cost REAL DEFAULT 0,
+
+            line_cost REAL DEFAULT 0,
+
+            purchase_cost REAL DEFAULT 0,
+
+            purchase_unit_cost REAL DEFAULT 0,
+
+            purchase_date TEXT,
+
+            purchase_invoice_id TEXT,
+
+            purchase_invoice_code TEXT,
+
+            purchase_vendor_id TEXT,
+
+            purchase_parts REAL DEFAULT 1,
+
+            source_pos_item_cost REAL DEFAULT 0,
+
+            is_content INTEGER DEFAULT 0,
+
+            store_id TEXT,
+
+            sales_rep_id TEXT,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE (
+
+                branch_id,
+
+                line_id
+
+            )
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_date
+
+        ON sales_history (
+
+            branch_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_ticket
+
+        ON sales_history (
+
+            branch_id,
+
+            ticket_id
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_item_date
+
+        ON sales_history (
+
+            branch_id,
+
+            item_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_customer_date
+
+        ON sales_history (
+
+            branch_id,
+
+            customer_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_branch_seller_date
+
+        ON sales_history (
+
+            branch_id,
+
+            sales_rep_id,
+
+            date
+
+        );
+
+
+        CREATE INDEX IF NOT EXISTS
+            idx_sales_history_date
+
+        ON sales_history (
+
+            date
+
+        );
+
+
+        CREATE TABLE IF NOT EXISTS sales_sync_state (
+
+            branch_id INTEGER PRIMARY KEY,
+
+            oldest_date TEXT,
+
+            newest_date TEXT,
+
+            last_sync_started_at TEXT,
+
+            last_sync_finished_at TEXT,
+
+            last_sync_status TEXT,
+
+            last_sync_rows INTEGER DEFAULT 0,
+
+            total_rows INTEGER DEFAULT 0,
+
+            error_message TEXT
+
+        );
+
+    `);
+
+}
+
+
+/*
+ * =========================================================
+ * STATEMENTS
+ * =========================================================
+ */
+
+function getStatements() {
+
+    const db =
+        openDatabase();
+
+
+    return {
+
+        insertOrReplace:
+            db.prepare(`
+
+                INSERT INTO sales_history (
+
+                    branch_id,
+                    ticket_id,
+                    line_id,
+                    item_id,
+                    item_name,
+                    customer_id,
+                    customer_name,
+                    date,
+                    sales_return,
+                    transaction_type,
+                    ticket_total,
+                    packs,
+                    units,
+                    parts,
+                    base_units,
+                    bonus,
+                    sales_price,
+                    unit_price,
+                    gross_line_value,
+                    discount,
+                    extra_discount,
+                    net_line_value,
+                    cost_price,
+                    unit_cost,
+                    line_cost,
+                    purchase_cost,
+                    purchase_unit_cost,
+                    purchase_date,
+                    purchase_invoice_id,
+                    purchase_invoice_code,
+                    purchase_vendor_id,
+                    purchase_parts,
+                    source_pos_item_cost,
+                    is_content,
+                    store_id,
+                    sales_rep_id,
+                    updated_at
+
+                )
+
+                VALUES (
+
+                    @branch_id,
+                    @ticket_id,
+                    @line_id,
+                    @item_id,
+                    @item_name,
+                    @customer_id,
+                    @customer_name,
+                    @date,
+                    @sales_return,
+                    @transaction_type,
+                    @ticket_total,
+                    @packs,
+                    @units,
+                    @parts,
+                    @base_units,
+                    @bonus,
+                    @sales_price,
+                    @unit_price,
+                    @gross_line_value,
+                    @discount,
+                    @extra_discount,
+                    @net_line_value,
+                    @cost_price,
+                    @unit_cost,
+                    @line_cost,
+                    @purchase_cost,
+                    @purchase_unit_cost,
+                    @purchase_date,
+                    @purchase_invoice_id,
+                    @purchase_invoice_code,
+                    @purchase_vendor_id,
+                    @purchase_parts,
+                    @source_pos_item_cost,
+                    @is_content,
+                    @store_id,
+                    @sales_rep_id,
+                    CURRENT_TIMESTAMP
+
+                )
+
+                ON CONFLICT (
+
+                    branch_id,
+                    line_id
+
+                )
+
+                DO UPDATE SET
+
+                    ticket_id =
+                        excluded.ticket_id,
+
+                    item_id =
+                        excluded.item_id,
+
+                    item_name =
+                        excluded.item_name,
+
+                    customer_id =
+                        excluded.customer_id,
+
+                    customer_name =
+                        excluded.customer_name,
+
+                    date =
+                        excluded.date,
+
+                    sales_return =
+                        excluded.sales_return,
+
+                    transaction_type =
+                        excluded.transaction_type,
+
+                    ticket_total =
+                        excluded.ticket_total,
+
+                    packs =
+                        excluded.packs,
+
+                    units =
+                        excluded.units,
+
+                    parts =
+                        excluded.parts,
+
+                    base_units =
+                        excluded.base_units,
+
+                    bonus =
+                        excluded.bonus,
+
+                    sales_price =
+                        excluded.sales_price,
+
+                    unit_price =
+                        excluded.unit_price,
+
+                    gross_line_value =
+                        excluded.gross_line_value,
+
+                    discount =
+                        excluded.discount,
+
+                    extra_discount =
+                        excluded.extra_discount,
+
+                    net_line_value =
+                        excluded.net_line_value,
+
+                    cost_price =
+                        excluded.cost_price,
+
+                    unit_cost =
+                        excluded.unit_cost,
+
+                    line_cost =
+                        excluded.line_cost,
+
+                    purchase_cost =
+                        excluded.purchase_cost,
+
+                    purchase_unit_cost =
+                        excluded.purchase_unit_cost,
+
+                    purchase_date =
+                        excluded.purchase_date,
+
+                    purchase_invoice_id =
+                        excluded.purchase_invoice_id,
+
+                    purchase_invoice_code =
+                        excluded.purchase_invoice_code,
+
+                    purchase_vendor_id =
+                        excluded.purchase_vendor_id,
+
+                    purchase_parts =
+                        excluded.purchase_parts,
+
+                    source_pos_item_cost =
+                        excluded.source_pos_item_cost,
+
+                    is_content =
+                        excluded.is_content,
+
+                    store_id =
+                        excluded.store_id,
+
+                    sales_rep_id =
+                        excluded.sales_rep_id,
+
+                    updated_at =
+                        CURRENT_TIMESTAMP
+
+            `),
+
+
+        getSalesRange:
+            db.prepare(`
+
+                SELECT
+
+                    branch_id,
+                    ticket_id,
+                    line_id,
+                    item_id,
+                    item_name,
+                    customer_id,
+                    customer_name,
+                    date,
+                    sales_return,
+                    transaction_type,
+                    ticket_total,
+                    packs,
+                    units,
+                    parts,
+                    base_units,
+                    bonus,
+                    sales_price,
+                    unit_price,
+                    gross_line_value,
+                    discount,
+                    extra_discount,
+                    net_line_value,
+                    cost_price,
+                    unit_cost,
+                    line_cost,
+                    purchase_cost,
+                    purchase_unit_cost,
+                    purchase_date,
+                    purchase_invoice_id,
+                    purchase_invoice_code,
+                    purchase_vendor_id,
+                    purchase_parts,
+                    source_pos_item_cost,
+                    is_content,
+                    store_id,
+                    sales_rep_id
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                AND
+
+                    date >= ?
+
+                AND
+
+                    date < ?
+
+                ORDER BY
+
+                    date ASC,
+
+                    ticket_id ASC,
+
+                    line_id ASC
+
+            `),
+
+
+        getMonthStats:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE
+
+                    branch_id = ?
+
+                AND
+
+                    date >= ?
+
+                AND
+
+                    date < ?
+
+            `),
+
+
+        getDateRange:
+            db.prepare(`
+
+                SELECT
+
+                    MIN(date) AS oldest_date,
+
+                    MAX(date) AS newest_date,
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getBranchCount:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(*) AS total_rows
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getMonthCount:
+            db.prepare(`
+
+                SELECT
+
+                    COUNT(
+                        DISTINCT
+                        substr(
+                            date,
+                            1,
+                            7
+                        )
+                    ) AS total_months
+
+                FROM sales_history
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        getSyncState:
+            db.prepare(`
+
+                SELECT
+
+                    branch_id,
+                    oldest_date,
+                    newest_date,
+                    last_sync_started_at,
+                    last_sync_finished_at,
+                    last_sync_status,
+                    last_sync_rows,
+                    total_rows,
+                    error_message
+
+                FROM sales_sync_state
+
+                WHERE branch_id = ?
+
+            `),
+
+
+        saveSyncState:
+            db.prepare(`
+
+                INSERT INTO sales_sync_state (
+
+                    branch_id,
+                    oldest_date,
+                    newest_date,
+                    last_sync_started_at,
+                    last_sync_finished_at,
+                    last_sync_status,
+                    last_sync_rows,
+                    total_rows,
+                    error_message
+
+                )
+
+                VALUES (
+
+                    @branch_id,
+                    @oldest_date,
+                    @newest_date,
+                    @last_sync_started_at,
+                    @last_sync_finished_at,
+                    @last_sync_status,
+                    @last_sync_rows,
+                    @total_rows,
+                    @error_message
+
+                )
+
+                ON CONFLICT (
+
+                    branch_id
+
+                )
+
+                DO UPDATE SET
+
+                    oldest_date =
+                        excluded.oldest_date,
+
+                    newest_date =
+                        excluded.newest_date,
+
+                    last_sync_started_at =
+                        excluded.last_sync_started_at,
+
+                    last_sync_finished_at =
+                        excluded.last_sync_finished_at,
+
+                    last_sync_status =
+                        excluded.last_sync_status,
+
+                    last_sync_rows =
+                        excluded.last_sync_rows,
+
+                    total_rows =
+                        excluded.total_rows,
+
+                    error_message =
+                        excluded.error_message
+
+            `)
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE HELPERS
+ * =========================================================
+ */
+
+function getExclusiveDate(
+
+    value
+
+) {
+
+    const normalized =
+        String(
+            value ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            normalized
+        )
+    ) {
+
+        throw new Error(
+            "Invalid date. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const [
+        year,
+        month,
+        day
+    ] =
+        normalized
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const next =
+        new Date(
+
+            Date.UTC(
+
+                year,
+                month - 1,
+                day + 1
+
+            )
+
+        );
+
+
+    return [
+
+        next.getUTCFullYear(),
+
+        String(
+            next.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        String(
+            next.getUTCDate()
+        ).padStart(
+            2,
+            "0"
+        )
+
+    ].join(
+        "-"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * NORMALIZATION
+ * =========================================================
+ */
+
+function toNumber(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function toBooleanInteger(
+    value
+) {
+
+    return (
+
+        value === true ||
+        value === 1 ||
+        value === "1" ||
+        value === "true"
+
+    )
+        ? 1
+        : 0;
+
+}
+
+
+function toNullableString(
+    value
+) {
+
+    if (
+
+        value === null ||
+        value === undefined ||
+        value === ""
+
+    ) {
+
+        return null;
+
+    }
+
+
+    return String(
+        value
+    );
+
+}
+
+
+function normalizeRow(
+    branchId,
+    row
+) {
+
+    return {
+
+        branch_id:
+            Number(
+                branchId
+            ),
+
+        ticket_id:
+            String(
+                row?.ticketId ??
+                ""
+            ),
+
+        line_id:
+            String(
+                row?.lineId ??
+                ""
+            ),
+
+        item_id:
+            toNullableString(
+                row?.itemId
+            ),
+
+        item_name:
+            toNullableString(
+                row?.itemName
+            ),
+
+        customer_id:
+            toNullableString(
+                row?.customerId
+            ),
+
+        customer_name:
+            toNullableString(
+                row?.customerName
+            ),
+
+        date:
+            toNullableString(
+                row?.date
+            ),
+
+        sales_return:
+            toNumber(
+                row?.salesReturn
+            ),
+
+        transaction_type:
+            toNullableString(
+                row?.transactionType
+            ),
+
+        ticket_total:
+            toNumber(
+                row?.ticketTotal
+            ),
+
+        packs:
+            toNumber(
+                row?.packs
+            ),
+
+        units:
+            toNumber(
+                row?.units
+            ),
+
+        parts:
+            toNumber(
+                row?.parts
+            ) || 1,
+
+        base_units:
+            toNumber(
+                row?.baseUnits
+            ),
+
+        bonus:
+            toNumber(
+                row?.bonus
+            ),
+
+        sales_price:
+            toNumber(
+                row?.salesPrice
+            ),
+
+        unit_price:
+            toNumber(
+                row?.unitPrice
+            ),
+
+        gross_line_value:
+            toNumber(
+                row?.grossLineValue
+            ),
+
+        discount:
+            toNumber(
+                row?.discount
+            ),
+
+        extra_discount:
+            toNumber(
+                row?.extraDiscount
+            ),
+
+        net_line_value:
+            toNumber(
+                row?.netLineValue
+            ),
+
+        cost_price:
+            toNumber(
+                row?.costPrice
+            ),
+
+        unit_cost:
+            toNumber(
+                row?.unitCost
+            ),
+
+        line_cost:
+            toNumber(
+                row?.lineCost
+            ),
+
+        purchase_cost:
+            toNumber(
+                row?.purchaseCost
+            ),
+
+        purchase_unit_cost:
+            toNumber(
+                row?.purchaseUnitCost
+            ),
+
+        purchase_date:
+            toNullableString(
+                row?.purchaseDate
+            ),
+
+        purchase_invoice_id:
+            toNullableString(
+                row?.purchaseInvoiceId
+            ),
+
+        purchase_invoice_code:
+            toNullableString(
+                row?.purchaseInvoiceCode
+            ),
+
+        purchase_vendor_id:
+            toNullableString(
+                row?.purchaseVendorId
+            ),
+
+        purchase_parts:
+            toNumber(
+                row?.purchaseParts
+            ) || 1,
+
+        source_pos_item_cost:
+            toNumber(
+                row?.sourcePosItemCost
+            ),
+
+        is_content:
+            toBooleanInteger(
+                row?.isContent
+            ),
+
+        store_id:
+            toNullableString(
+                row?.storeId
+            ),
+
+        sales_rep_id:
+            toNullableString(
+                row?.salesRepId
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SAVE ROWS
+ * =========================================================
+ */
+
+export function saveSalesRows(
+    {
+        branchId,
+        rows,
+        batchSize = 5000
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    if (
+        !Array.isArray(
+            rows
+        ) ||
+        rows.length === 0
+    ) {
+
+        return {
+
+            branchId:
+                id,
+
+            processed:
+                0
+
+        };
+
+    }
+
+
+    const db =
+        openDatabase();
+
+
+    const statements =
+        getStatements();
+
+
+    const normalizedBatchSize =
+        Number.isInteger(
+            Number(
+                batchSize
+            )
+        ) &&
+        Number(
+            batchSize
+        ) > 0
+
+            ? Math.min(
+                Number(
+                    batchSize
+                ),
+                10000
+            )
+
+            : 5000;
+
+
+    let processed =
+        0;
+
+
+    const insertBatch =
+        db.transaction(
+
+            batch => {
+
+                for (
+                    const row
+                    of batch
+                ) {
+
+                    if (
+                        row?.lineId ===
+                        null ||
+                        row?.lineId ===
+                        undefined ||
+                        String(
+                            row.lineId
+                        ) ===
+                        ""
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    statements
+                        .insertOrReplace
+                        .run(
+
+                            normalizeRow(
+                                id,
+                                row
+                            )
+
+                        );
+
+
+                    processed +=
+                        1;
+
+                }
+
+            }
+
+        );
+
+
+    for (
+        let start = 0;
+
+        start < rows.length;
+
+        start += normalizedBatchSize
+
+    ) {
+
+        insertBatch(
+
+            rows.slice(
+
+                start,
+
+                start +
+                normalizedBatchSize
+
+            )
+
+        );
+
+    }
+
+
+    return {
+
+        branchId:
+            id,
+
+        processed
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * GET SALES RANGE
+ * =========================================================
+ */
+
+export function getSalesRows(
+    {
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    const from =
+        String(
+            fromDate ||
+            ""
+        ).trim();
+
+
+    const to =
+        String(
+            toDate ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            from
+        )
+    ) {
+
+        throw new Error(
+            "Invalid fromDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            to
+        )
+    ) {
+
+        throw new Error(
+            "Invalid toDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const toExclusive =
+        getExclusiveDate(
+            to
+        );
+
+
+    const startedAt =
+        Date.now();
+
+
+    const rows =
+        getStatements()
+            .getSalesRange
+            .all(
+
+                id,
+
+                `${from}T00:00:00.000Z`,
+
+                `${toExclusive}T00:00:00.000Z`
+
+            );
+
+
+    const elapsed =
+        Date.now() -
+        startedAt;
+
+
+    console.log(
+
+        `[localSalesDb] READ branch=${id} range=${from}|${to} rows=${rows.length} in ${elapsed} ms`
+
+    );
+
+
+    return rows;
+
+}
+
+
+/*
+ * =========================================================
+ * MONTH EXISTS
+ * =========================================================
+ */
+
+export function hasSalesMonth(
+    {
+        branchId,
+        month
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    const normalizedMonth =
+        String(
+            month ||
+            ""
+        );
+
+
+    if (
+        !/^\d{4}-\d{2}$/.test(
+            normalizedMonth
+        )
+    ) {
+
+        return false;
+
+    }
+
+
+    const fromDate =
+        `${normalizedMonth}-01`;
+
+
+    const [
+        year,
+        monthNumber
+    ] =
+        normalizedMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const nextMonth =
+        new Date(
+
+            Date.UTC(
+
+                year,
+
+                monthNumber,
+
+                1
+
+            )
+
+        );
+
+
+    const toDate = [
+
+        nextMonth.getUTCFullYear(),
+
+        String(
+            nextMonth.getUTCMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        "01"
+
+    ].join(
+        "-"
+    );
+
+
+    const result =
+        getStatements()
+            .getMonthStats
+            .get(
+
+                id,
+
+                fromDate,
+
+                toDate
+
+            );
+
+
+    return (
+        Number(
+            result?.total_rows
+        ) || 0
+    ) > 0;
+
+}
+
+
+/*
+ * =========================================================
+ * SAVE MONTH
+ * =========================================================
+ */
+
+export function saveSalesMonth(
+    {
+        branchId,
+        month,
+        rows
+    }
+) {
+
+    const result =
+        saveSalesRows({
+
+            branchId,
+
+            rows
+
+        });
+
+
+    updateSalesSyncState({
+
+        branchId,
+
+        status:
+            "READY",
+
+        rows:
+            result.processed
+
+    });
+
+
+    console.log(
+
+        `[localSalesDb] SAVED branch=${branchId} month=${month} rows=${result.processed}`
+
+    );
+
+
+    return result;
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE
+ * =========================================================
+ */
+
+export function getSalesDateRange(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getDateRange
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return {
+
+        oldest_date:
+            result?.oldest_date ||
+            null,
+
+        newest_date:
+            result?.newest_date ||
+            null,
+
+        total_rows:
+            Number(
+                result?.total_rows
+            ) || 0
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * COUNTS
+ * =========================================================
+ */
+
+export function getSalesRowCount(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getBranchCount
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return Number(
+        result?.total_rows
+    ) || 0;
+
+}
+
+
+export function getSalesMonthCount(
+    branchId
+) {
+
+    const result =
+        getStatements()
+            .getMonthCount
+            .get(
+                Number(
+                    branchId
+                )
+            );
+
+
+    return Number(
+        result?.total_months
+    ) || 0;
+
+}
+
+
+/*
+ * =========================================================
+ * SYNC STATE
+ * =========================================================
+ */
+
+export function updateSalesSyncState(
+    {
+        branchId,
+        status,
+        rows = 0,
+        errorMessage = null
+    }
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    const statements =
+        getStatements();
+
+
+    const range =
+        statements
+            .getDateRange
+            .get(
+                id
+            );
+
+
+    const existing =
+        statements
+            .getSyncState
+            .get(
+                id
+            );
+
+
+    const now =
+        new Date()
+            .toISOString();
+
+
+    const startedAt =
+        status === "RUNNING"
+
+            ? now
+
+            : (
+                existing?.last_sync_started_at ||
+                null
+            );
+
+
+    const finishedAt =
+        status === "READY" ||
+        status === "ERROR"
+
+            ? now
+
+            : (
+                existing?.last_sync_finished_at ||
+                null
+            );
+
+
+    statements
+        .saveSyncState
+        .run({
+
+            branch_id:
+                id,
+
+            oldest_date:
+                range?.oldest_date ||
+                null,
+
+            newest_date:
+                range?.newest_date ||
+                null,
+
+            last_sync_started_at:
+                startedAt,
+
+            last_sync_finished_at:
+                finishedAt,
+
+            last_sync_status:
+                String(
+                    status ||
+                    "UNKNOWN"
+                ),
+
+            last_sync_rows:
+                Number(
+                    rows
+                ) || 0,
+
+            total_rows:
+                Number(
+                    range?.total_rows
+                ) || 0,
+
+            error_message:
+                errorMessage
+                ? String(
+                    errorMessage
+                )
+                : null
+
+        });
+
+
+    return statements
+        .getSyncState
+        .get(
+            id
+        );
+
+}
+
+
+/*
+ * =========================================================
+ * GET SYNC STATE
+ * =========================================================
+ */
+
+export function getSalesSyncState(
+    branchId
+) {
+
+    return (
+
+        getStatements()
+            .getSyncState
+            .get(
+                Number(
+                    branchId
+                )
+            ) ||
+        null
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * GLOBAL STATS
+ * =========================================================
+ */
+
+export function getLocalSalesStats() {
+
+    const db =
+        openDatabase();
+
+
+    const result =
+        db.prepare(`
+
+            SELECT
+
+                COUNT(*) AS total_rows,
+
+                COUNT(
+                    DISTINCT branch_id
+                ) AS branches,
+
+                COUNT(
+                    DISTINCT substr(
+                        date,
+                        1,
+                        7
+                    )
+                ) AS months
+
+            FROM sales_history
+
+        `)
+        .get();
+
+
+    return {
+
+        databasePath:
+            getDatabasePath(),
+
+        totalRows:
+            Number(
+                result?.total_rows
+            ) || 0,
+
+        branches:
+            Number(
+                result?.branches
+            ) || 0,
+
+        months:
+            Number(
+                result?.months
+            ) || 0
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * DATABASE ACCESS
+ * =========================================================
+ */
+
+export function getLocalSalesDatabase() {
+
+    return openDatabase();
+
+}
+
+
+/*
+ * =========================================================
+ * CLOSE
+ * =========================================================
+ */
+
+export function closeLocalSalesDatabase() {
+
+    if (
+        !database
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        database.close();
+
+        console.log(
+            "[localSalesDb] CLOSED"
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[localSalesDb] close failed:",
+
+            error
+
+        );
+
+    }
+
+
+    database =
+        null;
+
+}
+
+
+/*
+ * =========================================================
+ * DEFAULT
+ * =========================================================
+ */
+
+export default {
+
+    getLocalSalesDatabase,
+
+    getSalesRows,
+
+    saveSalesRows,
+
+    saveSalesMonth,
+
+    hasSalesMonth,
+
+    getSalesDateRange,
+
+    getSalesRowCount,
+
+    getSalesMonthCount,
+
+    updateSalesSyncState,
+
+    getSalesSyncState,
+
+    getLocalSalesStats,
+
+    closeLocalSalesDatabase
+
+};

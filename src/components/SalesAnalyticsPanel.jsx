@@ -79,6 +79,24 @@ function formatNumber(
 }
 
 
+function formatDailyTicketCount(
+    value
+) {
+
+    return toNumber(
+        value
+    ).toLocaleString(
+        "ar-EG",
+        {
+            minimumFractionDigits:
+                1,
+
+            maximumFractionDigits:
+                1
+        }
+    );
+}
+
 function formatPercent(
     value
 ) {
@@ -152,6 +170,51 @@ function getModuleTitle(
 
 }
 
+
+function getHourlyAverageDays(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        new Date(
+            String(fromDate) +
+            "T00:00:00"
+        );
+
+    const to =
+        new Date(
+            String(toDate) +
+            "T00:00:00"
+        );
+
+    if (
+        Number.isNaN(from.getTime()) ||
+        Number.isNaN(to.getTime())
+    ) {
+
+        return 1;
+
+    }
+
+    return Math.max(
+        1,
+        Math.round(
+            (
+                to.getTime() -
+                from.getTime()
+            ) /
+            (
+                24 *
+                60 *
+                60 *
+                1000
+            )
+        ) +
+        1
+    );
+
+}
 
 function normalizeResponseRows(
     result
@@ -739,11 +802,86 @@ export default function SalesAnalyticsPanel(
 
 
             setHourData(
-
                 normalizeResponseRows(
                     hourResult
-                )
+                ).map(
+                    row => {
 
+                        const from =
+                            new Date(
+                                String(
+                                    fromDate
+                                ) +
+                                "T00:00:00"
+                            );
+
+                        const to =
+                            new Date(
+                                String(
+                                    toDate
+                                ) +
+                                "T00:00:00"
+                            );
+
+                        const days =
+                            Math.max(
+                                1,
+                                Math.round(
+                                    (
+                                        to.getTime() -
+                                        from.getTime()
+                                    ) /
+                                    (
+                                        24 *
+                                        60 *
+                                        60 *
+                                        1000
+                                    )
+                                ) +
+                                1
+                            );
+
+                        return {
+                            ...row,
+
+                            sales:
+                                toNumber(
+                                    row?.sales
+                                ) / days,
+
+                            returns:
+                                toNumber(
+                                    row?.returns
+                                ) / days,
+
+                            netSales:
+                                toNumber(
+                                    row?.netSales
+                                ) / days,
+
+                            cost:
+                                toNumber(
+                                    row?.cost
+                                ) / days,
+
+                            profit:
+                                toNumber(
+                                    row?.profit
+                                ) / days,
+
+                            units:
+                                toNumber(
+                                    row?.units
+                                ) / days,
+
+                            tickets:
+                                toNumber(
+                                    row?.tickets
+                                ) / days
+                        };
+
+                    }
+                )
             );
 
         }
@@ -2933,9 +3071,7 @@ export default function SalesAnalyticsPanel(
                                         Profit
                                     </th>
 
-                                    <th>
-                                        Tickets
-                                    </th>
+                                    <th>{"\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
 
                                 </tr>
 
@@ -2963,27 +3099,25 @@ export default function SalesAnalyticsPanel(
 
                                                 <td>
                                                     {
-                                                        formatMoney(
-                                                            row.netSales
-                                                        )
+                                                        formatMoney(toNumber(row.netSales) / getHourlyAverageDays(fromDate, toDate))
                                                     }
                                                 </td>
 
                                                 <td>
-                                                    {
-                                                        formatMoney(
-                                                            row.profit
-                                                        )
-                                                    }
-                                                </td>
-
-                                                <td>
-                                                    {
-                                                        formatNumber(
-                                                            row.tickets
-                                                        )
-                                                    }
-                                                </td>
+                                                    
+    {
+        (
+            toNumber(row.tickets) /
+            getHourlyAverageDays(fromDate, toDate)
+        ).toLocaleString(
+            "ar-EG",
+            {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1
+            }
+        )
+    }
+</td>
 
                                             </tr>
 
@@ -3034,9 +3168,7 @@ export default function SalesAnalyticsPanel(
                                         Hour
                                     </th>
 
-                                    <th>
-                                        Sales
-                                    </th>
+                                    <th>{"\u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
 
                                     <th>
                                         المرتجعات
@@ -3050,9 +3182,7 @@ export default function SalesAnalyticsPanel(
                                         Profit
                                     </th>
 
-                                    <th>
-                                        Tickets
-                                    </th>
+                                    <th>{"\u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u064a\u0648\u0645\u064a\u0629"}</th>
 
                                 </tr>
 
@@ -3090,9 +3220,7 @@ export default function SalesAnalyticsPanel(
                                                 <td>
 
                                                     {
-                                                        formatMoney(
-                                                            row.sales
-                                                        )
+                                                        formatMoney(toNumber(row.sales) / getHourlyAverageDays(fromDate, toDate))
                                                     }
 
                                                 </td>
@@ -3100,9 +3228,7 @@ export default function SalesAnalyticsPanel(
                                                 <td>
 
                                                     {
-                                                        formatMoney(
-                                                            row.returns
-                                                        )
+                                                        formatMoney(toNumber(row.returns) / getHourlyAverageDays(fromDate, toDate))
                                                     }
 
                                                 </td>
@@ -3110,9 +3236,7 @@ export default function SalesAnalyticsPanel(
                                                 <td>
 
                                                     {
-                                                        formatMoney(
-                                                            row.netSales
-                                                        )
+                                                        formatMoney(toNumber(row.netSales) / getHourlyAverageDays(fromDate, toDate))
                                                     }
 
                                                 </td>
@@ -3120,9 +3244,7 @@ export default function SalesAnalyticsPanel(
                                                 <td>
 
                                                     {
-                                                        formatMoney(
-                                                            row.profit
-                                                        )
+                                                        formatMoney(toNumber(row.profit) / getHourlyAverageDays(fromDate, toDate))
                                                     }
 
                                                 </td>
@@ -3130,9 +3252,7 @@ export default function SalesAnalyticsPanel(
                                                 <td>
 
                                                     {
-                                                        formatNumber(
-                                                            row.tickets
-                                                        )
+                                                        formatDailyTicketCount(row.tickets)
                                                     }
 
                                                 </td>

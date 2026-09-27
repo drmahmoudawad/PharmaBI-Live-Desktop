@@ -1,0 +1,432 @@
+$ErrorActionPreference = "Stop"
+
+$project = "D:\PharmaBI-Live-Desktop"
+$sourceRoot = Join-Path $project "src"
+$backupRoot = Join-Path $project ("tools\ui-ar-backup-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+
+if (-not (Test-Path -LiteralPath $sourceRoot)) {
+    throw "src folder not found: $sourceRoot"
+}
+
+New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+
+$map = [ordered]@{
+
+    # =========================================================
+    # 1) Main navigation
+    # =========================================================
+
+    "MAIN" = "الرئيسية"
+    "Dashboard" = "لوحة التحكم"
+    "Business Overview" = "نظرة عامة على النشاط"
+    "Branch Health" = "حالة الفروع"
+    "Alerts & Opportunities" = "التنبيهات والفرص"
+
+    "Customers" = "العملاء"
+    "Customer Overview" = "نظرة عامة على العملاء"
+    "Customer RFM" = "تحليل سلوك العملاء"
+    "RFM" = "تحليل سلوك العملاء"
+    "Retention" = "الاحتفاظ بالعملاء"
+    "Churn / Inactivity" = "العملاء غير النشطين"
+    "Customer Lifetime Value" = "القيمة الإجمالية للعميل"
+    "Cohort Analysis" = "تحليل مجموعات العملاء"
+    "CRM" = "إدارة العملاء"
+
+    "Products" = "المنتجات"
+    "Product Overview" = "نظرة عامة على المنتجات"
+    "Top Products" = "أفضل المنتجات"
+    "ABC Analysis" = "تصنيف المنتجات"
+    "Stock Risk" = "مخاطر المخزون"
+
+    "Inventory" = "المخزون"
+    "Inventory Overview" = "نظرة عامة على المخزون"
+    "Inventory Risk" = "مخاطر المخزون"
+    "Reorder Analysis" = "تحليل إعادة الطلب"
+
+    "Procurement" = "المشتريات"
+    "Purchase Overview" = "نظرة عامة على المشتريات"
+    "Supplier Performance" = "أداء الموردين"
+    "Purchase Opportunities" = "فرص الشراء"
+
+    "Profitability" = "الربحية"
+    "Profit Overview" = "نظرة عامة على الأرباح"
+    "Profit by Branch" = "الأرباح حسب الفرع"
+    "Profit by Product" = "الأرباح حسب المنتج"
+    "Cost Anomalies" = "اختلافات التكلفة"
+
+    "Branches" = "الفروع"
+    "Branch Overview" = "نظرة عامة على الفروع"
+    "Branch Comparison" = "مقارنة الفروع"
+    "Branch Ranking" = "ترتيب الفروع"
+
+    "Staff" = "الموظفون"
+    "Staff Overview" = "نظرة عامة على الموظفين"
+    "Sales by Seller" = "المبيعات حسب البائع"
+    "Productivity" = "الإنتاجية"
+
+    "Forecasting" = "التوقعات"
+    "Sales Forecast" = "توقعات المبيعات"
+    "Demand Forecast" = "توقعات الطلب"
+    "Inventory Forecast" = "توقعات المخزون"
+
+    "Data Quality" = "جودة البيانات"
+    "Cost Quality" = "جودة التكلفة"
+    "Sales Reconciliation" = "مطابقة المبيعات"
+
+    "System" = "النظام"
+    "Branch Connections" = "اتصالات الفروع"
+    "Cache Status" = "حالة البيانات المخزنة"
+
+    "ANALYTICS" = "التحليلات"
+    "MARKETING" = "التسويق"
+
+    # =========================================================
+    # 2) Actions / filters
+    # =========================================================
+
+    "Search..." = "ابحث..."
+    "Search" = "بحث"
+    "Filter" = "تصفية"
+    "Filters" = "عوامل التصفية"
+    "Apply" = "تطبيق"
+    "Clear" = "مسح"
+    "Refresh" = "تحديث"
+    "Save" = "حفظ"
+    "Cancel" = "إلغاء"
+    "Close" = "إغلاق"
+    "Delete" = "حذف"
+    "Edit" = "تعديل"
+    "Add" = "إضافة"
+    "Export Excel" = "تصدير إلى إكسل"
+    "Export" = "تصدير"
+    "Loading" = "جارٍ التحميل"
+    "No data" = "لا توجد بيانات"
+    "No results" = "لا توجد نتائج"
+    "Retry" = "إعادة المحاولة"
+    "Back" = "رجوع"
+    "Next" = "التالي"
+    "Previous" = "السابق"
+    "View Details" = "عرض التفاصيل"
+
+    # =========================================================
+    # 3) Financial / operational
+    # =========================================================
+
+    "Sales" = "المبيعات"
+    "Returns" = "المرتجعات"
+    "Net Sales" = "صافي المبيعات"
+    "Revenue" = "إجمالي الإيرادات"
+    "Cost" = "التكلفة"
+    "Profit" = "الربح"
+    "Gross Profit" = "إجمالي الربح"
+    "Profit Margin" = "هامش الربح"
+    "Growth" = "معدل النمو"
+    "Target" = "الهدف"
+    "Forecast" = "التوقع"
+    "Performance" = "الأداء"
+    "Invoices" = "الفواتير"
+    "Number of Invoices" = "عدد الفواتير"
+    "Average Invoice" = "متوسط الفاتورة"
+    "Customer Count" = "عدد العملاء"
+    "Seller" = "البائع"
+    "Sellers" = "البائعون"
+    "Quantity" = "الكمية"
+    "Product" = "المنتج"
+    "Rank" = "الترتيب"
+    "Ranking" = "الترتيب"
+    "Percentage" = "النسبة"
+    "Average" = "المتوسط"
+    "Total" = "الإجمالي"
+    "Actual" = "الفعلي"
+    "Variance" = "الفرق"
+    "Achievement" = "نسبة تحقيق الهدف"
+
+    # =========================================================
+    # 4) Branch performance / forecast
+    # =========================================================
+
+    "Branch Performance" = "أداء الفروع"
+    "Current Performance" = "الأداء الحالي"
+    "Average Daily Sales" = "متوسط المبيعات اليومية"
+    "Monthly Sales" = "مبيعات الشهر"
+    "Daily Sales" = "المبيعات اليومية"
+    "Program Forecast" = "توقع البرنامج"
+    "Management Forecast" = "توقع الإدارة"
+    "Management Target" = "هدف الإدارة"
+    "Target A" = "الهدف أ"
+    "Target B" = "الهدف ب"
+    "Variance from Target" = "الفرق عن الهدف"
+    "Forecast Accuracy" = "دقة التوقع"
+    "Daily Target" = "الهدف اليومي"
+    "Monthly Target" = "الهدف الشهري"
+
+    # =========================================================
+    # 5) Customers / CRM / WhatsApp
+    # =========================================================
+
+    "Customer 360" = "الملف الشامل للعميل"
+    "Customer Details" = "بيانات العميل"
+    "Customer Profile" = "ملف العميل"
+    "Customer History" = "سجل العميل"
+    "Customer Invoices" = "فواتير العميل"
+    "Customer Activity" = "نشاط العميل"
+    "Returning Customer" = "عميل عائد"
+    "Lost Customer" = "عميل مفقود"
+    "Dormant" = "عميل خامل"
+    "Champions" = "العملاء المميزون"
+    "Loyal Customers" = "العملاء المخلصون"
+    "New Customers" = "العملاء الجدد"
+    "At Risk" = "العملاء المعرضون للفقد"
+    "Follow Up" = "متابعة"
+    "Follow-up" = "متابعة"
+    "Response" = "الرد"
+    "Campaign" = "الحملة"
+    "Campaigns" = "الحملات"
+    "WhatsApp" = "واتساب"
+    "WhatsApp Campaigns" = "حملات واتساب"
+    "Message" = "الرسالة"
+    "Messages" = "الرسائل"
+    "Sent" = "تم الإرسال"
+    "Delivered" = "تم التسليم"
+    "Read" = "تمت القراءة"
+    "Replied" = "تمت الإجابة"
+    "Last Contact" = "آخر تواصل"
+    "Next Follow-up" = "المتابعة القادمة"
+
+    # =========================================================
+    # 6) Status / connection / data
+    # =========================================================
+
+    "Data" = "البيانات"
+    "Status" = "الحالة"
+    "Active" = "يعمل"
+    "Inactive" = "متوقف"
+    "Success" = "تمت العملية بنجاح"
+    "Failed" = "تعذرت العملية"
+    "Warning" = "تنبيه"
+    "Information" = "معلومات"
+    "Connected" = "متصل"
+    "Disconnected" = "غير متصل"
+    "Connecting" = "جارٍ الاتصال"
+    "Connection Failed" = "تعذر الاتصال"
+    "Online" = "متصل"
+    "Offline" = "غير متصل"
+    "Last Sync" = "آخر تحديث للبيانات"
+    "Sync" = "تحديث البيانات"
+    "Syncing" = "جارٍ تحديث البيانات"
+    "Cache" = "البيانات المخزنة مؤقتًا"
+    "Error" = "خطأ"
+    "Pending" = "قيد الانتظار"
+    "Completed" = "مكتمل"
+    "Processing" = "جارٍ التنفيذ"
+
+    # =========================================================
+    # Additional common UI wording
+    # =========================================================
+
+    "Today" = "اليوم"
+    "This Month" = "هذا الشهر"
+    "Current Month" = "الشهر الحالي"
+    "Date" = "التاريخ"
+    "From" = "من"
+    "To" = "إلى"
+    "All Branches" = "جميع الفروع"
+    "Branch" = "الفرع"
+
+    "Top Sellers" = "أفضل البائعين"
+    "Best Sellers" = "أفضل البائعين"
+
+    "Day / Hour" = "اليوم / الساعة"
+    "Overview" = "نظرة عامة"
+    "Summary" = "الملخص"
+    "Details" = "التفاصيل"
+    "History" = "السجل"
+    "Activity" = "النشاط"
+    "Analytics" = "التحليلات"
+    "Report" = "التقرير"
+    "Reports" = "التقارير"
+    "Settings" = "الإعدادات"
+    "Connection" = "الاتصال"
+    "Connections" = "الاتصالات"
+    "Employees" = "الموظفون"
+    "Employee" = "الموظف"
+    "Evaluation" = "التقييم"
+    "Customer" = "العميل"
+}
+
+$files =
+    Get-ChildItem `
+        -LiteralPath $sourceRoot `
+        -Recurse `
+        -File `
+        -Include *.js,*.jsx,*.ts,*.tsx,*.html
+
+$changedFiles = 0
+$totalReplacements = 0
+
+foreach ($file in $files) {
+
+    $relative =
+        $file.FullName.Substring(
+            $sourceRoot.Length
+        ).TrimStart('\')
+
+    $backupPath =
+        Join-Path `
+            $backupRoot `
+            $relative
+
+    $backupDir =
+        Split-Path `
+            -Parent `
+            $backupPath
+
+    New-Item `
+        -ItemType Directory `
+        -Path $backupDir `
+        -Force |
+        Out-Null
+
+    $original =
+        [System.IO.File]::ReadAllText(
+            $file.FullName
+        )
+
+    $text = $original
+    $fileReplacements = 0
+
+    foreach ($pair in $map.GetEnumerator()) {
+
+        $english =
+            [regex]::Escape(
+                $pair.Key
+            )
+
+        $arabic =
+            $pair.Value
+
+        # 1) UI object properties:
+        # title, label, placeholder, aria-label, alt,
+        # helperText, emptyText, buttonLabel, header,
+        # caption, description, message, tooltip
+        $patterns = @(
+
+            "(?i)(\b(?:title|label|placeholder|aria-label|alt|helperText|emptyText|buttonLabel|header|caption|description|message|tooltip)\s*:\s*)(['""])" +
+            $english +
+            "\2",
+
+            "(?i)(<(?:Typography|Button|MenuItem|Tab|TableCell|FormLabel|InputLabel|DialogTitle|DialogContentText|Chip|Tooltip|Alert)\b[^>]*>\s*)" +
+            $english +
+            "(\s*</)",
+
+            ">(\s*)" +
+            $english +
+            "(\s*<)"
+        )
+
+        foreach ($pattern in $patterns) {
+
+            $before =
+                $text
+
+            if ($pattern -like "*`2*") {
+
+                $text =
+                    [regex]::Replace(
+                        $text,
+                        $pattern,
+                        {
+                            param($m)
+                            $m.Groups[1].Value +
+                            $m.Groups[2].Value +
+                            $arabic +
+                            $m.Groups[2].Value
+                        }
+                    )
+
+            }
+            else {
+
+                $text =
+                    [regex]::Replace(
+                        $text,
+                        $pattern,
+                        {
+                            param($m)
+
+                            if ($m.Groups.Count -ge 3) {
+                                return (
+                                    $m.Groups[1].Value +
+                                    $arabic +
+                                    $m.Groups[2].Value
+                                )
+                            }
+
+                            return $m.Value
+                        }
+                    )
+            }
+
+            if ($text -ne $before) {
+                $fileReplacements++
+            }
+        }
+
+        # 2) Common quoted values only when they are used as a direct
+        # UI label/value in JSX or configuration objects.
+        $quotedPatterns = @(
+            "(['""])" + $english + "\1(?=\s*(?:,|}|\]))",
+            "(['""])" + $english + "\1(?=\s*[,}])"
+        )
+
+        foreach ($pattern in $quotedPatterns) {
+
+            $before = $text
+
+            $text =
+                [regex]::Replace(
+                    $text,
+                    $pattern,
+                    {
+                        param($m)
+                        $m.Groups[1].Value +
+                        $arabic +
+                        $m.Groups[1].Value
+                    }
+                )
+
+            if ($text -ne $before) {
+                $fileReplacements++
+            }
+        }
+    }
+
+    if ($text -ne $original) {
+
+        Copy-Item `
+            -LiteralPath $file.FullName `
+            -Destination $backupPath `
+            -Force
+
+        [System.IO.File]::WriteAllText(
+            $file.FullName,
+            $text,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        $changedFiles++
+        $totalReplacements += $fileReplacements
+
+        Write-Host `
+            "UPDATED: $relative" `
+            -ForegroundColor Green
+    }
+}
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Arabic UI translation finished." -ForegroundColor Cyan
+Write-Host "Changed files : $changedFiles" -ForegroundColor Green
+Write-Host "Replacements  : $totalReplacements" -ForegroundColor Green
+Write-Host "Backup folder : $backupRoot" -ForegroundColor Yellow
+Write-Host "========================================" -ForegroundColor Cyan

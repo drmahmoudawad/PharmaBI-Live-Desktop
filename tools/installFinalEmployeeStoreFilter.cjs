@@ -1,0 +1,213 @@
+﻿const fs = require("fs");
+const path = require("path");
+
+const file = path.join(
+    process.cwd(),
+    "electron",
+    "pharmfly",
+    "employeeDirectoryService.js"
+);
+
+const backup =
+    file + ".backup-before-store-filter-final";
+
+if (!fs.existsSync(backup)) {
+    fs.copyFileSync(file, backup);
+}
+
+const content = `import { getBranchPool } from "../connection/connectionManager.js";
+
+export async function getEmployeeDirectory({
+    branchId,
+    connection = null
+}) {
+    const numericBranchId = Number(branchId);
+
+    if (
+        !Number.isInteger(numericBranchId) ||
+        numericBranchId <= 0
+    ) {
+        throw new Error("Invalid branchId");
+    }
+
+    const pool =
+        await getBranchPool(
+            numericBranchId,
+            connection
+        );
+
+    /*
+     * The PharmaFly branch is linked to its POS store
+     * through Branches.DefaultStoreID.
+     */
+    const branchResult =
+        await pool
+            .request()
+            .query(\`
+                SELECT TOP (1)
+                    DefaultStoreID,
+                    DefaultStoreName,
+                    BranchName,
+                    IsSelfBranch
+                FROM dbo.Branches
+                ORDER BY
+                    CASE
+                        WHEN IsSelfBranch = 1 THEN 0
+                        ELSE 1
+                    END;
+            \`);
+
+    const branchRow =
+        branchResult?.recordset?.[0];
+
+    const storeId =
+        branchRow?.DefaultStoreID;
+
+    if (
+        storeId === null ||
+        storeId === undefined
+    ) {
+        throw new Error(
+            "DefaultStoreID not found for selected branch"
+        );
+    }
+
+    console.log(
+        "[employeeDirectory] branch=",
+        numericBranchId,
+        "storeId=",
+        String(storeId),
+        "storeName=",
+        String(
+            branchRow?.DefaultStoreName || ""
+        )
+    );
+
+    /*
+     * IMPORTANT:
+     * Only sales belonging to THIS branch's StoreID.
+     * PinNumber -> Cards.ID -> Cards.Name
+     */
+    const result =
+        await pool
+            .request()
+            .input(
+                "storeId",
+                storeId
+            )
+            .query(\`
+                SELECT
+                    CONVERT(
+                        nvarchar(100),
+                        c.ID
+                    ) AS employee_id,
+
+                    LTRIM(
+                        RTRIM(
+                            CONVERT(
+                                nvarchar(400),
+                                c.Name
+                            )
+                        )
+                    ) AS employee_name
+
+                FROM (
+                    SELECT
+                        t.PinNumber
+
+                    FROM dbo.posTickets t
+
+                    WHERE t.StoreID = @storeId
+                      AND t.SalesReturn = 1
+                      AND t.PinNumber IS NOT NULL
+
+                      AND CONVERT(
+                            nvarchar(100),
+                            t.PinNumber
+                          ) NOT IN (
+                              N'',
+                              N'0'
+                          )
+
+                    GROUP BY
+                        t.PinNumber
+                ) sellers
+
+                INNER JOIN dbo.Cards c
+                    ON c.ID = sellers.PinNumber
+
+                WHERE ISNULL(
+                    c.IsEmployee,
+                    0
+                ) = 1
+
+                  AND NULLIF(
+                    LTRIM(
+                        RTRIM(
+                            CONVERT(
+                                nvarchar(400),
+                                c.Name
+                            )
+                        )
+                    ),
+                    ''
+                  ) IS NOT NULL
+
+                ORDER BY
+                    c.Name;
+            \`);
+
+    const employees =
+        (
+            result?.recordset || []
+        ).map(
+            row => ({
+                employeeId:
+                    String(
+                        row.employee_id
+                    ),
+
+                employeeName:
+                    String(
+                        row.employee_name
+                    )
+            })
+        );
+
+    console.log(
+        "[employeeDirectory] branch=",
+        numericBranchId,
+        "storeId=",
+        String(storeId),
+        "realSellingEmployees=",
+        employees.length
+    );
+
+    return {
+        employees
+    };
+}
+`;
+
+fs.writeFileSync(
+    file,
+    content,
+    "utf8"
+);
+
+console.log(
+    "FINAL STORE-BASED EMPLOYEE FILTER INSTALLED"
+);
+
+console.log(
+    "Branch.DefaultStoreID -> posTickets.StoreID"
+);
+
+console.log(
+    "Only SalesReturn = 1"
+);
+
+console.log(
+    "Backup:",
+    backup
+);

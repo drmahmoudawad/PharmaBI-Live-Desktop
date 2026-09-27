@@ -1,0 +1,3760 @@
+﻿import {
+    getSales
+} from "../pharmfly/sales/salesService.js";
+
+
+import {
+    getBranchPool,
+    getActiveBranchConnections
+} from "../connection/connectionManager.js";
+
+
+import {
+    getBranchConnection,
+    getAllSavedConnections
+} from "../settings/connectionStore.js";
+
+
+import {
+    getMonthlySalesCache,
+    getMonthDateRange
+} from "./monthlySalesCacheService.js";
+
+
+import {
+    saveSalesMonth,
+    hasSalesMonth,
+    updateSalesSyncState
+} from "../localdb/localSalesDb.js";
+
+
+import { getCustomerRfmV2 } from "../pharmfly/customers/customerRfmV2Service.js";
+
+function getActiveSavedConnections() {
+
+    const activeBranchIds =
+        new Set(
+            getActiveBranchConnections()
+        );
+
+    return getAllSavedConnections()
+        .filter(
+            branch =>
+                activeBranchIds.has(
+                    normalizeBranchId(
+                        branch?.branchId
+                    )
+                )
+        );
+
+}
+
+const DEFAULT_MONTHS =
+    null;
+
+
+const DEFAULT_DELAY_MS =
+    750;
+
+
+const DEFAULT_MAX_RETRIES =
+    2;
+
+
+const YIELD_DELAY_MS =
+    75;
+
+
+/*
+ * =========================================================
+ * STATE
+ * =========================================================
+ */
+
+const warmupState =
+    new Map();
+
+
+/*
+ * =========================================================
+ * ROUND-ROBIN ENGINE
+ * =========================================================
+ *
+ * Only ONE warm-up worker is allowed.
+ *
+ * A newly added branch can be inserted into the running
+ * engine through refreshWarmupQueue().
+ *
+ * The existing warm-up keeps running.
+ * =========================================================
+ */
+
+let roundRobinEngine =
+    null;
+
+/*
+ * =========================================================
+ * SHARED MONTH SINGLE-FLIGHT
+ * =========================================================
+ */
+
+const WARMUP_BRANCH_CONCURRENCY =
+    3;
+
+const activeMonthWork =
+    new Map();
+
+function getCurrentUtcMonth() {
+
+    const now =
+        new Date();
+
+    return [
+        now.getUTCFullYear(),
+        String(now.getUTCMonth() + 1).padStart(2, "0")
+    ].join("-");
+
+}
+
+function monthWorkKey({ branchId, month }) {
+
+    return String(
+        normalizeBranchId(branchId)
+    ) + "|" + String(month);
+
+}
+
+function runMonthOnce({ branchId, month }, task) {
+
+    const key =
+        monthWorkKey({ branchId, month });
+
+    const existing =
+        activeMonthWork.get(key);
+
+    if (existing) {
+
+        console.log(
+            "[cacheWarmup] SINGLE-FLIGHT JOIN branch=" +
+            String(branchId) +
+            " month=" +
+            String(month)
+        );
+
+        return existing.promise;
+
+    }
+
+    const promise =
+        Promise.resolve()
+            .then(() => task())
+            .finally(() => {
+
+                if (
+                    activeMonthWork.get(key)?.promise ===
+                    promise
+                ) {
+
+                    activeMonthWork.delete(key);
+
+                }
+
+            });
+
+    activeMonthWork.set(
+        key,
+        { promise }
+    );
+
+    return promise;
+
+}
+
+function warmMonthOnce(args) {
+
+    return runMonthOnce(
+        {
+            branchId: args.branchId,
+            month: args.month
+        },
+        () => warmMonth(args)
+    );
+
+}
+
+
+
+
+/*
+ * =========================================================
+ * HELPERS
+ * =========================================================
+ */
+
+function normalizeBranchId(
+    branchId
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    return id;
+
+}
+
+
+function sleep(
+    ms
+) {
+
+    return new Promise(
+
+        resolve => {
+
+            setTimeout(
+
+                resolve,
+
+                Math.max(
+                    0,
+                    Number(ms) || 0
+                )
+
+            );
+
+        }
+
+    );
+
+}
+
+
+function yieldToEventLoop() {
+
+    return new Promise(
+
+        resolve => {
+
+            setImmediate(
+                resolve
+            );
+
+        }
+
+    );
+
+}
+
+
+function pad2(
+    value
+) {
+
+    return String(
+        value
+    ).padStart(
+        2,
+        "0"
+    );
+
+}
+
+
+function toYearMonth(
+    value
+) {
+
+    if (
+        !value
+    ) {
+
+        return null;
+
+    }
+
+
+    const date =
+        new Date(
+            value
+        );
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    return [
+
+        date.getUTCFullYear(),
+
+        pad2(
+            date.getUTCMonth() + 1
+        )
+
+    ].join(
+        "-"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * BUILD FULL HISTORICAL MONTH LIST
+ * =========================================================
+ */
+
+function buildHistoricalMonthList(
+    {
+        newestMonth,
+        oldestMonth
+    }
+) {
+
+    const newest =
+        String(
+            newestMonth ||
+            ""
+        );
+
+
+    const oldest =
+        String(
+            oldestMonth ||
+            ""
+        );
+
+
+    if (
+        !/^\d{4}-\d{2}$/.test(
+            newest
+        ) ||
+        !/^\d{4}-\d{2}$/.test(
+            oldest
+        )
+    ) {
+
+        throw new Error(
+            "Invalid historical month range"
+        );
+
+    }
+
+
+    const [
+        newestYear,
+        newestMonthNumber
+    ] =
+        newest
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const [
+        oldestYear,
+        oldestMonthNumber
+    ] =
+        oldest
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const monthCount =
+        (
+            newestYear -
+            oldestYear
+        ) *
+        12 +
+        (
+            newestMonthNumber -
+            oldestMonthNumber
+        ) +
+        1;
+
+
+    if (
+        monthCount <= 0
+    ) {
+
+        throw new Error(
+            "Historical month count is invalid"
+        );
+
+    }
+
+
+    const result =
+        [];
+
+
+    for (
+        let index = 0;
+        index < monthCount;
+        index += 1
+    ) {
+
+        const date =
+            new Date(
+
+                Date.UTC(
+
+                    newestYear,
+
+                    (
+                        newestMonthNumber - 1
+                    ) -
+                    index,
+
+                    1
+
+                )
+
+            );
+
+
+        result.push(
+
+            [
+
+                date.getUTCFullYear(),
+
+                pad2(
+                    date.getUTCMonth() + 1
+                )
+
+            ].join(
+                "-"
+            )
+
+        );
+
+    }
+
+
+    return result;
+
+}
+
+
+/*
+ * =========================================================
+ * STATE
+ * =========================================================
+ */
+
+function getState(
+    branchId
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    if (
+        !warmupState.has(
+            id
+        )
+    ) {
+
+        warmupState.set(
+
+            id,
+
+            {
+
+                running:
+                    false,
+
+                startedAt:
+                    null,
+
+                finishedAt:
+                    null,
+
+                currentMonth:
+                    null,
+
+                oldestMonth:
+                    null,
+
+                newestMonth:
+                    null,
+
+                completedMonths:
+                    0,
+
+                skippedMonths:
+                    0,
+
+                failedMonths:
+                    0,
+
+                totalMonths:
+                    0,
+
+                totalHistoricalRows:
+                    0,
+
+                localRows:
+                    0,
+
+                error:
+                    null
+
+            }
+
+        );
+
+    }
+
+
+    return warmupState.get(
+        id
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DISCOVER HISTORY
+ * =========================================================
+ */
+
+async function getSalesHistoryRange(
+    {
+        branchId,
+        connection
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const savedConnection =
+        connection ||
+        getBranchConnection(
+            id
+        );
+
+
+    if (
+        !savedConnection
+    ) {
+
+        throw new Error(
+            `No saved connection for branch ${id}`
+        );
+
+    }
+
+
+    const pool =
+        await getBranchPool(
+
+            id,
+
+            savedConnection
+
+        );
+
+
+    const result =
+        await pool
+            .request()
+            .query(`
+
+                SET NOCOUNT ON;
+
+                SELECT
+
+                    MIN(ztime)
+                        AS min_sale_date,
+
+                    MAX(ztime)
+                        AS max_sale_date,
+
+                    COUNT_BIG(*)
+                        AS ticket_count
+
+                FROM posTickets
+
+                WHERE
+                    ztime IS NOT NULL;
+
+            `);
+
+
+    const row =
+        Array.isArray(
+            result.recordset
+        )
+            ? result.recordset[0]
+            : null;
+
+
+    if (
+        !row ||
+        !row.min_sale_date ||
+        !row.max_sale_date
+    ) {
+
+        return {
+
+            hasData:
+                false,
+
+            oldestDate:
+                null,
+
+            newestDate:
+                null,
+
+            oldestMonth:
+                null,
+
+            newestMonth:
+                null,
+
+            ticketCount:
+                0
+
+        };
+
+    }
+
+
+    const oldestDate =
+        new Date(
+            row.min_sale_date
+        );
+
+
+    const newestDate =
+        new Date(
+            row.max_sale_date
+        );
+
+
+    if (
+        Number.isNaN(
+            oldestDate.getTime()
+        ) ||
+        Number.isNaN(
+            newestDate.getTime()
+        )
+    ) {
+
+        return {
+
+            hasData:
+                false,
+
+            oldestDate:
+                null,
+
+            newestDate:
+                null,
+
+            oldestMonth:
+                null,
+
+            newestMonth:
+                null,
+
+            ticketCount:
+                0
+
+        };
+
+    }
+
+
+    return {
+
+        hasData:
+            true,
+
+        oldestDate:
+            oldestDate.toISOString(),
+
+        newestDate:
+            newestDate.toISOString(),
+
+        oldestMonth:
+            toYearMonth(
+                oldestDate
+            ),
+
+        newestMonth:
+            toYearMonth(
+                newestDate
+            ),
+
+        ticketCount:
+            Number(
+                row.ticket_count
+            ) || 0
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * RESOLVE MONTHS
+ * =========================================================
+ */
+
+function resolveMonthList(
+    {
+        historyRange,
+        months
+    }
+) {
+
+    if (
+        !historyRange?.hasData
+    ) {
+
+        return [];
+
+    }
+
+
+    const fullList =
+        buildHistoricalMonthList({
+
+            newestMonth:
+                historyRange.newestMonth,
+
+            oldestMonth:
+                historyRange.oldestMonth
+
+        });
+
+
+    if (
+        months === null ||
+        months === undefined
+    ) {
+
+        return fullList;
+
+    }
+
+
+    const requested =
+        Number(
+            months
+        );
+
+
+    if (
+        !Number.isFinite(
+            requested
+        ) ||
+        requested <= 0
+    ) {
+
+        return fullList;
+
+    }
+
+
+    return fullList.slice(
+
+        0,
+
+        Math.min(
+
+            Math.floor(
+                requested
+            ),
+
+            fullList.length
+
+        )
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * INITIALIZE BRANCH STATE
+ * =========================================================
+ */
+
+function initializeBranchState(
+    branchId,
+    historyRange,
+    monthsList
+) {
+
+    const state =
+        getState(
+            branchId
+        );
+
+
+    state.running =
+        true;
+
+
+    state.startedAt =
+        new Date().toISOString();
+
+
+    state.finishedAt =
+        null;
+
+
+    state.currentMonth =
+        null;
+
+
+    state.oldestMonth =
+        historyRange.oldestMonth;
+
+
+    state.newestMonth =
+        historyRange.newestMonth;
+
+
+    state.completedMonths =
+        0;
+
+
+    state.skippedMonths =
+        0;
+
+
+    state.failedMonths =
+        0;
+
+
+    state.totalMonths =
+        monthsList.length;
+
+
+    state.totalHistoricalRows =
+        0;
+
+
+    state.localRows =
+        0;
+
+
+    state.error =
+        null;
+
+
+    return state;
+
+}
+
+
+/*
+ * =========================================================
+ * WARM ONE MONTH
+ * =========================================================
+ */
+
+async function warmMonth(
+    {
+        branchId,
+        month,
+        connection,
+        maxRetries,
+        state,
+        forceRefresh = false
+    }
+) {
+
+    /*
+     * -----------------------------------------------------
+     * LOCAL SQLITE
+     * -----------------------------------------------------
+     */
+
+    try {
+
+        if (
+        !forceRefresh &&
+        hasSalesMonth({
+            branchId,
+            month
+        })
+    ) {
+
+            const cached =
+        forceRefresh
+            ? null
+            : getMonthlySalesCache({
+                branchId,
+                month
+            });
+
+
+            const rows =
+                cached?.rows;
+
+
+            const rowCount =
+                Array.isArray(
+                    rows
+                )
+                    ? rows.length
+                    : 0;
+
+
+            if (
+                rowCount > 0
+            ) {
+
+                console.log(
+
+                    `[cacheWarmup] LOCAL SQLITE HIT branch=${branchId} month=${month} rows=${rowCount}`
+
+                );
+
+
+                return {
+
+                    status:
+                        "LOCAL_HIT",
+
+                    month,
+
+                    rowCount
+
+                };
+
+            }
+
+
+            console.log(
+
+                `[cacheWarmup] LOCAL SQLITE EMPTY branch=${branchId} month=${month} rows=0 -> SQL LOAD REQUIRED`
+
+            );
+
+        }
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[cacheWarmup] local sqlite check failed branch=${branchId} month=${month}:`,
+
+            error
+
+        );
+
+    }
+
+
+    /*
+     * -----------------------------------------------------
+     * MEMORY / MONTHLY CACHE
+     * -----------------------------------------------------
+     */
+
+    const cached =
+        forceRefresh
+            ? null
+            : getMonthlySalesCache({
+                branchId,
+                month
+            });
+
+
+    if (
+        cached &&
+        Array.isArray(
+            cached.rows
+        )
+    ) {
+
+        try {
+
+            if (
+                !hasSalesMonth({
+
+                    branchId,
+
+                    month
+
+                })
+            ) {
+
+                const localResult =
+                    saveSalesMonth({
+
+                        branchId,
+
+                        month,
+
+                        rows:
+                            cached.rows
+
+                    });
+
+
+                state.localRows +=
+
+                    Number(
+                        localResult.processed
+                    ) || 0;
+
+
+                console.log(
+
+                    `[cacheWarmup] SQLITE IMPORT FROM CACHE branch=${branchId} month=${month} rows=${localResult.processed}`
+
+                );
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                `[cacheWarmup] SQLITE import failed branch=${branchId} month=${month}:`,
+
+                error
+
+            );
+
+        }
+
+
+        console.log(
+
+            `[cacheWarmup] CACHE HIT branch=${branchId} month=${month} rows=${cached.rowCount}`
+
+        );
+
+
+        return {
+
+            status:
+                "CACHE_HIT",
+
+            month,
+
+            rowCount:
+                Number(
+                    cached.rowCount
+                ) ||
+                cached.rows.length
+
+        };
+
+    }
+
+
+    /*
+     * -----------------------------------------------------
+     * SQL
+     * -----------------------------------------------------
+     */
+
+    const range =
+        getMonthDateRange(
+            month
+        );
+
+
+    let lastError =
+        null;
+
+
+    for (
+        let attempt = 1;
+        attempt <=
+        maxRetries + 1;
+        attempt += 1
+    ) {
+
+        try {
+
+            console.log(
+
+                `[cacheWarmup] LOAD branch=${branchId} month=${month} attempt=${attempt}`
+
+            );
+
+
+            updateSalesSyncState({
+
+                branchId,
+
+                status:
+                    "RUNNING",
+
+                rows:
+                    0
+
+            });
+
+
+            const rows =
+                await getSales({
+
+                    branchId,
+
+                    fromDate:
+                        range.fromDate,
+
+                    toDate:
+                        range.toDate,
+
+                    connection,
+
+                    forceRefresh:
+                        Boolean(
+                            forceRefresh
+                        )
+
+                });
+
+
+            try {
+
+                const localResult =
+                    saveSalesMonth({
+
+                        branchId,
+
+                        month,
+
+                        rows
+
+                    });
+
+
+                state.localRows +=
+
+                    Number(
+                        localResult.processed
+                    ) || 0;
+
+
+                console.log(
+
+                    `[cacheWarmup] SQLITE SAVED branch=${branchId} month=${month} rows=${localResult.processed}`
+
+                );
+
+            }
+            catch (
+                localError
+            ) {
+
+                console.error(
+
+                    `[cacheWarmup] SQLITE SAVE FAILED branch=${branchId} month=${month}:`,
+
+                    localError
+
+                );
+
+
+                updateSalesSyncState({
+
+                    branchId,
+
+                    status:
+                        "ERROR",
+
+                    rows:
+                        rows.length,
+
+                    errorMessage:
+                        localError?.message ||
+                        String(
+                            localError
+                        )
+
+                });
+
+            }
+
+
+            console.log(
+
+                `[cacheWarmup] READY branch=${branchId} month=${month} rows=${rows.length}`
+
+            );
+
+
+            await yieldToEventLoop();
+
+
+            return {
+
+                status:
+                    "LOADED",
+
+                month,
+
+                rowCount:
+                    rows.length
+
+            };
+
+        }
+        catch (
+            error
+        ) {
+
+            lastError =
+                error;
+
+
+            console.error(
+
+                `[cacheWarmup] FAILED branch=${branchId} month=${month} attempt=${attempt}:`,
+
+                error
+
+            );
+
+
+            updateSalesSyncState({
+
+                branchId,
+
+                status:
+                    "ERROR",
+
+                rows:
+                    state.localRows,
+
+                errorMessage:
+                    error?.message ||
+                    String(
+                        error
+                    )
+
+            });
+
+
+            if (
+                attempt <=
+                maxRetries
+            ) {
+
+                await sleep(
+
+                    1000 *
+                    attempt
+
+                );
+
+
+                await yieldToEventLoop();
+
+            }
+
+        }
+
+    }
+
+
+    throw lastError ||
+        new Error(
+            `Failed to warm month ${month}`
+        );
+
+}
+
+
+/*
+ * =========================================================
+ * DISCOVER AND ADD BRANCH TO RUNNING ENGINE
+ * =========================================================
+ */
+
+async function buildBranchPlan(
+    {
+        branchId,
+        connection,
+        months,
+        resetState = true
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const savedConnection =
+        connection ||
+        getBranchConnection(
+            id
+        );
+
+
+    if (
+        !savedConnection
+    ) {
+
+        throw new Error(
+            `No saved connection for branch ${id}`
+        );
+
+    }
+
+
+    console.log(
+
+        `[cacheWarmup] DISCOVER HISTORY branch=${id}`
+
+    );
+
+
+    const historyRange =
+        await getSalesHistoryRange({
+
+            branchId:
+                id,
+
+            connection:
+                savedConnection
+
+        });
+
+
+    if (
+        !historyRange.hasData
+    ) {
+
+        console.log(
+
+            `[cacheWarmup] NO SALES DATA branch=${id}`
+
+        );
+
+
+        return null;
+
+    }
+
+
+    const monthsList =
+        resolveMonthList({
+
+            historyRange,
+
+            months
+
+        });
+
+
+    const state =
+        resetState
+
+            ? initializeBranchState(
+
+                id,
+
+                historyRange,
+
+                monthsList
+
+            )
+
+            : getState(
+                id
+            );
+
+
+    return {
+
+        branchId:
+            id,
+
+        branch:
+            savedConnection,
+
+        historyRange,
+
+        monthsList,
+
+        state,
+
+        nextMonthIndex:
+            0,
+
+        addedDynamically:
+            false
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * PROCESS BRANCH MONTH
+ * =========================================================
+ */
+
+async function processPlanMonth(
+    {
+        plan,
+        month,
+        delayMs,
+        maxRetries,
+        forceRefresh = false
+    }
+) {
+
+    const {
+        branchId,
+        branch,
+        state
+    } = plan;
+
+    state.currentMonth =
+        month;
+
+    if (
+        !forceRefresh &&
+        month === getCurrentUtcMonth()
+    ) {
+
+        state.skippedMonths +=
+            1;
+
+        state.currentMonth =
+            null;
+
+        console.log(
+            "[cacheWarmup] CURRENT MONTH EXCLUDED FROM HISTORICAL WARM-UP branch=" +
+            String(branchId) +
+            " month=" +
+            String(month)
+        );
+
+        return;
+
+    }
+
+    await sleep(
+        delayMs
+    );
+
+    await yieldToEventLoop();
+
+    try {
+
+        const result =
+            await warmMonthOnce({
+
+                branchId,
+                month,
+                connection: branch,
+                maxRetries,
+                state,
+                forceRefresh
+
+            });
+
+        if (
+            result.status === "LOCAL_HIT" ||
+            result.status === "CACHE_HIT"
+        ) {
+
+            state.skippedMonths +=
+                1;
+
+        }
+        else {
+
+            state.completedMonths +=
+                1;
+
+        }
+
+        state.totalHistoricalRows +=
+            Number(result.rowCount) || 0;
+
+    }
+    catch (
+        error
+    ) {
+
+        state.failedMonths +=
+            1;
+
+        state.error =
+            error?.message || String(error);
+
+        console.error(
+            "[cacheWarmup] ROUND FAILED branch=" +
+            String(branchId) +
+            " month=" +
+            String(month) + ":",
+            error
+        );
+
+        updateSalesSyncState({
+            branchId,
+            status: "ERROR",
+            rows: state.localRows,
+            errorMessage: state.error
+        });
+
+    }
+
+    await yieldToEventLoop();
+
+    await sleep(
+        YIELD_DELAY_MS
+    );
+
+}
+
+/*
+ * =========================================================
+ * FINALIZE BRANCH
+ * =========================================================
+ */
+
+function finalizePlan(
+    plan
+) {
+
+    const {
+        branchId,
+        state
+    } =
+        plan;
+
+
+    state.running =
+        false;
+
+
+    state.currentMonth =
+        null;
+
+
+    state.finishedAt =
+        new Date().toISOString();
+
+
+    if (
+        state.failedMonths ===
+        0
+    ) {
+
+        updateSalesSyncState({
+
+            branchId,
+
+            status:
+                "READY",
+
+            rows:
+                state.localRows
+
+        });
+
+    }
+    else {
+
+        updateSalesSyncState({
+
+            branchId,
+
+            status:
+                "ERROR",
+
+            rows:
+                state.localRows,
+
+            errorMessage:
+                state.error ||
+                `${state.failedMonths} month(s) failed`
+
+        });
+
+    }
+
+
+                    /*
+                 * =================================================
+                 * CUSTOMER ANALYTICS AUTO-REFRESH
+                 * =================================================
+                 *
+                 * Runs once after the complete branch warm-up
+                 * succeeds.
+                 *
+                 * RFM V2 refreshes:
+                 *   - crm_rfm_snapshots
+                 *   - crm_rfm_customer_scores
+                 *   - crm_customer_profiles
+                 *
+                 * Promise-based intentionally because this
+                 * finalize callback is not an async function.
+                 */
+
+                if (
+                    state.failedMonths === 0
+                ) {
+
+                    getCustomerRfmV2({
+
+                        branchId,
+
+                        analysisDate:
+                            new Date()
+                                .toISOString()
+                                .slice(
+                                    0,
+                                    10
+                                ),
+
+                        observationDays:
+                            365,
+
+                        trendDays:
+                            90,
+
+                        minTickets:
+                            1,
+
+                        saveSnapshot:
+                            true
+
+                    })
+                    .then(
+                        refreshResult => {
+
+                            const refreshedCustomers =
+                                Array.isArray(
+                                    refreshResult?.customers
+                                )
+                                    ? refreshResult.customers.length
+                                    : (
+                                        Number(
+                                            refreshResult?.summary?.customers
+                                        ) || 0
+                                    );
+
+                            const refreshedSnapshotId =
+                                refreshResult?.snapshotId ??
+                                null;
+
+                            console.log(
+
+                                `[cacheWarmup] CUSTOMER ANALYTICS AUTO-REFRESH branch=${branchId} snapshot=${refreshedSnapshotId ?? "n/a"} customers=${refreshedCustomers}`
+
+                            );
+
+                        }
+                    )
+                    .catch(
+                        analyticsError => {
+
+                            console.error(
+
+                                `[cacheWarmup] CUSTOMER ANALYTICS AUTO-REFRESH FAILED branch=${branchId}:`,
+
+                                analyticsError?.message ||
+                                analyticsError
+
+                            );
+
+                        }
+                    );
+
+                }
+
+
+console.log(
+
+        `[cacheWarmup] COMPLETE branch=${branchId} loaded=${state.completedMonths} skipped=${state.skippedMonths} failed=${state.failedMonths} rows=${state.totalHistoricalRows} localRows=${state.localRows}`
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * ROUND-ROBIN WORKER
+ * =========================================================
+ */
+
+async function runRoundRobinEngine(engine) {
+
+    const queue = [];
+    const queuedBranchIds = new Set();
+
+    function enqueue(plan) {
+
+        if (!plan) {
+            return;
+        }
+
+        if (
+            plan.nextMonthIndex >=
+            plan.monthsList.length
+        ) {
+            return;
+        }
+
+        if (
+            queuedBranchIds.has(plan.branchId)
+        ) {
+            return;
+        }
+
+        queuedBranchIds.add(
+            plan.branchId
+        );
+
+        queue.push(
+            plan
+        );
+
+    }
+
+    function drainPendingBranches() {
+
+        if (
+            engine.pendingBranches.length ===
+            0
+        ) {
+            return;
+        }
+
+        const pending =
+            engine.pendingBranches.splice(
+                0,
+                engine.pendingBranches.length
+            );
+
+        for (
+            const plan
+            of pending
+        ) {
+
+            if (
+                engine.branchPlans.has(
+                    plan.branchId
+                )
+            ) {
+                continue;
+            }
+
+            plan.addedDynamically =
+                true;
+
+            plan.nextMonthIndex =
+                0;
+
+            engine.branchPlans.set(
+                plan.branchId,
+                plan
+            );
+
+            console.log(
+                "[cacheWarmup] QUEUE REFRESH ADDED branch=" +
+                String(plan.branchId) +
+                " newest=" +
+                String(plan.monthsList[0] || "N/A") +
+                " months=" +
+                String(plan.monthsList.length)
+            );
+
+            enqueue(
+                plan
+            );
+
+        }
+
+    }
+
+    for (
+        const plan
+        of engine.branchPlans.values()
+    ) {
+
+        enqueue(
+            plan
+        );
+
+    }
+
+    async function worker(
+        workerId
+    ) {
+
+        while (
+            true
+        ) {
+
+            drainPendingBranches();
+
+            const plan =
+                queue.shift();
+
+            if (!plan) {
+
+                const remaining =
+                    engine.pendingBranches.length > 0 ||
+                    Array.from(
+                        engine.branchPlans.values()
+                    ).some(
+                        current =>
+                            current.nextMonthIndex <
+                            current.monthsList.length
+                    );
+
+                if (!remaining) {
+                    return;
+                }
+
+                await yieldToEventLoop();
+                continue;
+
+            }
+
+            queuedBranchIds.delete(
+                plan.branchId
+            );
+
+            if (
+                plan.nextMonthIndex >=
+                plan.monthsList.length
+            ) {
+                continue;
+            }
+
+            const month =
+                plan.monthsList[
+                    plan.nextMonthIndex
+                ];
+
+            console.log(
+                "[cacheWarmup] WORKER=" +
+                String(workerId) +
+                " branch=" +
+                String(plan.branchId) +
+                " month=" +
+                String(month)
+            );
+
+            try {
+
+                await processPlanMonth({
+                    plan,
+                    month,
+                    delayMs: engine.delayMs,
+                    maxRetries: engine.maxRetries
+                });
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+                    "[cacheWarmup] UNEXPECTED WORKER FAILURE branch=" +
+                    String(plan.branchId) +
+                    " month=" +
+                    String(month) + ":",
+                    error
+                );
+
+            }
+
+            plan.nextMonthIndex +=
+                1;
+
+            if (
+                plan.nextMonthIndex <
+                plan.monthsList.length
+            ) {
+
+                enqueue(
+                    plan
+                );
+
+            }
+
+            await yieldToEventLoop();
+
+        }
+
+    }
+
+    const workerCount =
+        Math.min(
+            WARMUP_BRANCH_CONCURRENCY,
+            Math.max(
+                1,
+                engine.branchPlans.size
+            )
+        );
+
+    console.log(
+        "[cacheWarmup] BOUNDED WORKERS count=" +
+        String(workerCount)
+    );
+
+    await Promise.all(
+        Array.from(
+            {
+                length: workerCount
+            },
+            (_, index) =>
+                worker(
+                    index + 1
+                )
+        )
+    );
+
+    for (
+        const plan
+        of engine.branchPlans.values()
+    ) {
+
+        if (
+            plan.nextMonthIndex >=
+            plan.monthsList.length
+        ) {
+
+            finalizePlan(
+                plan
+            );
+
+        }
+
+    }
+
+    engine.running =
+        false;
+
+    roundRobinEngine =
+        null;
+
+    console.log(
+        "[cacheWarmup] BOUNDED PARALLEL FULL HISTORY WARM-UP COMPLETE."
+    );
+
+}
+
+/*
+ * =========================================================
+ * START ALL BRANCHES
+ * =========================================================
+ */
+
+let currentMonthRefreshPromise =
+    null;
+
+
+/*
+ * =========================================================
+ * REFRESH CURRENT MONTH FOR ALL BRANCHES
+ * =========================================================
+ */
+
+
+/*
+ * =========================================================
+ * AUTO CUSTOMER ANALYTICS AFTER CURRENT-MONTH SALES SYNC
+ * =========================================================
+ *
+ * Runs after the current-month sales for a branch have
+ * been successfully stored in local SQLite.
+ *
+ * RFM V2 updates:
+ *   - crm_rfm_snapshots
+ *   - crm_rfm_customer_scores
+ *   - crm_customer_profiles
+ */
+
+async function refreshCustomerRfmAfterSalesSync(
+    branchId
+) {
+
+    const analysisDate =
+        new Date()
+            .toISOString()
+            .slice(
+                0,
+                10
+            );
+
+    try {
+
+        const result =
+            await getCustomerRfmV2({
+
+                branchId,
+
+                analysisDate,
+
+                observationDays:
+                    365,
+
+                trendDays:
+                    90,
+
+                minTickets:
+                    1,
+
+                saveSnapshot:
+                    true
+
+            });
+
+        const customerCount =
+            Array.isArray(
+                result?.customers
+            )
+                ? result.customers.length
+                : (
+                    Number(
+                        result?.summary?.customers
+                    ) || 0
+                );
+
+        console.log(
+
+            `[cacheWarmup] CUSTOMER RFM REFRESHED branch=${branchId} analysisDate=${analysisDate} snapshot=${result?.snapshotId ?? "n/a"} customers=${customerCount}`
+
+        );
+
+        return {
+
+            success:
+                true,
+
+            branchId,
+
+            snapshotId:
+                result?.snapshotId ?? null,
+
+            customerCount
+
+        };
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[cacheWarmup] CUSTOMER RFM REFRESH FAILED branch=${branchId}:`,
+
+            error?.message ||
+            error
+
+        );
+
+        return {
+
+            success:
+                false,
+
+            branchId,
+
+            error:
+                error?.message ||
+                String(
+                    error
+                )
+
+        };
+
+    }
+
+}
+
+
+export async function refreshCurrentMonthAllBranches(
+    {
+        maxRetries = DEFAULT_MAX_RETRIES
+    } = {}
+) {
+
+    if (
+        currentMonthRefreshPromise
+    ) {
+
+        console.log(
+            "[cacheWarmup] CURRENT MONTH REFRESH ALREADY RUNNING -> JOIN"
+        );
+
+        return currentMonthRefreshPromise;
+
+    }
+
+    currentMonthRefreshPromise =
+        (async () => {
+
+            const month =
+                getCurrentUtcMonth();
+
+            const connections =
+                getActiveSavedConnections();
+
+            console.log(
+                "[cacheWarmup] CURRENT MONTH AUTO-REFRESH START month=" +
+                String(month) +
+                " branches=" +
+                String(connections.length) +
+                " concurrency=" +
+                String(
+                    Math.min(
+                        WARMUP_BRANCH_CONCURRENCY,
+                        connections.length
+                    )
+                )
+            );
+
+            let refreshed =
+                0;
+
+            let failed =
+                0;
+
+            let customerRefreshFailed =
+                0;
+
+            for (
+                let offset = 0;
+                offset < connections.length;
+                offset += WARMUP_BRANCH_CONCURRENCY
+            ) {
+
+                const batch =
+                    connections.slice(
+                        offset,
+                        offset +
+                            WARMUP_BRANCH_CONCURRENCY
+                    );
+
+                const results =
+                    await Promise.all(
+                        batch.map(
+                            async branch => {
+
+                                const branchId =
+                                    normalizeBranchId(
+                                        branch?.branchId
+                                    );
+
+                                const state = {
+                                    localRows: 0
+                                };
+
+                                try {
+
+                                    const result =
+                                        await warmMonthOnce({
+
+                                            branchId,
+                                            month,
+                                            connection: branch,
+                                            maxRetries,
+                                            state,
+                                            forceRefresh: true
+
+                                        });
+
+                                    console.log(
+                                        "[cacheWarmup] CURRENT MONTH REFRESHED branch=" +
+                                        String(branchId) +
+                                        " month=" +
+                                        String(month) +
+                                        " rows=" +
+                                        String(result?.rowCount || 0)
+                                    );
+
+                                    return {
+                                        success: true,
+                                        branchId
+                                    };
+
+                                }
+                                catch (
+                                    error
+                                ) {
+
+                                    console.error(
+                                        "[cacheWarmup] CURRENT MONTH REFRESH FAILED branch=" +
+                                        String(branchId) +
+                                        " month=" +
+                                        String(month) + ":",
+                                        error
+                                    );
+
+                                    return {
+                                        success: false,
+                                        branchId
+                                    };
+
+                                }
+
+                            }
+                        )
+                    );
+
+                for (
+                    const result
+                    of results
+                ) {
+
+                    if (
+                        result?.success
+                    ) {
+
+                        refreshed +=
+                            1;
+
+                        const customerRefresh =
+                            await refreshCustomerRfmAfterSalesSync(
+                                result.branchId
+                            );
+
+                        if (
+                            !customerRefresh?.success
+                        ) {
+
+                            customerRefreshFailed +=
+                                1;
+
+                        }
+
+                    }
+                    else {
+
+                        failed +=
+                            1;
+
+                    }
+
+                }
+
+                await yieldToEventLoop();
+
+            }
+
+            console.log(
+                "[cacheWarmup] CURRENT MONTH AUTO-REFRESH COMPLETE month=" +
+                String(month) +
+                " refreshed=" +
+                String(refreshed) +
+                " failed=" +
+                String(failed)
+            );
+
+            return {
+
+                success:
+                    failed === 0 &&
+                    customerRefreshFailed === 0,
+
+                month,
+
+                refreshed,
+
+                failed,
+
+                customerRefreshFailed
+
+            };
+
+        })().finally(
+            () => {
+
+                currentMonthRefreshPromise =
+                    null;
+
+            }
+        );
+
+    return currentMonthRefreshPromise;
+
+}
+
+export function startAllBranchesWarmup(
+    {
+        months = DEFAULT_MONTHS,
+        delayMs = DEFAULT_DELAY_MS,
+        maxRetries = DEFAULT_MAX_RETRIES
+    } = {}
+) {
+
+    /*
+     * -------------------------------------------------
+     * If already running, refresh instead of starting
+     * another worker.
+     * -------------------------------------------------
+     */
+
+    if (
+        roundRobinEngine?.running
+    ) {
+
+        console.log(
+
+            "[cacheWarmup] ENGINE ALREADY RUNNING -> REFRESH QUEUE"
+
+        );
+
+
+        refreshWarmupQueue({
+
+            months,
+
+            delayMs,
+
+            maxRetries
+
+        })
+        .catch(
+
+            error => {
+
+                console.error(
+
+                    "[cacheWarmup] automatic queue refresh failed:",
+
+                    error
+
+                );
+
+            }
+
+        );
+
+
+        return {
+
+            started:
+                true,
+
+            alreadyRunning:
+                true,
+
+            refreshed:
+                true,
+
+            branches:
+                roundRobinEngine.branchPlans.size,
+
+            mode:
+                "ROUND_ROBIN"
+
+        };
+
+    }
+
+
+    const connections =
+        getActiveSavedConnections();
+
+
+    if (
+        !Array.isArray(
+            connections
+        ) ||
+        connections.length ===
+        0
+    ) {
+
+        console.log(
+
+            "[cacheWarmup] No saved branch connections."
+
+        );
+
+
+        return {
+
+            started:
+                false,
+
+            branches:
+                0,
+
+            mode:
+                "ROUND_ROBIN"
+
+        };
+
+    }
+
+
+    const requestedMonthLimit =
+
+        months === null ||
+        months === undefined
+
+            ? null
+
+            : Number(
+                months
+            );
+
+
+    const requestedDelay =
+        Number(
+            delayMs
+        );
+
+
+    const requestedRetries =
+        Number(
+            maxRetries
+        );
+
+
+    const normalizedDelay =
+        Number.isFinite(
+            requestedDelay
+        ) &&
+        requestedDelay >= 0
+
+            ? requestedDelay
+
+            : DEFAULT_DELAY_MS;
+
+
+    const normalizedRetries =
+        Number.isInteger(
+            requestedRetries
+        ) &&
+        requestedRetries >= 0
+
+            ? Math.min(
+                requestedRetries,
+                5
+            )
+
+            : DEFAULT_MAX_RETRIES;
+
+
+    const engine = {
+
+        running:
+            true,
+
+        branchPlans:
+            new Map(),
+
+        pendingBranches:
+            [],
+
+        months:
+            requestedMonthLimit,
+
+        delayMs:
+            normalizedDelay,
+
+        maxRetries:
+            normalizedRetries
+
+    };
+
+
+    roundRobinEngine =
+        engine;
+
+
+    console.log(
+
+        `[cacheWarmup] QUEUED ${connections.length} branch(es) for ROUND-ROBIN ${
+            requestedMonthLimit === null
+                ? "FULL HISTORY"
+                : "LIMITED HISTORY"
+        } warm-up.`
+
+    );
+
+
+    (async () => {
+
+        /*
+         * Discover initial branches with bounded parallelism.
+         * Maximum 3 branch discoveries at once.
+         * A slow/failing branch must not block other branches.
+         */
+
+        for (
+            let offset = 0;
+            offset < connections.length;
+            offset += WARMUP_BRANCH_CONCURRENCY
+        ) {
+
+            const batch =
+                connections.slice(
+                    offset,
+                    offset +
+                        WARMUP_BRANCH_CONCURRENCY
+                );
+
+            console.log(
+                "[cacheWarmup] DISCOVERY BATCH start=" +
+                String(offset) +
+                " size=" +
+                String(batch.length)
+            );
+
+            await Promise.all(
+                batch.map(
+                    async branch => {
+
+                        const branchId =
+                            normalizeBranchId(
+                                branch.branchId
+                            );
+
+                        try {
+
+                            const plan =
+                                await buildBranchPlan({
+
+                                    branchId,
+
+                                    connection:
+                                        branch,
+
+                                    months:
+                                        requestedMonthLimit,
+
+                                    resetState:
+                                        true
+
+                                });
+
+                            if (
+                                plan
+                            ) {
+
+                                engine.branchPlans.set(
+                                    branchId,
+                                    plan
+                                );
+
+                                console.log(
+                                    "[cacheWarmup] PLAN branch=" +
+                                    String(branchId) +
+                                    " mode=" +
+                                    String(
+                                        requestedMonthLimit === null
+                                            ? "FULL_HISTORY"
+                                            : "LIMITED"
+                                    ) +
+                                    " months=" +
+                                    String(
+                                        plan.monthsList.length
+                                    ) +
+                                    " newest=" +
+                                    String(
+                                        plan.monthsList[0] || "N/A"
+                                    ) +
+                                    " oldest=" +
+                                    String(
+                                        plan.monthsList[
+                                            plan.monthsList.length - 1
+                                        ] || "N/A"
+                                    ) +
+                                    " tickets=" +
+                                    String(
+                                        plan.historyRange.ticketCount
+                                    )
+                                );
+
+                            }
+
+                        }
+                        catch (
+                            error
+                        ) {
+
+                            const state =
+                                getState(
+                                    branchId
+                                );
+
+                            state.running =
+                                false;
+
+                            state.failedMonths =
+                                1;
+
+                            state.error =
+                                error?.message ||
+                                String(error);
+
+                            state.finishedAt =
+                                new Date().toISOString();
+
+                            console.error(
+                                "[cacheWarmup] HISTORY DISCOVERY FAILED branch=" +
+                                String(branchId) + ":",
+                                error
+                            );
+
+                            updateSalesSyncState({
+
+                                branchId,
+
+                                status:
+                                    "ERROR",
+
+                                rows:
+                                    0,
+
+                                errorMessage:
+                                    state.error
+
+                            });
+
+                        }
+
+                    }
+                )
+            );
+
+            await yieldToEventLoop();
+
+        }
+
+        if (
+            engine.branchPlans.size ===
+            0
+        ) {
+
+            engine.running =
+                false;
+
+
+            roundRobinEngine =
+                null;
+
+
+            console.log(
+
+                "[cacheWarmup] NOTHING TO WARM."
+
+            );
+
+
+            return;
+
+        }
+
+
+        /*
+         * Start the single worker.
+         */
+
+        await runRoundRobinEngine(
+            engine
+        );
+
+    })()
+    .catch(
+
+        error => {
+
+            engine.running =
+                false;
+
+
+            if (
+                roundRobinEngine ===
+                engine
+            ) {
+
+                roundRobinEngine =
+                    null;
+
+            }
+
+
+            console.error(
+
+                "[cacheWarmup] unexpected round-robin failure:",
+
+                error
+
+            );
+
+        }
+
+    );
+
+
+    return {
+
+        started:
+            true,
+
+        branches:
+            connections.length,
+
+        mode:
+            requestedMonthLimit === null
+                ? "FULL_HISTORY_ROUND_ROBIN"
+                : "LIMITED_ROUND_ROBIN"
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * REFRESH WARM-UP QUEUE
+ * =========================================================
+ *
+ * Can be called while the application is running.
+ *
+ * Typical flow:
+ *
+ * Save Branch
+ *      â†“
+ * Connect Branch
+ *      â†“
+ * refreshWarmupQueue()
+ *      â†“
+ * Branch starts from newest month
+ *
+ * Electron restart is NOT required.
+ * =========================================================
+ */
+
+export async function refreshWarmupQueue(
+    {
+        months = null,
+        delayMs = null,
+        maxRetries = null,
+        branchId = null
+    } = {}
+) {
+
+    /*
+     * -----------------------------------------------------
+     * No active engine.
+     *
+     * Start a fresh round-robin using all saved branches.
+     * -----------------------------------------------------
+     */
+
+    if (
+        !roundRobinEngine?.running
+    ) {
+
+        const result =
+            startAllBranchesWarmup({
+
+                months,
+
+                delayMs:
+                    delayMs === null
+                        ? DEFAULT_DELAY_MS
+                        : delayMs,
+
+                maxRetries:
+                    maxRetries === null
+                        ? DEFAULT_MAX_RETRIES
+                        : maxRetries
+
+            });
+
+
+        return {
+
+            success:
+                true,
+
+            mode:
+                "STARTED_NEW_ENGINE",
+
+            result
+
+        };
+
+    }
+
+
+    const connections =
+        getActiveSavedConnections();
+
+
+    if (
+        !Array.isArray(
+            connections
+        )
+    ) {
+
+        return {
+
+            success:
+                false,
+
+            mode:
+                "NO_CONNECTIONS"
+
+        };
+
+    }
+
+
+    const existingIds =
+        new Set(
+
+            Array.from(
+
+                roundRobinEngine
+                    .branchPlans
+                    .keys()
+
+            )
+
+        );
+
+
+    const pendingIds =
+        new Set(
+
+            roundRobinEngine
+                .pendingBranches
+                .map(
+                    plan =>
+                        plan.branchId
+                )
+
+        );
+
+
+    const targetConnections =
+
+        branchId === null
+
+            ? connections.filter(
+
+                connection => {
+
+                    const id =
+                        Number(
+                            connection?.branchId
+                        );
+
+
+                    return (
+
+                        Number.isInteger(
+                            id
+                        ) &&
+
+                        id > 0 &&
+
+                        !existingIds.has(
+                            id
+                        ) &&
+
+                        !pendingIds.has(
+                            id
+                        )
+
+                    );
+
+                }
+
+            )
+
+            : connections.filter(
+
+                connection =>
+
+                    Number(
+                        connection?.branchId
+                    ) ===
+                    Number(
+                        branchId
+                    )
+
+            );
+
+
+    /*
+     * If the requested branch is already in the engine,
+     * nothing needs to be re-added.
+     */
+
+    if (
+        targetConnections.length ===
+        0
+    ) {
+
+        console.log(
+
+            branchId === null
+
+                ? "[cacheWarmup] REFRESH QUEUE -> no new branches."
+
+                : `[cacheWarmup] REFRESH QUEUE -> branch ${branchId} already queued/running.`
+
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            mode:
+                "NO_NEW_BRANCHES",
+
+            branches:
+                roundRobinEngine
+                    .branchPlans
+                    .size
+
+        };
+
+    }
+
+
+    const effectiveMonths =
+
+        months === null
+
+            ? roundRobinEngine.months
+
+            : months;
+
+
+    const effectiveDelay =
+
+        delayMs === null
+
+            ? roundRobinEngine.delayMs
+
+            : Math.max(
+
+                0,
+
+                Number(
+                    delayMs
+                ) || 0
+
+            );
+
+
+    const effectiveRetries =
+
+        maxRetries === null
+
+            ? roundRobinEngine.maxRetries
+
+            : Math.max(
+
+                0,
+
+                Math.min(
+
+                    5,
+
+                    Number(
+                        maxRetries
+                    ) || 0
+
+                )
+
+            );
+
+
+    for (
+        const branch
+        of targetConnections
+    ) {
+
+        const id =
+            normalizeBranchId(
+                branch.branchId
+            );
+
+
+        try {
+
+            const plan =
+                await buildBranchPlan({
+
+                    branchId:
+                        id,
+
+                    connection:
+                        branch,
+
+                    months:
+                        effectiveMonths,
+
+                    resetState:
+                        true
+
+                });
+
+
+            if (
+                !plan
+            ) {
+
+                continue;
+
+            }
+
+
+            plan.addedDynamically =
+                true;
+
+
+            /*
+             * Force the branch to be picked up immediately
+             * at the next scheduler round.
+             */
+
+            plan.nextMonthIndex =
+                0;
+
+
+            roundRobinEngine
+                .pendingBranches
+                .push(
+                    plan
+                );
+
+
+            console.log(
+
+                `[cacheWarmup] REFRESH QUEUE ADDED branch=${id} newest=${plan.monthsList[0] || "N/A"} oldest=${plan.monthsList[plan.monthsList.length - 1] || "N/A"} months=${plan.monthsList.length}`
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            const state =
+                getState(
+                    id
+                );
+
+
+            state.running =
+                false;
+
+
+            state.failedMonths =
+                1;
+
+
+            state.error =
+                error?.message ||
+                String(
+                    error
+                );
+
+
+            state.finishedAt =
+                new Date().toISOString();
+
+
+            updateSalesSyncState({
+
+                branchId:
+                    id,
+
+                status:
+                    "ERROR",
+
+                rows:
+                    0,
+
+                errorMessage:
+                    state.error
+
+            });
+
+
+            console.error(
+
+                `[cacheWarmup] REFRESH QUEUE DISCOVERY FAILED branch=${id}:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+
+    /*
+     * Update engine defaults for future added branches.
+     */
+
+    roundRobinEngine.delayMs =
+        effectiveDelay;
+
+
+    roundRobinEngine.maxRetries =
+        effectiveRetries;
+
+
+    console.log(
+
+        `[cacheWarmup] REFRESH QUEUE COMPLETE added=${roundRobinEngine.pendingBranches.length} active=${roundRobinEngine.branchPlans.size}`
+
+    );
+
+
+    return {
+
+        success:
+            true,
+
+        mode:
+            "QUEUE_REFRESHED",
+
+        added:
+            roundRobinEngine.pendingBranches.length,
+
+        active:
+            roundRobinEngine.branchPlans.size
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SINGLE BRANCH WARMUP
+ * =========================================================
+ *
+ * Used by manual start.
+ * =========================================================
+ */
+
+export async function warmupBranchCache(
+    {
+        branchId,
+        months = DEFAULT_MONTHS,
+        delayMs = DEFAULT_DELAY_MS,
+        maxRetries = DEFAULT_MAX_RETRIES,
+        connection = null
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const state =
+        getState(
+            id
+        );
+
+
+    if (
+        state.running
+    ) {
+
+        console.log(
+
+            `[cacheWarmup] ALREADY RUNNING branch=${id}`
+
+        );
+
+
+        return {
+
+            success:
+                true,
+
+            alreadyRunning:
+                true,
+
+            state: {
+                ...state
+            }
+
+        };
+
+    }
+
+
+    const savedConnection =
+        connection ||
+        getBranchConnection(
+            id
+        );
+
+
+    if (
+        !savedConnection
+    ) {
+
+        throw new Error(
+
+            `No saved connection for branch ${id}`
+
+        );
+
+    }
+
+
+    const requestedDelay =
+        Number(
+            delayMs
+        );
+
+
+    const requestedRetries =
+        Number(
+            maxRetries
+        );
+
+
+    const normalizedDelay =
+        Number.isFinite(
+            requestedDelay
+        ) &&
+        requestedDelay >= 0
+
+            ? requestedDelay
+
+            : DEFAULT_DELAY_MS;
+
+
+    const normalizedRetries =
+        Number.isInteger(
+            requestedRetries
+        ) &&
+        requestedRetries >= 0
+
+            ? Math.min(
+                requestedRetries,
+                5
+            )
+
+            : DEFAULT_MAX_RETRIES;
+
+
+    const historyRange =
+        await getSalesHistoryRange({
+
+            branchId:
+                id,
+
+            connection:
+                savedConnection
+
+        });
+
+
+    if (
+        !historyRange.hasData
+    ) {
+
+        state.running =
+            false;
+
+
+        state.finishedAt =
+            new Date().toISOString();
+
+
+        return {
+
+            success:
+                true,
+
+            branchId:
+                id,
+
+            history:
+                historyRange,
+
+            state: {
+                ...state
+            }
+
+        };
+
+    }
+
+
+    const monthsList =
+        resolveMonthList({
+
+            historyRange,
+
+            months
+
+        });
+
+
+    initializeBranchState(
+
+        id,
+
+        historyRange,
+
+        monthsList
+
+    );
+
+
+    try {
+
+        for (
+            const month
+            of monthsList
+        ) {
+
+            state.currentMonth =
+                month;
+
+
+            await sleep(
+                normalizedDelay
+            );
+
+
+            await yieldToEventLoop();
+
+
+            try {
+
+                const result =
+                    await warmMonthOnce({
+
+                        branchId:
+                            id,
+
+                        month,
+
+                        connection:
+                            savedConnection,
+
+                        maxRetries:
+                            normalizedRetries,
+
+                        state
+
+                    });
+
+
+                if (
+                    result.status ===
+                        "LOCAL_HIT" ||
+                    result.status ===
+                        "CACHE_HIT"
+                ) {
+
+                    state.skippedMonths +=
+                        1;
+
+                }
+                else {
+
+                    state.completedMonths +=
+                        1;
+
+                }
+
+
+                state.totalHistoricalRows +=
+
+                    Number(
+                        result.rowCount
+                    ) || 0;
+
+            }
+            catch (
+                error
+            ) {
+
+                state.failedMonths +=
+                    1;
+
+
+                state.error =
+                    error?.message ||
+                    String(
+                        error
+                    );
+
+
+                console.error(
+
+                    `[cacheWarmup] BRANCH MONTH FAILED branch=${id} month=${month}:`,
+
+                    error
+
+                );
+
+            }
+
+
+            await yieldToEventLoop();
+
+
+            await sleep(
+                YIELD_DELAY_MS
+            );
+
+        }
+
+
+        finalizePlan({
+
+            branchId:
+                id,
+
+            state
+
+        });
+
+
+        return {
+
+            success:
+                state.failedMonths ===
+                0,
+
+            branchId:
+                id,
+
+            history:
+                historyRange,
+
+            state: {
+                ...state
+            }
+
+        };
+
+    }
+    catch (
+        error
+    ) {
+
+        state.running =
+            false;
+
+
+        state.failedMonths +=
+            1;
+
+
+        state.error =
+            error?.message ||
+            String(
+                error
+            );
+
+
+        state.currentMonth =
+            null;
+
+
+        state.finishedAt =
+            new Date().toISOString();
+
+
+        updateSalesSyncState({
+
+            branchId:
+                id,
+
+            status:
+                "ERROR",
+
+            rows:
+                state.localRows,
+
+            errorMessage:
+                state.error
+
+        });
+
+
+        console.error(
+
+            `[cacheWarmup] STOPPED branch=${id}:`,
+
+            error
+
+        );
+
+
+        return {
+
+            success:
+                false,
+
+            branchId:
+                id,
+
+            error:
+                state.error,
+
+            history:
+                historyRange,
+
+            state: {
+                ...state
+            }
+
+        };
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * MANUAL SINGLE BRANCH
+ * =========================================================
+ */
+
+export function startBranchWarmup(
+    {
+        branchId,
+        months = DEFAULT_MONTHS,
+        delayMs = DEFAULT_DELAY_MS,
+        maxRetries = DEFAULT_MAX_RETRIES
+    }
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    setTimeout(
+
+        () => {
+
+            warmupBranchCache({
+
+                branchId:
+                    id,
+
+                months,
+
+                delayMs,
+
+                maxRetries
+
+            })
+            .catch(
+
+                error => {
+
+                    console.error(
+
+                        `[cacheWarmup] unexpected manual failure ${id}:`,
+
+                        error
+
+                    );
+
+                }
+
+            );
+
+        },
+
+        0
+
+    );
+
+
+    return {
+
+        started:
+            true,
+
+        branchId:
+            id
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * STATUS
+ * =========================================================
+ */
+
+export function getWarmupStatus(
+    branchId
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    return {
+
+        branchId:
+            id,
+
+        ...getState(
+            id
+        )
+
+    };
+
+}
+
+
+export function getAllWarmupStatuses() {
+
+    return Array.from(
+
+        warmupState.entries()
+
+    )
+    .map(
+
+        (
+            [
+                branchId,
+                state
+            ]
+        ) => ({
+
+            branchId,
+
+            ...state
+
+        })
+
+    );
+
+}
+
+
+export function isWarmupRunning(
+    branchId
+) {
+
+    const id =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    return Boolean(
+
+        getState(
+            id
+        ).running
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * DEFAULT EXPORT
+ * =========================================================
+ */
+
+export default {
+
+    warmupBranchCache,
+
+    startAllBranchesWarmup,
+
+    refreshCurrentMonthAllBranches,
+    refreshWarmupQueue,
+
+    startBranchWarmup,
+
+    getWarmupStatus,
+
+    getAllWarmupStatuses,
+
+    isWarmupRunning
+
+};

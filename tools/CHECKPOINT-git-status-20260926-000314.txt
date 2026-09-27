@@ -1,0 +1,211 @@
+﻿ M electron/cache/cacheWarmupService.js
+ M electron/connection/connectionManager.js
+ M electron/ipc/connection.ipc.js
+ M electron/ipc/customers.ipc.js
+ M electron/ipc/dashboard.ipc.js
+ M electron/localdb/localSalesDb.js
+ M electron/main.js
+ M electron/pharmfly/analyticsHubService.js
+ M electron/pharmfly/branchPerformanceService.js
+ M electron/pharmfly/dashboardOverviewService.js
+ M electron/pharmfly/sales/salesService.js
+ M electron/pharmfly/sellerPerformanceService.js
+ M electron/preload.js
+ M src/app/BranchEditor.jsx
+ M src/app/navigation.js
+ M src/components/AnalyticsHubPanel.jsx
+ M src/components/AnalyticsModulePage.jsx
+ M src/components/BranchPerformancePanel.jsx
+ M src/components/CustomerAnalyticsPanel.jsx
+ M src/components/CustomerClvPanel.jsx
+ M src/components/CustomerCohortPanel.jsx
+ M src/components/CustomerRfmPanel.jsx
+ M src/components/MasterManagementPanel.jsx
+ M src/components/ProductMixPanel.jsx
+ M src/components/ProductProfitabilityPanel.jsx
+ M src/components/SalesAnalyticsPanel.jsx
+ M src/components/TicketReconciliation.jsx
+ M src/components/TopProductsPanel.jsx
+ M src/pages/ProductsPage.jsx
+?? check-branch1-hdcustomer.mjs
+?? check-customer-6048-card.mjs
+?? check-customer-6048.mjs
+?? check-customer-purchases.mjs
+?? electron/cache/cacheWarmupService.js.backup-before-auto-customer-refresh-2026-09-25T20-48-08-982Z
+?? electron/cache/cacheWarmupService.js.backup-before-auto-customer-refresh-repair-2026-09-25T20-49-24-221Z
+?? electron/cache/cacheWarmupService.js.backup-before-bounded-singleflight-20260925
+?? electron/cache/cacheWarmupService.js.backup-before-current-month-parallel-20260925
+?? electron/cache/cacheWarmupService.js.backup-before-current-month-rfm-2026-09-25T20-50-55-583Z
+?? electron/cache/cacheWarmupService.js.backup-before-file-trimming-20260926-000314
+?? electron/cache/cacheWarmupService.js.backup-before-parallel-discovery-20260925
+?? electron/cache/cacheWarmupService.js.backup-before-singleflight-cleanup-fix-20260925
+?? electron/cache/cacheWarmupService.js.bak-before-active-branches-final
+?? electron/cache/cacheWarmupService.js.bak-before-active-connections-fix
+?? electron/connection/connectionManager.js.backup-before-fast-connection-timeout
+?? electron/connection/connectionManager.js.backup-before-stable-pool
+?? electron/connection/connectionManager.js.before-connection-lock
+?? electron/ipc/connection.ipc.js.backup-before-crm-phone-backfill-20260924
+?? electron/ipc/connection.ipc.js.backup-before-diagnostic-cleanup-20260924
+?? electron/ipc/connection.ipc.js.backup-before-offline-crm-autosync-20260924
+?? electron/ipc/customers.ipc.js.backup-before-crm-operational-schema
+?? electron/ipc/customers.ipc.js.backup-before-customer360-fast-20260925
+?? electron/ipc/customers.ipc.js.backup-before-rfm-v2
+?? electron/ipc/dashboard.ipc.js.backup-before-fast-sellers
+?? electron/ipc/dashboard.ipc.js.backup-before-final-seller-route
+?? electron/localdb/localSalesDb.js.backup-before-local-fields-fix
+?? electron/localdb/localSalesDb.js.backup-before-local-read
+?? electron/localdb/localSalesDb.js.before-pin-number
+?? electron/main.js.backup-before-delivery-inspection
+?? electron/main.js.backup-before-diagnostic-cleanup-20260924
+?? electron/main.js.backup-before-disable-full-warmup-20260925
+?? electron/main.js.backup-before-disable-full-warmup-final-20260925
+?? electron/main.js.backup-before-offline-crm-autosync-20260924
+?? electron/main.js.backup-before-restore-current-month-only-20260925
+?? electron/main.js.backup-before-warmup-sequencing-20260925
+?? electron/pharmfly/analytics/analyticsService.js.backup-before-customer-overview-light-v2-20260925
+?? electron/pharmfly/analyticsHubService.js.backup-before-encoding-repair-20260925
+?? electron/pharmfly/analyticsHubService.js.backup-before-full-encoding-repair-20260925
+?? electron/pharmfly/branchPerformanceService.js.backup-before-10-retries
+?? electron/pharmfly/branchPerformanceService.js.backup-before-comparison-resilience
+?? electron/pharmfly/branchPerformanceService.js.backup-before-encoding-repair-20260925
+?? electron/pharmfly/customers/crm/
+?? electron/pharmfly/customers/customer360Service.js
+?? electron/pharmfly/customers/customer360Service.js.backup-before-customer360-20260925
+?? electron/pharmfly/customers/customer360Service.js.backup-before-customer360-fast-20260925
+?? electron/pharmfly/customers/customerRfmV2Service.js
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-binding-fix
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-encoding-repair-20260925
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-final-sql-fix
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-offline-crm-autosync-20260924
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-performance-optimization
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-rfm-binding-final
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-rfm-test
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-telephone-link-20260924
+?? electron/pharmfly/customers/customerRfmV2Service.js.backup-before-telephone-link-20260924-v2
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-customer-name-fix
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-customer-name-fix-v2
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-customer-name-fix-v3
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-customer-name-fix-v4
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-customer-name-fix-v5
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-delivery-kpi-final
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-delivery-kpi-step3
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-disable-old-daily-facts
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-encoding-repair-20260925
+?? electron/pharmfly/dashboardOverviewService.js.backup-before-full-encoding-repair-20260925
+?? electron/pharmfly/sales/salesService.js.backup-before-direct-pharmafly-test
+?? electron/pharmfly/sales/salesService.js.backup-before-hdcustomer-step1
+?? electron/pharmfly/sales/salesService.js.backup-before-local-customer-name-fix
+?? electron/pharmfly/sales/salesService.js.backup-before-local-customer-name-fix-v6
+?? electron/pharmfly/sales/salesService.js.backup-before-local-fields-fix
+?? electron/pharmfly/sales/salesService.js.backup-before-local-first-fixed
+?? electron/pharmfly/sales/salesService.js.backup-before-storeid-diagnostic
+?? electron/pharmfly/sales/salesService.js.backup-before-template-literal-fix
+?? electron/pharmfly/sales/salesService.js.bak-before-empty-sqlite-fallback
+?? electron/pharmfly/sellerOverviewFastService.js
+?? electron/pharmfly/sellerOverviewService.js
+?? electron/pharmfly/sellerOverviewService.js.backup-before-final-inflight-diagnostic
+?? electron/pharmfly/sellerOverviewService.js.backup-before-inflight-diagnostic-final
+?? electron/pharmfly/sellerOverviewService.js.backup-before-inflight-timeout-fix
+?? electron/pharmfly/sellerOverviewService.js.backup-before-loadbranch-entry-diagnostic
+?? electron/pharmfly/sellerOverviewService.js.backup-before-seller-query-optimization
+?? electron/pharmfly/sellerOverviewService.js.backup-before-seller-stage-diagnostic
+?? electron/pharmfly/sellerOverviewService.js.backup-before-seller-stage-diagnostic-2
+?? electron/pharmfly/sellerOverviewService.js.backup-before-seller-stage-diagnostic-3
+?? electron/pharmfly/sellerOverviewService.js.backup-before-seller-stage-diagnostic-final
+?? electron/preload.js.backup-before-crm-phone-backfill-20260924
+?? electron/preload.js.backup-before-diagnostic-cleanup-20260924
+?? electron/preload.js.backup-before-rfm-v2
+?? electron/tools/inspectDeliveryFields.js
+?? electron/tools/runDeliveryInspection.js
+?? src/components/AnalyticsHubPanel.jsx.backup-before-customer-pages-separation-20260925
+?? src/components/AnalyticsHubPanel.jsx.backup-before-customer-render-order-20260925
+?? src/components/AnalyticsHubPanel.jsx.backup-before-encoding-repair-20260925
+?? src/components/AnalyticsHubPanel.jsx.backup-before-fast-sellers
+?? src/components/AnalyticsHubPanel.jsx.backup-before-seller-route
+?? src/components/AnalyticsModulePage.jsx.backup-before-encoding-repair-20260925
+?? src/components/AnalyticsModulePage.jsx.backup-before-full-encoding-repair-20260925
+?? src/components/AnalyticsModulePage.jsx.backup-before-seller-route
+?? src/components/CustomerAnalyticsModulePanel.jsx
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-customer-overview-light-v2-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-customer-overview-sort-fix-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-customer360-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-customer360-fast-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-date-normalization-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-encoding-repair-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-full-encoding-repair-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-rfm-overview-split-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-rfm-v2-final-20260925
+?? src/components/CustomerAnalyticsModulePanel.jsx.backup-before-rfm-v2-payload-fix-20260925
+?? tools/CHECKPOINT-before-file-trimming-20260926-000314.md
+?? tools/CHECKPOINT-git-status-20260926-000314.txt
+?? tools/applyCurrentMonthParallelFix.mjs
+?? tools/applyLocalFirstSalesFix.mjs
+?? tools/applyMainWarmupSequencingFix.mjs
+?? tools/applyParallelDiscoveryFix.mjs
+?? tools/applyPerformanceHotCacheFix.mjs
+?? tools/applyPinNumberPersistenceSafe.cjs
+?? tools/applySellerPinPersistenceSafe.mjs
+?? tools/applyWarmupConcurrencyFix.mjs
+?? tools/applyWarmupConcurrencyFixV2.mjs
+?? tools/backfillSellerPin.cjs
+?? tools/benchmark-performance.mjs
+?? tools/benchmarkDashboardSellers.cjs
+?? tools/benchmarkEmployeeMapping.cjs
+?? tools/benchmarkEmployeeMapping.mjs
+?? tools/benchmarkFullSellerPerformance.cjs
+?? tools/benchmarkSellerAggregation.cjs
+?? tools/check5615Branch3Rfm.mjs
+?? tools/check5615RfmSnapshot.mjs
+?? tools/checkCustomerNameConflicts.mjs
+?? tools/checkCustomerNames.mjs
+?? tools/compareSellerIds.cjs
+?? tools/diagnoseSellerMismatch.cjs
+?? tools/disableAutoFullWarmup.mjs
+?? tools/enableLocalSalesFirst.ps1
+?? tools/finalArabicUi.mjs
+?? tools/findCustomer5615.mjs
+?? tools/findRealDb.mjs
+?? tools/finishArabicUi.mjs
+?? tools/finishArabicUi.ps1
+?? tools/fixCustomer360ApiRef.mjs
+?? tools/fixCustomer360ApiRef2.mjs
+?? tools/fixCustomer360Guard.mjs
+?? tools/fixCustomerDateFormat.mjs
+?? tools/fixCustomerOverviewPerformance.mjs
+?? tools/fixCustomerOverviewPerformanceV2.mjs
+?? tools/fixCustomerOverviewRfmSplit.mjs
+?? tools/fixCustomerRenderOrder.mjs
+?? tools/fixCustomerRfmV2Payload.mjs
+?? tools/fixCustomerRfmV2PayloadFinal.mjs
+?? tools/fixDashboardCustomerNames.ps1
+?? tools/fixLocalSalesFirstFields.ps1
+?? tools/fixRemainingArabicUi.mjs
+?? tools/inspect5615ByBranch.mjs
+?? tools/inspect5615LiveDb.mjs
+?? tools/inspectDeliveryFields.mjs
+?? tools/inspectMissingSellerTickets.cjs
+?? tools/makeCustomer360Fast.mjs
+?? tools/optimizeCustomer360Indexes.mjs
+?? tools/patchAutoCustomerRefresh.mjs
+?? tools/patchCurrentMonthRfmRefresh.mjs
+?? tools/repairArabicEncoding.mjs
+?? tools/repairAutoCustomerRefresh.mjs
+?? tools/repairAutoCustomerRefresh2.mjs
+?? tools/repairMainWarmupDisable.mjs
+?? tools/restoreAndDisableWarmup.mjs
+?? tools/rfm-v2-direct-test.mjs
+?? tools/rfm-v2-test-app/
+?? tools/separateCustomerPages.mjs
+?? tools/syncCurrentSellerDay.cjs
+?? tools/testElectronConsole.mjs
+?? tools/testLocalSellerAggregation.cjs
+?? tools/testRfmRangePerformance.mjs
+?? tools/testRfmV2.mjs
+?? tools/testSellerBranches.cjs
+?? tools/testSqliteRfm.mjs
+?? tools/translateUiToArabic.mjs
+?? tools/translateUiToArabic.ps1
+?? tools/translateUiToArabic.ps1.backup-before-fix-20260925
+?? tools/ui-arabic-backup-2026-09-25T20-05-04-199Z/
+?? tools/ui-english-review.txt
+?? tools/upgradeCustomerProfile360.mjs

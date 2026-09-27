@@ -1,4 +1,4 @@
-import { restorePackagedInstallerState } from "./installerStateBootstrap.js";
+﻿import { restorePackagedInstallerState } from "./installerStateBootstrap.js";
 
 import {
     app,
@@ -49,6 +49,10 @@ import {
 import {
     registerMasterItemIpc
 } from "./ipc/masterItem.ipc.js";
+import {
+    registerWhatsAppIpc
+} from "./ipc/whatsapp.ipc.js";
+
 
 
 import {
@@ -725,6 +729,7 @@ app.whenReady()
 
             registerAnalyticsHubIpc();
             registerMasterItemIpc();
+            registerWhatsAppIpc();
             startCrmPhoneAutoSync();
 console.log(
                 "[Electron] IPC handlers registered."
@@ -928,3 +933,4 @@ app.on(
     }
 
 );
+

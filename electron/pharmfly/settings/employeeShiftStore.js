@@ -1,0 +1,96 @@
+import {
+    getLocalSalesDatabase
+} from "../../localdb/localSalesDb.js";
+
+function ensureSchema() {
+    const db = getLocalSalesDatabase();
+
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS employee_shift_assignments (" +
+        "branch_id INTEGER NOT NULL," +
+        "employee_id TEXT NOT NULL," +
+        "shift_code TEXT NOT NULL," +
+        "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP," +
+        "PRIMARY KEY (branch_id, employee_id)" +
+        ")"
+    );
+
+    db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_employee_shift_branch " +
+        "ON employee_shift_assignments (branch_id)"
+    );
+
+    return db;
+}
+
+export function getEmployeeShiftAssignments(branchId) {
+    const db = ensureSchema();
+
+    const rows = db.prepare(
+        "SELECT branch_id, employee_id, shift_code, updated_at " +
+        "FROM employee_shift_assignments " +
+        "WHERE branch_id = ? " +
+        "ORDER BY employee_id"
+    ).all(Number(branchId));
+
+    return {
+        success: true,
+        branchId: Number(branchId),
+        assignments: rows
+    };
+}
+
+export function saveEmployeeShiftAssignment({
+    branchId,
+    employeeId,
+    shiftCode
+}) {
+    const numericBranchId = Number(branchId);
+    const normalizedEmployeeId = String(employeeId ?? "").trim();
+    const normalizedShift = String(shiftCode ?? "").trim();
+
+    if (!Number.isFinite(numericBranchId) || numericBranchId <= 0) {
+        throw new Error("A valid branch is required.");
+    }
+
+    if (!normalizedEmployeeId) {
+        throw new Error("A valid employee is required.");
+    }
+
+    const allowed = new Set([
+        "MORNING",
+        "EVENING",
+        "NIGHT"
+    ]);
+
+    if (!allowed.has(normalizedShift)) {
+        throw new Error("Invalid shift code.");
+    }
+
+    const db = ensureSchema();
+
+    db.prepare(
+        "INSERT INTO employee_shift_assignments (" +
+        "branch_id, employee_id, shift_code, updated_at" +
+        ") VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
+        "ON CONFLICT(branch_id, employee_id) DO UPDATE SET " +
+        "shift_code = excluded.shift_code, " +
+        "updated_at = CURRENT_TIMESTAMP"
+    ).run(
+        numericBranchId,
+        normalizedEmployeeId,
+        normalizedShift
+    );
+
+    return {
+        success: true,
+        branchId: numericBranchId,
+        employeeId: normalizedEmployeeId,
+        shiftCode: normalizedShift
+    };
+}
+
+export default {
+    getEmployeeShiftAssignments,
+    saveEmployeeShiftAssignment
+};

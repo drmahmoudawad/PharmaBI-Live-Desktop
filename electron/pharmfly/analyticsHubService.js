@@ -1,4 +1,4 @@
-import { getMonthlySalesCacheCoverage } from '../cache/monthlySalesCacheService.js';
+﻿import { getMonthlySalesCacheCoverage } from '../cache/monthlySalesCacheService.js';
 import { getBranchPool } from '../connection/connectionManager.js';
 import { getSales, getSalesSummary, getSalesByDay } from './sales/salesService.js';
 import { getDeliverySummary } from './sales/deliveryAnalyticsService.js';
@@ -1598,7 +1598,7 @@ async function aggregateInterbranchExchanges({
             RTRIM(
               COALESCE(
                 e.Name,
-                N'غير محدد'
+                N'ط؛ظٹط± ظ…ط­ط¯ط¯'
               )
             )
           ) AS otherBranchName,
@@ -1727,7 +1727,7 @@ async function aggregateInterbranchExchanges({
     const name =
       String(
         row.otherBranchName ||
-        'غير محدد'
+        'ط؛ظٹط± ظ…ط­ط¯ط¯'
       ).trim();
 
     const key =
@@ -1903,7 +1903,7 @@ async function aggregateInterbranchExchanges({
         otherBranchName:
           String(
             row.otherBranchName ||
-            'غير محدد'
+            'ط؛ظٹط± ظ…ط­ط¯ط¯'
           ),
 
         salesReturn:
@@ -2462,7 +2462,7 @@ export async function getAnalyticsModule({
         return {
           success: false,
           message:
-            'اختر فرعًا ظ„طھط­طظٹظ„ اليوم والساعة.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ظ¹ط¸â€‍ ط§ظ„ظٹظˆظ… ظˆط§ظ„ط³ط§ط¹ط©.'
         };
       }
 
@@ -2604,14 +2604,14 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا لتحليل البائعين.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„طھط­ظ„ظٹظ„ ط§ظ„ط¨ط§ط¦ط¹ظٹظ†.'
           };
     case 'sales-returns': {
       if (!branch) {
         return {
           success: false,
           message:
-            'اختر فرعًا ظ„طھط­طظظٹظ„ المرتجعات.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ…ط±طھط¬ط¹ط§طھ.'
         };
       }
 
@@ -2661,7 +2661,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ الم؆تجات.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ…ط†طھط¬ط§طھ.'
           };
 
     case 'product-profitability':
@@ -2681,7 +2681,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظيظ„ ط±ط¨ط­طظط© الم؆تجات.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظٹط¸â€‍ ط·آ±ط·آ¨ط·آ­ط·ط¸ط·آ© ط§ظ„ظ…ط†طھط¬ط§طھ.'
           };
 
     case 'product-abc':
@@ -2698,26 +2698,153 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ الم؆تجات.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ…ط†طھط¬ط§طھ.'
           };
 
     case 'customer-overview':
-    case 'customer-rfm':
-      return branch
-        ? getCustomerRfm({
-            branchId:
-              branch,
-            fromDate,
-            toDate,
-            limit:
-              50
-          })
-        : {
-            success:
-              false,
-            message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ العملاء.'
-          };
+    
+case 'customer-rfm': {
+      if (!branch) {
+        return {
+          success: false,
+          message: 'اختر فرعًا لتحليل العملاء.'
+        };
+      }
+
+      const result = await getCustomerRfm({
+        branchId: branch,
+        fromDate,
+        toDate,
+        limit: 50
+      });
+
+      const segmentLabels = {
+        CHAMPIONS: 'أبطال',
+        CHAMPION: 'أبطال',
+        VIP: 'عميل مهم جداً',
+        IMPORTANT: 'عميل مهم',
+        GOOD: 'عميل جيد',
+        AVERAGE: 'عميل متوسط',
+        NEW: 'عميل جديد',
+        AT_RISK: 'عميل معرض للفقد',
+        ATRISK: 'عميل معرض للفقد',
+        DORMANT: 'عميل خامل',
+        LOST: 'عميل مفقود',
+        REACTIVATION_OPPORTUNITY: 'فرصة إعادة تنشيط'
+      };
+
+      const classifyFromScores = (row) => {
+        const R = Number(row?.r ?? row?.R ?? row?.recencyScore);
+        const F = Number(row?.f ?? row?.F ?? row?.frequencyScore);
+        const M = Number(row?.m ?? row?.M ?? row?.monetaryScore);
+
+        if (
+          Number.isFinite(R) &&
+          Number.isFinite(F) &&
+          Number.isFinite(M)
+        ) {
+          if (R >= 4 && F >= 4 && M >= 4) {
+            return 'أبطال';
+          }
+
+          if (R <= 2 && F >= 3) {
+            return 'عميل معرض للفقد';
+          }
+
+          if (R <= 2 && F <= 2 && M <= 2) {
+            return 'عميل مفقود';
+          }
+
+          if (R >= 4 && F <= 2) {
+            return 'عميل جديد';
+          }
+
+          if (R >= 3 && F >= 3 && M >= 3) {
+            return 'عميل جيد';
+          }
+
+          if (R >= 2 && F >= 2) {
+            return 'عميل متوسط';
+          }
+        }
+
+        return '-';
+      };
+
+      const normalizeCustomer = (row = {}) => {
+        const rawSegment =
+          row.segment ??
+          row.segmentName ??
+          row.segment_name ??
+          row.customerSegment ??
+          row.customer_segment ??
+          row.rfmSegment ??
+          row.rfm_segment ??
+          row.classification ??
+          row.category ??
+          '';
+
+        const rawCode =
+          row.segmentCode ??
+          row.segment_code ??
+          row.rfmSegmentCode ??
+          row.rfm_segment_code ??
+          '';
+
+        const segmentText =
+          String(rawSegment || '').trim();
+
+        const code =
+          String(rawCode || '')
+            .trim()
+            .toUpperCase();
+
+        let segment =
+          segmentText;
+
+        if (!segment && code) {
+          segment =
+            segmentLabels[code] ||
+            code;
+        }
+
+        if (!segment) {
+          segment =
+            classifyFromScores(row);
+        }
+
+        return {
+          ...row,
+          segment,
+          segmentName:
+            segment,
+          segmentCode:
+            code ||
+            row.segmentCode ||
+            null
+        };
+      };
+
+      const customers =
+        Array.isArray(result?.customers)
+          ? result.customers.map(normalizeCustomer)
+          : [];
+
+      console.log(
+        '[RFM NORMALIZED FIRST CUSTOMER]',
+        JSON.stringify(
+          customers[0] || {},
+          null,
+          2
+        )
+      );
+
+      return {
+        ...result,
+        customers
+      };
+    }
+
 
     case 'customer-retention':
       return branch
@@ -2731,7 +2858,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ ال٧حتفاظ.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ§ط­طھظپط§ط¸.'
           };
 
     case 'customer-churn':
@@ -2747,7 +2874,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ عدم النشاط.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط¹ط¯ظ… ط§ظ„ظ†ط´ط§ط·.'
           };
 
     case 'customer-clv':
@@ -2766,7 +2893,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظيظ„ CLV.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظٹط¸â€‍ CLV.'
           };
 
     case 'customer-cohort':
@@ -2783,7 +2910,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظيظ„ الـCohort.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظٹط¸â€‍ ط§ظ„ظ€Cohort.'
           };
 
     case 'operations':
@@ -2795,7 +2922,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'اختر فرعًا ظ„طھط­طظظٹظ„ المخزون.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ…ط®ط²ظˆظ†.'
         };
       }
 
@@ -2830,7 +2957,7 @@ export async function getAnalyticsModule({
 
               itemName:
                 row.itemName ||
-                'غير معروف',
+                'ط؛ظٹط± ظ…ط¹ط±ظˆظپ',
 
               units:
                 0,
@@ -3062,7 +3189,7 @@ export async function getAnalyticsModule({
             success:
               false,
             message:
-              'اختر فرعًا ظ„طھط­طظظٹظ„ المظفين.'
+              'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ط¸â€‍ط·ع¾ط·آ­ط·ط¸ط¸ظ¹ط¸â€‍ ط§ظ„ظ…ط¸ظپظٹظ†.'
           };
 
     case 'forecast-sales':
@@ -3073,7 +3200,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'اختر فرعًا للت؆بؤ.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„طھط†ط¨ط¤.'
         };
       }
 
@@ -3107,7 +3234,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'اختر فرعًا لفحص جودة البيانات.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظپط­طµ ط¬ظˆط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ.'
         };
       }
 
@@ -3140,7 +3267,7 @@ export async function getAnalyticsModule({
           success:
             false,
           message:
-            'اختر فرعًا للمطابقة.'
+            'ط§ط®طھط± ظپط±ط¹ظ‹ط§ ظ„ظ„ظ…ط·ط§ط¨ظ‚ط©.'
         };
       }
 

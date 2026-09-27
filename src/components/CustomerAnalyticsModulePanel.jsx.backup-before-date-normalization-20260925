@@ -1,0 +1,3156 @@
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+function n(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function money(
+    value
+) {
+
+    return n(
+        value
+    ).toLocaleString(
+        "en-US",
+        {
+            minimumFractionDigits:
+                2,
+
+            maximumFractionDigits:
+                2
+        }
+    );
+
+}
+
+
+function num(
+    value
+) {
+
+    return n(
+        value
+    ).toLocaleString(
+        "en-US",
+        {
+            maximumFractionDigits:
+                2
+        }
+    );
+
+}
+
+
+function pct(
+    value
+) {
+
+    if (
+        value ===
+            null ||
+        value ===
+            undefined
+    ) {
+
+        return "—";
+
+    }
+
+    return `${n(value).toFixed(2)}%`;
+
+}
+
+
+function text(
+    value
+) {
+
+    if (
+        value ===
+            null ||
+        value ===
+            undefined ||
+        value ===
+            ""
+    ) {
+
+        return "-";
+
+    }
+
+    return String(
+        value
+    );
+
+}
+
+
+function dateOnly(
+    value
+) {
+
+    if (
+        !value
+    ) {
+
+        return "-";
+
+    }
+
+    return String(
+        value
+    ).slice(
+        0,
+        10
+    );
+
+}
+
+
+function getCustomerRows(
+    result
+) {
+
+    return (
+
+        result?.customers ||
+
+        result?.rows ||
+
+        result?.inactiveCustomers ||
+
+        result?.topCustomers ||
+
+        result?.data ||
+
+        []
+
+    );
+
+}
+
+
+function getCustomerName(
+    row
+) {
+
+    return (
+
+        row?.customerName ||
+
+        row?.customer_name ||
+
+        row?.name ||
+
+        row?.customerId ||
+
+        row?.customer_id ||
+
+        "-"
+
+    );
+
+}
+
+
+function getCustomerId(
+    row
+) {
+
+    return (
+        row?.customerId ??
+        row?.customer_id ??
+        row?.id
+    );
+
+}
+
+
+function getPhone(
+    row
+) {
+
+    return (
+
+        row?.whatsappPhone ||
+
+        row?.whatsapp_phone ||
+
+        row?.phone ||
+
+        row?.telephone ||
+
+        row?.tel ||
+
+        row?.mobile ||
+
+        "-"
+
+    );
+
+}
+
+
+function normalizeSegments(
+    result
+) {
+
+    const raw =
+        result?.summary?.segments;
+
+
+    if (
+        Array.isArray(
+            raw
+        )
+    ) {
+
+        return raw;
+
+    }
+
+
+    if (
+        raw &&
+        typeof raw ===
+            "object"
+    ) {
+
+        return Object.entries(
+            raw
+        ).map(
+            (
+                [
+                    code,
+                    value
+                ]
+            ) => ({
+
+                code,
+
+                name:
+                    value?.name ||
+                    value?.segment ||
+                    code,
+
+                customers:
+                    value?.customers ??
+                    value?.count ??
+                    value?.customerCount ??
+                    0,
+
+                netSales:
+                    value?.netSales ??
+                    value?.sales ??
+                    value?.totalSales ??
+                    0,
+
+                priority:
+                    value?.priority ??
+                    "-"
+
+            })
+        );
+
+    }
+
+
+    const customers =
+        Array.isArray(
+            result?.customers
+        )
+            ? result.customers
+            : [];
+
+
+    const grouped =
+        new Map();
+
+
+    for (
+        const customer
+        of customers
+    ) {
+
+        const code =
+            String(
+                customer?.segmentCode ||
+                customer?.segment ||
+                "UNCLASSIFIED"
+            );
+
+
+        const name =
+            customer?.segmentName ||
+            customer?.segment ||
+            code;
+
+
+        if (
+            !grouped.has(
+                code
+            )
+        ) {
+
+            grouped.set(
+                code,
+                {
+                    code,
+
+                    name,
+
+                    customers:
+                        0,
+
+                    netSales:
+                        0
+                }
+            );
+
+        }
+
+
+        const row =
+            grouped.get(
+                code
+            );
+
+
+        row.customers +=
+            1;
+
+
+        row.netSales +=
+            n(
+                customer?.netSales ??
+                customer?.monetary
+            );
+
+    }
+
+
+    return Array.from(
+        grouped.values()
+    );
+
+}
+
+
+function MetricGrid(
+    {
+        items = []
+    }
+) {
+
+    return (
+
+        <div
+            className="kpi-grid"
+        >
+
+            {
+                items.map(
+                    (
+                        item,
+                        index
+                    ) => (
+
+                        <div
+                            className="kpi-card"
+                            key={
+                                index
+                            }
+                        >
+
+                            <span>
+                                {
+                                    item.label
+                                }
+                            </span>
+
+                            <strong>
+                                {
+                                    item.value
+                                }
+                            </strong>
+
+                            {
+                                item.note && (
+
+                                    <small>
+                                        {
+                                            item.note
+                                        }
+                                    </small>
+
+                                )
+                            }
+
+                        </div>
+
+                    )
+                )
+            }
+
+        </div>
+
+    );
+
+}
+
+
+function CustomerTable(
+    {
+        rows = [],
+        onCustomerClick
+    }
+) {
+
+    return (
+
+        <div
+            className="table-card"
+        >
+
+            <div
+                className="table-wrap"
+            >
+
+                <table>
+
+                    <thead>
+
+                        <tr>
+
+                            <th>
+                                العميل
+                            </th>
+
+                            <th>
+                                الهاتف
+                            </th>
+
+                            <th>
+                                RFM
+                            </th>
+
+                            <th>
+                                Segment
+                            </th>
+
+                            <th>
+                                Recency
+                            </th>
+
+                            <th>
+                                Frequency
+                            </th>
+
+                            <th>
+                                المبيعات
+                            </th>
+
+                            <th>
+                                آخر شراء
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        {
+                            rows.length
+                                ? rows.map(
+                                    (
+                                        row,
+                                        index
+                                    ) => {
+
+                                        const id =
+                                            getCustomerId(
+                                                row
+                                            );
+
+
+                                        return (
+
+                                            <tr
+                                                key={
+                                                    `${id ?? "row"}-${index}`
+                                                }
+                                            >
+
+                                                <td>
+
+                                                    {
+                                                        id &&
+                                                        onCustomerClick
+                                                            ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        onCustomerClick(
+                                                                            row
+                                                                        )
+                                                                    }
+                                                                    style={{
+                                                                        border:
+                                                                            0,
+
+                                                                        background:
+                                                                            "transparent",
+
+                                                                        padding:
+                                                                            0,
+
+                                                                        cursor:
+                                                                            "pointer",
+
+                                                                        textDecoration:
+                                                                            "underline",
+
+                                                                        fontWeight:
+                                                                            700,
+
+                                                                        fontFamily:
+                                                                            "inherit"
+                                                                    }}
+                                                                >
+
+                                                                    {
+                                                                        getCustomerName(
+                                                                            row
+                                                                        )
+                                                                    }
+
+                                                                </button>
+                                                            )
+                                                            : getCustomerName(
+                                                                row
+                                                            )
+                                                    }
+
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        getPhone(
+                                                            row
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        text(
+                                                            row?.rfmScore ??
+                                                            row?.rfm_score ??
+                                                            row?.rfmTotal
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        text(
+                                                            row?.segmentName ||
+                                                            row?.segment ||
+                                                            row?.segmentCode ||
+                                                            row?.segment_code
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        num(
+                                                            row?.recencyDays ??
+                                                            row?.recency
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        num(
+                                                            row?.ticketCount ??
+                                                            row?.tickets ??
+                                                            row?.frequency ??
+                                                            row?.invoices
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        money(
+                                                            row?.netSales ??
+                                                            row?.monetary ??
+                                                            row?.sales ??
+                                                            row?.total_sales
+                                                        )
+                                                    }
+                                                </td>
+
+
+                                                <td>
+                                                    {
+                                                        dateOnly(
+                                                            row?.lastPurchase ??
+                                                            row?.lastPurchaseDate ??
+                                                            row?.last_purchase
+                                                        )
+                                                    }
+                                                </td>
+
+                                            </tr>
+
+                                        );
+
+                                    }
+                                )
+                                : (
+
+                                    <tr>
+
+                                        <td
+                                            colSpan={
+                                                8
+                                            }
+                                            style={{
+                                                textAlign:
+                                                    "center",
+
+                                                padding:
+                                                    24
+                                            }}
+                                        >
+                                            لا توجد بيانات
+                                        </td>
+
+                                    </tr>
+
+                                )
+                        }
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+function SegmentCards(
+    {
+        segments = [],
+        selectedCode,
+        onSelect
+    }
+) {
+
+    return (
+
+        <div
+            style={{
+                display:
+                    "grid",
+
+                gridTemplateColumns:
+                    "repeat(auto-fit, minmax(180px, 1fr))",
+
+                gap:
+                    10,
+
+                marginBottom:
+                    18
+            }}
+        >
+
+            <button
+                type="button"
+                onClick={() =>
+                    onSelect("")
+                }
+                style={{
+                    textAlign:
+                        "right",
+
+                    padding:
+                        14,
+
+                    borderRadius:
+                        12,
+
+                    border:
+                        selectedCode ===
+                        ""
+                            ? "2px solid #2563eb"
+                            : "1px solid #d7dee8",
+
+                    background:
+                        selectedCode ===
+                        ""
+                            ? "#eff6ff"
+                            : "#fff",
+
+                    cursor:
+                        "pointer",
+
+                    fontFamily:
+                        "inherit"
+                }}
+            >
+
+                <strong>
+                    كل العملاء
+                </strong>
+
+                <div
+                    style={{
+                        marginTop:
+                            6,
+
+                        fontSize:
+                            13,
+
+                        opacity:
+                            0.7
+                    }}
+                >
+                    كل فئات RFM
+                </div>
+
+            </button>
+
+
+            {
+                segments.map(
+                    (
+                        segment,
+                        index
+                    ) => {
+
+                        const selected =
+                            String(
+                                selectedCode
+                            ) ===
+                            String(
+                                segment.code
+                            );
+
+
+                        return (
+
+                            <button
+                                type="button"
+                                key={
+                                    `${segment.code}-${index}`
+                                }
+                                onClick={() =>
+                                    onSelect(
+                                        segment.code
+                                    )
+                                }
+                                style={{
+                                    textAlign:
+                                        "right",
+
+                                    padding:
+                                        14,
+
+                                    borderRadius:
+                                        12,
+
+                                    border:
+                                        selected
+                                            ? "2px solid #2563eb"
+                                            : "1px solid #d7dee8",
+
+                                    background:
+                                        selected
+                                            ? "#eff6ff"
+                                            : "#fff",
+
+                                    cursor:
+                                        "pointer",
+
+                                    fontFamily:
+                                        "inherit"
+                                }}
+                            >
+
+                                <strong>
+                                    {
+                                        text(
+                                            segment.name
+                                        )
+                                    }
+                                </strong>
+
+                                <div
+                                    style={{
+                                        marginTop:
+                                            6,
+
+                                        fontSize:
+                                            13,
+
+                                        opacity:
+                                            0.7
+                                    }}
+                                >
+                                    {
+                                        num(
+                                            segment.customers
+                                        )
+                                    }
+                                    {" عميل"}
+                                </div>
+
+                            </button>
+
+                        );
+
+                    }
+                )
+            }
+
+        </div>
+
+    );
+
+}
+
+
+function GenericTable(
+    {
+        rows = []
+    }
+) {
+
+    if (
+        !rows.length
+    ) {
+
+        return (
+
+            <div
+                className="table-card"
+            >
+
+                <div
+                    style={{
+                        padding:
+                            24,
+
+                        textAlign:
+                            "center"
+                    }}
+                >
+                    لا توجد بيانات
+                </div>
+
+            </div>
+
+        );
+
+    }
+
+
+    const keys =
+        Array.from(
+            new Set(
+                rows.flatMap(
+                    row =>
+                        Object.keys(
+                            row ||
+                            {}
+                        )
+                )
+            )
+        )
+            .slice(
+                0,
+                8
+            );
+
+
+    return (
+
+        <div
+            className="table-card"
+        >
+
+            <div
+                className="table-wrap"
+            >
+
+                <table>
+
+                    <thead>
+
+                        <tr>
+
+                            {
+                                keys.map(
+                                    key => (
+                                        <th
+                                            key={
+                                                key
+                                            }
+                                        >
+                                            {
+                                                key
+                                            }
+                                        </th>
+                                    )
+                                )
+                            }
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        {
+                            rows.map(
+                                (
+                                    row,
+                                    index
+                                ) => (
+
+                                    <tr
+                                        key={
+                                            index
+                                        }
+                                    >
+
+                                        {
+                                            keys.map(
+                                                key => (
+
+                                                    <td
+                                                        key={
+                                                            key
+                                                        }
+                                                    >
+
+                                                        {
+                                                            typeof row?.[
+                                                                key
+                                                            ] ===
+                                                                "number"
+                                                                ? num(
+                                                                    row[
+                                                                        key
+                                                                    ]
+                                                                )
+                                                                : text(
+                                                                    row?.[
+                                                                        key
+                                                                    ]
+                                                                )
+                                                        }
+
+                                                    </td>
+
+                                                )
+                                            )
+                                        }
+
+                                    </tr>
+
+                                )
+                            )
+                        }
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+export default function CustomerAnalyticsModulePanel(
+    {
+        moduleId,
+        branchId,
+        connection,
+        fromDate,
+        toDate
+    }
+) {
+
+    const [
+        data,
+        setData
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        loading,
+        setLoading
+    ] =
+        useState(
+            true
+        );
+
+
+    const [
+        error,
+        setError
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        selectedSegment,
+        setSelectedSegment
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        search,
+        setSearch
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        customerProfile,
+        setCustomerProfile
+    ] =
+        useState(
+            null
+        );
+
+
+    useEffect(
+        () => {
+
+            let cancelled =
+                false;
+
+
+            async function loadModule() {
+
+                setLoading(
+                    true
+                );
+
+                setError(
+                    ""
+                );
+
+                setData(
+                    null
+                );
+
+                setSelectedSegment(
+                    ""
+                );
+
+
+                try {
+
+                    const customersApi =
+                        window
+                            ?.pharmaBI
+                            ?.customers;
+
+
+                    const analyticsApi =
+                        window
+                            ?.pharmaBI
+                            ?.analytics;
+
+
+                    let result =
+                        null;
+
+
+                    /*
+                     * RFM + Customer Overview
+                     */
+
+                    if (
+                        moduleId ===
+                            "customer-rfm" ||
+                        moduleId ===
+                            "customer-overview"
+                    ) {
+
+                        if (
+                            typeof customersApi?.rfmV2 ===
+                            "function"
+                        ) {
+
+                            result =
+                                await customersApi.rfmV2({
+
+                                    branchId,
+
+                                    fromDate,
+
+                                    toDate,
+
+                                    limit:
+                                        5000
+
+                                });
+
+                        }
+
+
+                        if (
+                            result ==
+                                null &&
+                            typeof analyticsApi?.module ===
+                                "function"
+                        ) {
+
+                            result =
+                                await analyticsApi.module({
+
+                                    moduleId,
+
+                                    branchId,
+
+                                    connection,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+                    }
+
+
+                    /*
+                     * Retention
+                     */
+
+                    else if (
+                        moduleId ===
+                            "customer-retention"
+                    ) {
+
+                        if (
+                            typeof customersApi?.retention ===
+                            "function"
+                        ) {
+
+                            result =
+                                await customersApi.retention({
+
+                                    branchId,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+
+                        if (
+                            result ==
+                                null &&
+                            typeof analyticsApi?.module ===
+                                "function"
+                        ) {
+
+                            result =
+                                await analyticsApi.module({
+
+                                    moduleId,
+
+                                    branchId,
+
+                                    connection,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+                    }
+
+
+                    /*
+                     * Churn / Inactivity
+                     */
+
+                    else if (
+                        moduleId ===
+                            "customer-churn"
+                    ) {
+
+                        if (
+                            typeof customersApi?.inactivity ===
+                            "function"
+                        ) {
+
+                            result =
+                                await customersApi.inactivity({
+
+                                    branchId,
+
+                                    toDate,
+
+                                    sampleLimit:
+                                        300
+
+                                });
+
+                        }
+
+
+                        if (
+                            result ==
+                                null &&
+                            typeof analyticsApi?.module ===
+                            "function"
+                        ) {
+
+                            result =
+                                await analyticsApi.module({
+
+                                    moduleId,
+
+                                    branchId,
+
+                                    connection,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+                    }
+
+
+                    /*
+                     * CLV
+                     */
+
+                    else if (
+                        moduleId ===
+                            "customer-clv"
+                    ) {
+
+                        if (
+                            typeof customersApi?.clv ===
+                            "function"
+                        ) {
+
+                            result =
+                                await customersApi.clv({
+
+                                    branchId,
+
+                                    fromDate,
+
+                                    toDate,
+
+                                    observationDays:
+                                        365,
+
+                                    limit:
+                                        100
+
+                                });
+
+                        }
+
+
+                        if (
+                            result ==
+                                null &&
+                            typeof analyticsApi?.module ===
+                            "function"
+                        ) {
+
+                            result =
+                                await analyticsApi.module({
+
+                                    moduleId,
+
+                                    branchId,
+
+                                    connection,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+                    }
+
+
+                    /*
+                     * Cohort
+                     */
+
+                    else if (
+                        moduleId ===
+                            "customer-cohort"
+                    ) {
+
+                        if (
+                            typeof customersApi?.cohort ===
+                            "function"
+                        ) {
+
+                            result =
+                                await customersApi.cohort({
+
+                                    branchId,
+
+                                    fromDate,
+
+                                    toDate,
+
+                                    maxMonths:
+                                        24
+
+                                });
+
+                        }
+
+
+                        if (
+                            result ==
+                                null &&
+                            typeof analyticsApi?.module ===
+                            "function"
+                        ) {
+
+                            result =
+                                await analyticsApi.module({
+
+                                    moduleId,
+
+                                    branchId,
+
+                                    connection,
+
+                                    fromDate,
+
+                                    toDate
+
+                                });
+
+                        }
+
+                    }
+
+
+                    if (
+                        result ==
+                            null ||
+                        result ===
+                            undefined
+                    ) {
+
+                        throw new Error(
+                            `لم تصل بيانات من الـAPI للصفحة ${moduleId}.`
+                        );
+
+                    }
+
+
+                    if (
+                        result?.success ===
+                            false
+                    ) {
+
+                        throw new Error(
+                            result?.message ||
+                            `فشل تحميل ${moduleId}.`
+                        );
+
+                    }
+
+
+                    console.log(
+                        "[Customer Module] Loaded:",
+                        moduleId,
+                        result
+                    );
+
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setData(
+                            result
+                        );
+
+                    }
+
+                }
+                catch (
+                    requestError
+                ) {
+
+                    console.error(
+                        "[Customer Module] Load failed:",
+                        moduleId,
+                        requestError
+                    );
+
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setError(
+                            requestError?.message ||
+                            "تعذر تحميل تحليل العملاء."
+                        );
+
+                    }
+
+                }
+                finally {
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setLoading(
+                            false
+                        );
+
+                    }
+
+                }
+
+            }
+
+
+            loadModule();
+
+
+            return () => {
+
+                cancelled =
+                    true;
+
+            };
+
+        },
+        [
+            moduleId,
+            branchId,
+            connection,
+            fromDate,
+            toDate
+        ]
+    );
+
+
+    async function openCustomerProfile(
+        customer
+    ) {
+
+        const customerId =
+            getCustomerId(
+                customer
+            );
+
+
+        if (
+            !customerId ||
+            branchId ===
+                "all"
+        ) {
+
+            return;
+
+        }
+
+
+        try {
+
+            const result =
+                await window
+                    .pharmaBI
+                    .dashboard
+                    .overview({
+
+                        action:
+                            "customer-performance",
+
+                        branchId,
+
+                        customerId,
+
+                        toDate,
+
+                        connection,
+
+                        historyMonths:
+                            12,
+
+                        invoiceLimit:
+                            300
+
+                    });
+
+
+            setCustomerProfile(
+                result
+            );
+
+        }
+        catch (
+            requestError
+        ) {
+
+            console.error(
+                "[UI] Customer profile failed:",
+                requestError
+            );
+
+        }
+
+    }
+
+
+    const titleMap = {
+
+        "customer-overview":
+            "نظرة عامة على العملاء",
+
+        "customer-rfm":
+            "تحليل RFM",
+
+        "customer-retention":
+            "الاحتفاظ بالعملاء",
+
+        "customer-churn":
+            "التوقف / عدم النشاط",
+
+        "customer-clv":
+            "القيمة العمرية للعميل",
+
+        "customer-cohort":
+            "تحليل مجموعات العملاء"
+
+    };
+
+
+    const title =
+        titleMap[
+            moduleId
+        ] ||
+        "تحليل العملاء";
+
+
+    const segments =
+        useMemo(
+            () =>
+                normalizeSegments(
+                    data
+                ),
+            [
+                data
+            ]
+        );
+
+
+    const rfmCustomers =
+        useMemo(
+            () => {
+
+                let rows =
+                    Array.isArray(
+                        data?.customers
+                    )
+                        ? [
+                            ...data.customers
+                        ]
+                        : [];
+
+
+                if (
+                    selectedSegment
+                ) {
+
+                    rows =
+                        rows.filter(
+                            customer =>
+                                String(
+                                    customer?.segmentCode ||
+                                    customer?.segment ||
+                                    customer?.segmentName ||
+                                    ""
+                                ) ===
+                                String(
+                                    selectedSegment
+                                )
+                        );
+
+                }
+
+
+                const searchValue =
+                    search
+                        .trim()
+                        .toLowerCase();
+
+
+                if (
+                    searchValue
+                ) {
+
+                    rows =
+                        rows.filter(
+                            customer => {
+
+                                const name =
+                                    String(
+                                        getCustomerName(
+                                            customer
+                                        )
+                                    )
+                                        .toLowerCase();
+
+
+                                const phone =
+                                    String(
+                                        getPhone(
+                                            customer
+                                        )
+                                    )
+                                        .toLowerCase();
+
+
+                                const id =
+                                    String(
+                                        getCustomerId(
+                                            customer
+                                        ) ??
+                                        ""
+                                    )
+                                        .toLowerCase();
+
+
+                                return (
+
+                                    name.includes(
+                                        searchValue
+                                    ) ||
+
+                                    phone.includes(
+                                        searchValue
+                                    ) ||
+
+                                    id.includes(
+                                        searchValue
+                                    )
+
+                                );
+
+                            }
+                        );
+
+                }
+
+
+                return rows;
+
+            },
+            [
+                data,
+                selectedSegment,
+                search
+            ]
+        );
+
+
+    if (
+        loading
+    ) {
+
+        return (
+
+            <section
+                className="page-card loading-card"
+            >
+
+                <div
+                    className="loading-spinner"
+                />
+
+                <h2>
+                    جاري تحميل {title}...
+                </h2>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (
+        error
+    ) {
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="status error"
+                >
+                    {
+                        error
+                    }
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (
+        !data
+    ) {
+
+        return (
+
+            <section
+                className="page-card empty-state"
+            >
+
+                <h2>
+                    {
+                        title
+                    }
+                </h2>
+
+                <p>
+                    لا توجد نتيجة.
+                </p>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * CUSTOMER OVERVIEW
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-overview"
+    ) {
+
+        const customers =
+            getCustomerRows(
+                data
+            );
+
+
+        const totalCustomers =
+            data?.summary?.customers ??
+            data?.summary?.totalCustomers ??
+            customers.length;
+
+
+        const totalSales =
+            data?.summary?.totalSales ??
+            data?.summary?.netSales ??
+            customers.reduce(
+                (
+                    sum,
+                    row
+                ) =>
+                    sum +
+                    n(
+                        row?.netSales ??
+                        row?.monetary
+                    ),
+                0
+            );
+
+
+        const averageMonetary =
+            data?.summary?.averageMonetary ??
+            data?.summary?.averageTicket ??
+            0;
+
+
+        const topCustomers =
+            [
+                ...customers
+            ]
+                .sort(
+                    (
+                        a,
+                        b
+                    ) =>
+                        n(
+                            b?.netSales ??
+                            b?.monetary ??
+                            b?.total_sales
+                        ) -
+                        n(
+                            a?.netSales ??
+                            a?.monetary ??
+                            a?.total_sales
+                        )
+                )
+                .slice(
+                    0,
+                    100
+                );
+
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            نظرة عامة على العملاء
+                        </h2>
+
+                        <p>
+                            {
+                                fromDate
+                            }
+                            {" → "}
+                            {
+                                toDate
+                            }
+                        </p>
+
+                    </div>
+
+
+                    <div
+                        className="period-chip"
+                    >
+                        الفرع {
+                            branchId
+                        }
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "إجمالي العملاء",
+                            value:
+                                num(
+                                    totalCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "إجمالي مبيعات العملاء",
+                            value:
+                                money(
+                                    totalSales
+                                )
+                        },
+
+                        {
+                            label:
+                                "متوسط الإنفاق",
+                            value:
+                                money(
+                                    averageMonetary
+                                )
+                        },
+
+                        {
+                            label:
+                                "فئات RFM",
+                            value:
+                                num(
+                                    segments.length
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        className="result-header"
+                    >
+
+                        <strong>
+                            أعلى العملاء حسب المبيعات
+                        </strong>
+
+                        <span>
+                            Top 100
+                        </span>
+
+                    </div>
+
+
+                    <CustomerTable
+                        rows={
+                            topCustomers
+                        }
+                        onCustomerClick={
+                            openCustomerProfile
+                        }
+                    />
+
+                </div>
+
+
+                {
+                    customerProfile && (
+
+                        <CustomerProfileModal
+                            profile={
+                                customerProfile
+                            }
+                            onClose={() =>
+                                setCustomerProfile(
+                                    null
+                                )
+                            }
+                        />
+
+                    )
+                }
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * RFM
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-rfm"
+    ) {
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            تحليل RFM
+                        </h2>
+
+                        <p>
+                            اختر فئة RFM لعرض العملاء التابعين لها
+                        </p>
+
+                    </div>
+
+
+                    <div
+                        className="period-chip"
+                    >
+                        الفرع {
+                            branchId
+                        }
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "العملاء",
+                            value:
+                                num(
+                                    data?.summary?.customers ??
+                                    data?.summary?.totalCustomers ??
+                                    data?.customers?.length
+                                )
+                        },
+
+                        {
+                            label:
+                                "متوسط Recency",
+                            value:
+                                `${num(
+                                    data?.summary?.averageRecencyDays
+                                )} يوم`
+                        },
+
+                        {
+                            label:
+                                "متوسط Frequency",
+                            value:
+                                num(
+                                    data?.summary?.averageFrequency
+                                )
+                        },
+
+                        {
+                            label:
+                                "متوسط Monetary",
+                            value:
+                                money(
+                                    data?.summary?.averageMonetary
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        className="result-header"
+                    >
+
+                        <strong>
+                            فئات RFM
+                        </strong>
+
+                        <span>
+                            اضغط على الفئة
+                        </span>
+
+                    </div>
+
+
+                    <SegmentCards
+                        segments={
+                            segments
+                        }
+                        selectedCode={
+                            selectedSegment
+                        }
+                        onSelect={
+                            setSelectedSegment
+                        }
+                    />
+
+
+                    <div
+                        style={{
+                            display:
+                                "flex",
+
+                            justifyContent:
+                                "flex-end",
+
+                            marginBottom:
+                                12
+                        }}
+                    >
+
+                        <input
+                            type="text"
+                            value={
+                                search
+                            }
+                            onChange={event =>
+                                setSearch(
+                                    event.target.value
+                                )
+                            }
+                            placeholder="بحث باسم العميل أو الهاتف أو الرقم..."
+                            style={{
+                                width:
+                                    "min(420px,100%)",
+
+                                padding:
+                                    "10px 12px",
+
+                                border:
+                                    "1px solid #d7dee8",
+
+                                borderRadius:
+                                    10,
+
+                                fontFamily:
+                                    "inherit"
+                            }}
+                        />
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            marginBottom:
+                                12,
+
+                            fontWeight:
+                                700
+                        }}
+                    >
+
+                        {
+                            selectedSegment
+                                ? "العملاء داخل الفئة المختارة: "
+                                : "كل العملاء: "
+                        }
+
+                        {
+                            num(
+                                rfmCustomers.length
+                            )
+                        }
+
+                    </div>
+
+
+                    <CustomerTable
+                        rows={
+                            rfmCustomers
+                        }
+                        onCustomerClick={
+                            openCustomerProfile
+                        }
+                    />
+
+                </div>
+
+
+                {
+                    customerProfile && (
+
+                        <CustomerProfileModal
+                            profile={
+                                customerProfile
+                            }
+                            onClose={() =>
+                                setCustomerProfile(
+                                    null
+                                )
+                            }
+                        />
+
+                    )
+                }
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * RETENTION
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-retention"
+    ) {
+
+        const retention =
+            data?.retention ||
+            {};
+
+
+        const lifecycle =
+            data?.lifecycle ||
+            {};
+
+
+        const current =
+            data?.current ||
+            {};
+
+
+        const movement =
+            data?.movement ||
+            {};
+
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            الاحتفاظ بالعملاء
+                        </h2>
+
+                        <p>
+                            هل العملاء يعودون للشراء؟
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "Retention Rate",
+                            value:
+                                pct(
+                                    retention.retentionRate
+                                )
+                        },
+
+                        {
+                            label:
+                                "العملاء السابقون",
+                            value:
+                                num(
+                                    retention.previousCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "المحتفظ بهم",
+                            value:
+                                num(
+                                    retention.retainedCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "المفقودون",
+                            value:
+                                num(
+                                    retention.lostCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "العملاء الجدد",
+                            value:
+                                num(
+                                    lifecycle.newCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "العملاء الحاليون",
+                            value:
+                                num(
+                                    current.customers
+                                )
+                        },
+
+                        {
+                            label:
+                                "تغير العملاء",
+                            value:
+                                num(
+                                    movement.customerChange
+                                )
+                        },
+
+                        {
+                            label:
+                                "Retention Loss",
+                            value:
+                                pct(
+                                    retention.retentionLossRate
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        style={{
+                            padding:
+                                20,
+
+                            lineHeight:
+                                1.9
+                        }}
+                    >
+
+                        تم الاحتفاظ بـ{" "}
+                        {
+                            num(
+                                retention.retainedCustomers
+                            )
+                        }
+                        {" "}عميل من أصل{" "}
+                        {
+                            num(
+                                retention.previousCustomers
+                            )
+                        }
+                        {" "}عميل سابق.
+
+                        {" "}
+
+                        عدد العملاء المفقودين{" "}
+                        {
+                            num(
+                                retention.lostCustomers
+                            )
+                        }
+                        .
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * CHURN
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-churn"
+    ) {
+
+        const summary =
+            data?.summary ||
+            {};
+
+
+        const inactive90 =
+            Array.isArray(
+                data?.samples?.inactive90
+            )
+                ? data.samples.inactive90
+                : [];
+
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            التوقف / عدم النشاط
+                        </h2>
+
+                        <p>
+                            العملاء الذين ابتعدوا عن الشراء
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "Known Customers",
+                            value:
+                                num(
+                                    summary.knownCustomers
+                                )
+                        },
+
+                        {
+                            label:
+                                "نشط ≤ 30 يوم",
+                            value:
+                                num(
+                                    summary.activeWithin30Days
+                                )
+                        },
+
+                        {
+                            label:
+                                "غير نشط ≥ 30 يوم",
+                            value:
+                                num(
+                                    summary.inactive30DaysOrMore
+                                )
+                        },
+
+                        {
+                            label:
+                                "غير نشط ≥ 60 يوم",
+                            value:
+                                num(
+                                    summary.inactive60DaysOrMore
+                                )
+                        },
+
+                        {
+                            label:
+                                "غير نشط ≥ 90 يوم",
+                            value:
+                                num(
+                                    summary.inactive90DaysOrMore
+                                )
+                        },
+
+                        {
+                            label:
+                                "Inactivity 30d",
+                            value:
+                                pct(
+                                    summary.inactivityRate30Days
+                                )
+                        },
+
+                        {
+                            label:
+                                "Inactivity 60d",
+                            value:
+                                pct(
+                                    summary.inactivityRate60Days
+                                )
+                        },
+
+                        {
+                            label:
+                                "Inactivity 90d",
+                            value:
+                                pct(
+                                    summary.inactivityRate90Days
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        className="result-header"
+                    >
+
+                        <strong>
+                            العملاء غير النشطين 90+ يوم
+                        </strong>
+
+                        <span>
+                            {
+                                num(
+                                    inactive90.length
+                                )
+                            }
+                        </span>
+
+                    </div>
+
+
+                    <GenericTable
+                        rows={
+                            inactive90
+                        }
+                    />
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * CLV
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-clv"
+    ) {
+
+        const rows =
+            getCustomerRows(
+                data
+            );
+
+
+        const summary =
+            data?.summary ||
+            {};
+
+
+        const sorted =
+            [
+                ...rows
+            ]
+                .sort(
+                    (
+                        a,
+                        b
+                    ) =>
+                        n(
+                            b?.clv ??
+                            b?.customerLifetimeValue ??
+                            b?.predictedClv ??
+                            b?.lifetimeValue ??
+                            b?.value
+                        ) -
+                        n(
+                            a?.clv ??
+                            a?.customerLifetimeValue ??
+                            a?.predictedClv ??
+                            a?.lifetimeValue ??
+                            a?.value
+                        )
+                )
+                .slice(
+                    0,
+                    100
+                );
+
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            القيمة العمرية للعميل
+                        </h2>
+
+                        <p>
+                            ترتيب العملاء حسب قيمة العميل
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "العملاء",
+                            value:
+                                num(
+                                    summary?.customers ??
+                                    rows.length
+                                )
+                        },
+
+                        {
+                            label:
+                                "متوسط CLV",
+                            value:
+                                money(
+                                    summary?.averageClv ??
+                                    summary?.avgClv ??
+                                    0
+                                )
+                        },
+
+                        {
+                            label:
+                                "عدد العملاء الظاهرين",
+                            value:
+                                num(
+                                    sorted.length
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        className="result-header"
+                    >
+
+                        <strong>
+                            أعلى العملاء قيمة
+                        </strong>
+
+                    </div>
+
+
+                    <GenericTable
+                        rows={
+                            sorted
+                        }
+                    />
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    /*
+     * =====================================================
+     * COHORT
+     * =====================================================
+     */
+
+    if (
+        moduleId ===
+            "customer-cohort"
+    ) {
+
+        const rows =
+            Array.isArray(
+                data?.cohorts
+            )
+                ? data.cohorts
+                : (
+                    Array.isArray(
+                        data?.rows
+                    )
+                        ? data.rows
+                        : (
+                            Array.isArray(
+                                data?.matrix
+                            )
+                                ? data.matrix
+                                : []
+                        )
+                );
+
+
+        return (
+
+            <section
+                className="page-card"
+            >
+
+                <div
+                    className="page-header"
+                >
+
+                    <div>
+
+                        <div
+                            className="page-eyebrow"
+                        >
+                            Customers
+                        </div>
+
+                        <h2>
+                            تحليل مجموعات العملاء
+                        </h2>
+
+                        <p>
+                            متابعة كل مجموعة حسب شهر أول شراء
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <MetricGrid
+                    items={[
+                        {
+                            label:
+                                "عدد المجموعات",
+                            value:
+                                num(
+                                    rows.length
+                                )
+                        },
+
+                        {
+                            label:
+                                "أكبر مجموعة",
+                            value:
+                                num(
+                                    Math.max(
+                                        0,
+                                        ...rows.map(
+                                            row =>
+                                                n(
+                                                    row?.customers ??
+                                                    row?.customerCount ??
+                                                    row?.size ??
+                                                    row?.cohortSize
+                                                )
+                                        )
+                                    )
+                                )
+                        }
+
+                    ]}
+                />
+
+
+                <div
+                    className="sales-result"
+                    style={{
+                        marginTop:
+                            18
+                    }}
+                >
+
+                    <div
+                        className="result-header"
+                    >
+
+                        <strong>
+                            Cohort Analysis
+                        </strong>
+
+                        <span>
+                            الاحتفاظ بالمجموعة مع مرور الوقت
+                        </span>
+
+                    </div>
+
+
+                    <GenericTable
+                        rows={
+                            rows
+                        }
+                    />
+
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    return null;
+
+}
+
+
+function CustomerProfileModal(
+    {
+        profile,
+        onClose
+    }
+) {
+
+    const customer =
+        profile?.customer ||
+        profile?.summary ||
+        profile ||
+        {};
+
+
+    const invoices =
+        Array.isArray(
+            profile?.invoices
+        )
+            ? profile.invoices
+            : [];
+
+
+    return (
+
+        <div
+            style={{
+                position:
+                    "fixed",
+
+                inset:
+                    0,
+
+                background:
+                    "rgba(0,0,0,.35)",
+
+                zIndex:
+                    9999,
+
+                display:
+                    "flex",
+
+                alignItems:
+                    "center",
+
+                justifyContent:
+                    "center",
+
+                padding:
+                    20
+            }}
+        >
+
+            <div
+                style={{
+                    background:
+                        "#fff",
+
+                    color:
+                        "#111827",
+
+                    width:
+                        "min(1100px,96vw)",
+
+                    maxHeight:
+                        "90vh",
+
+                    overflow:
+                        "auto",
+
+                    borderRadius:
+                        18
+                }}
+            >
+
+                <div
+                    style={{
+                        padding:
+                            20,
+
+                        display:
+                            "flex",
+
+                        justifyContent:
+                            "space-between",
+
+                        alignItems:
+                            "center",
+
+                        borderBottom:
+                            "1px solid #e5e7eb"
+                    }}
+                >
+
+                    <div>
+
+                        <h2
+                            style={{
+                                margin:
+                                    "0 0 5px"
+                            }}
+                        >
+                            {
+                                getCustomerName(
+                                    customer
+                                )
+                            }
+                        </h2>
+
+                        <div>
+                            {
+                                getPhone(
+                                    customer
+                                )
+                            }
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onClick={
+                            onClose
+                        }
+                    >
+                        إغلاق
+                    </button>
+
+                </div>
+
+
+                <div
+                    style={{
+                        padding:
+                            20
+                    }}
+                >
+
+                    <MetricGrid
+                        items={[
+                            {
+                                label:
+                                    "المبيعات",
+                                value:
+                                    money(
+                                        customer?.netSales ??
+                                        customer?.totalSales ??
+                                        customer?.monetary
+                                    )
+                            },
+
+                            {
+                                label:
+                                    "الفواتير",
+                                value:
+                                    num(
+                                        customer?.ticketCount ??
+                                        customer?.tickets ??
+                                        customer?.invoices
+                                    )
+                            },
+
+                            {
+                                label:
+                                    "آخر شراء",
+                                value:
+                                    dateOnly(
+                                        customer?.lastPurchase ??
+                                        customer?.lastPurchaseDate ??
+                                        customer?.last_purchase
+                                    )
+                            }
+
+                        ]}
+                    />
+
+
+                    {
+                        invoices.length >
+                            0 && (
+
+                            <div
+                                className="sales-result"
+                                style={{
+                                    marginTop:
+                                        18
+                                }}
+                            >
+
+                                <div
+                                    className="result-header"
+                                >
+
+                                    <strong>
+                                        الفواتير
+                                    </strong>
+
+                                </div>
+
+
+                                <GenericTable
+                                    rows={
+                                        invoices.slice(
+                                            0,
+                                            100
+                                        )
+                                    }
+                                />
+
+                            </div>
+
+                        )
+                    }
+
+                </div>
+
+            </div>
+
+        </div>
+
+    );
+
+}

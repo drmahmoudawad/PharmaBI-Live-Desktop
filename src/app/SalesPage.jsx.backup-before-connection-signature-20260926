@@ -1,0 +1,1802 @@
+const SALES_PAGE_EFFECT_RUN_ID = { value: 0 };
+
+import React, {
+    useEffect,
+    useMemo,
+    useState
+} from "react";
+
+
+function parseDate(
+    value
+) {
+
+    return new Date(
+        `${String(value)}T00:00:00`
+    );
+
+}
+
+
+function formatDate(
+    date
+) {
+
+    return [
+
+        date.getFullYear(),
+
+        String(
+            date.getMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        ),
+
+        String(
+            date.getDate()
+        ).padStart(
+            2,
+            "0"
+        )
+
+    ].join(
+        "-"
+    );
+
+}
+
+
+function daysBetweenInclusive(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        parseDate(
+            fromDate
+        );
+
+    const to =
+        parseDate(
+            toDate
+        );
+
+
+    const milliseconds =
+        to.getTime() -
+        from.getTime();
+
+
+    return Math.max(
+
+        1,
+
+        Math.round(
+            milliseconds /
+            (
+                24 *
+                60 *
+                60 *
+                1000
+            )
+        ) + 1
+
+    );
+
+}
+
+
+function shiftRangeByMonths(
+    fromDate,
+    toDate,
+    months
+) {
+
+    const from =
+        parseDate(
+            fromDate
+        );
+
+    const to =
+        parseDate(
+            toDate
+        );
+
+
+    return {
+
+        fromDate:
+            formatDate(
+
+                new Date(
+
+                    from.getFullYear(),
+
+                    from.getMonth() +
+                        months,
+
+                    from.getDate()
+
+                )
+
+            ),
+
+        toDate:
+            formatDate(
+
+                new Date(
+
+                    to.getFullYear(),
+
+                    to.getMonth() +
+                        months,
+
+                    to.getDate()
+
+                )
+
+            )
+
+    };
+
+}
+
+
+function shiftRangeByYears(
+    fromDate,
+    toDate,
+    years
+) {
+
+    const from =
+        parseDate(
+            fromDate
+        );
+
+    const to =
+        parseDate(
+            toDate
+        );
+
+
+    return {
+
+        fromDate:
+            formatDate(
+
+                new Date(
+
+                    from.getFullYear() +
+                        years,
+
+                    from.getMonth(),
+
+                    from.getDate()
+
+                )
+
+            ),
+
+        toDate:
+            formatDate(
+
+                new Date(
+
+                    to.getFullYear() +
+                        years,
+
+                    to.getMonth(),
+
+                    to.getDate()
+
+                )
+
+            )
+
+    };
+
+}
+
+
+function toNumber(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function formatMoney(
+    value
+) {
+
+    return toNumber(
+        value
+    ).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits:
+                0
+        }
+    );
+
+}
+
+
+function formatNumber(
+    value
+) {
+
+    return toNumber(
+        value
+    ).toLocaleString(
+        "ar-EG",
+        {
+            maximumFractionDigits:
+                0
+        }
+    );
+
+}
+
+
+function formatPercent(
+    value
+) {
+
+    return toNumber(
+        value
+    ).toLocaleString(
+        "ar-EG",
+        {
+            minimumFractionDigits:
+                1,
+
+            maximumFractionDigits:
+                1
+        }
+    ) +
+    "%";
+
+}
+
+
+function percentageChange(
+    current,
+    previous
+) {
+
+    const c =
+        toNumber(
+            current
+        );
+
+    const p =
+        toNumber(
+            previous
+        );
+
+
+    if (
+        p === 0
+    ) {
+
+        return c === 0
+            ? 0
+            : null;
+
+    }
+
+
+    return (
+
+        (
+            c -
+            p
+        ) /
+        Math.abs(
+            p
+        )
+
+    ) *
+    100;
+
+}
+
+
+function compareText(
+    change
+) {
+
+    if (
+        change === null ||
+        !Number.isFinite(
+            Number(
+                change
+            )
+        )
+    ) {
+
+        return "لا توجد مقارنة كافية";
+
+    }
+
+
+    const value =
+        Number(
+            change
+        );
+
+
+    if (
+        Math.abs(
+            value
+        ) < 0.1
+    ) {
+
+        return "بدون تغير ملحوظ";
+
+    }
+
+
+    return (
+
+        value > 0
+            ? "↑ "
+            : "↓ "
+
+    ) +
+    formatPercent(
+        Math.abs(
+            value
+        )
+    );
+
+}
+
+
+function compareTone(
+    change
+) {
+
+    if (
+        change === null ||
+        !Number.isFinite(
+            Number(
+                change
+            )
+        )
+    ) {
+
+        return "neutral";
+
+    }
+
+
+    return Number(
+        change
+    ) >= 0
+        ? "positive"
+        : "negative";
+
+}
+
+
+function buildReason(
+    {
+        salesChange,
+        ticketsChange,
+        averageTicketChange,
+        marginChange
+    }
+) {
+
+    const reasons =
+        [];
+
+
+    if (
+        Number.isFinite(
+            ticketsChange
+        ) &&
+        Math.abs(
+            ticketsChange
+        ) >= 2
+    ) {
+
+        reasons.push(
+
+            ticketsChange > 0
+
+                ? "زيادة عدد الفواتير"
+
+                : "انخفاض عدد الفواتير"
+
+        );
+
+    }
+
+
+    if (
+        Number.isFinite(
+            averageTicketChange
+        ) &&
+        Math.abs(
+            averageTicketChange
+        ) >= 2
+    ) {
+
+        reasons.push(
+
+            averageTicketChange > 0
+
+                ? "ارتفاع متوسط قيمة الفاتورة"
+
+                : "انخفاض متوسط قيمة الفاتورة"
+
+        );
+
+    }
+
+
+    if (
+        Number.isFinite(
+            marginChange
+        ) &&
+        Math.abs(
+            marginChange
+        ) >= 1
+    ) {
+
+        reasons.push(
+
+            marginChange > 0
+
+                ? "تحسن هامش الربح"
+
+                : "تراجع هامش الربح"
+
+        );
+
+    }
+
+
+    if (
+        reasons.length > 0
+    ) {
+
+        return reasons
+            .slice(
+                0,
+                2
+            )
+            .join(
+                " + "
+            );
+
+    }
+
+
+    if (
+        Number.isFinite(
+            salesChange
+        )
+    ) {
+
+        return salesChange > 0
+
+            ? "المبيعات تحسنت، لكن لا يوجد عامل واحد واضح ومسيطر."
+
+            : salesChange < 0
+
+                ? "المبيعات تراجعت، لكن لا يوجد عامل واحد واضح ومسيطر."
+
+                : "الأداء مستقر نسبيًا.";
+
+    }
+
+
+    return "لا توجد بيانات مقارنة كافية.";
+
+
+}
+
+
+function MetricCard({
+    title,
+    value,
+    monthChange,
+    yearChange,
+    formatter
+}) {
+
+    return (
+
+        <div
+            className="kpi-card"
+        >
+
+            <span>
+                {title}
+            </span>
+
+
+            <strong>
+                {
+                    formatter(
+                        value
+                    )
+                }
+            </strong>
+
+
+            <div
+                style={{
+                    display:
+                        "grid",
+
+                    gap:
+                        "4px",
+
+                    marginTop:
+                        "10px",
+
+                    fontSize:
+                        "12px"
+                }}
+            >
+
+                <span
+                    className={
+                        compareTone(
+                            monthChange
+                        )
+                    }
+                >
+
+                    الشهر السابق:{" "}
+
+                    {
+                        compareText(
+                            monthChange
+                        )
+                    }
+
+                </span>
+
+
+                <span
+                    className={
+                        compareTone(
+                            yearChange
+                        )
+                    }
+                >
+
+                    نفس الفترة العام الماضي:{" "}
+
+                    {
+                        compareText(
+                            yearChange
+                        )
+                    }
+
+                </span>
+
+            </div>
+
+        </div>
+
+    );
+
+}
+
+
+export default function SalesOverviewPage({
+
+    selectedBranchId,
+    selectedConnection,
+    fromDate,
+    toDate
+
+}) {
+
+    const [
+        loading,
+        setLoading
+    ] =
+        useState(
+            true
+        );
+
+
+    const [
+        error,
+        setError
+    ] =
+        useState(
+            ""
+        );
+
+
+    const [
+        current,
+        setCurrent
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        previousMonth,
+        setPreviousMonth
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        previousYear,
+        setPreviousYear
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        deliveryCurrent,
+        setDeliveryCurrent
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        deliveryPreviousMonth,
+        setDeliveryPreviousMonth
+    ] =
+        useState(
+            null
+        );
+
+
+    const [
+        deliveryPreviousYear,
+        setDeliveryPreviousYear
+    ] =
+        useState(
+            null
+        );
+
+
+    const previousMonthRange =
+        useMemo(
+
+            () =>
+                shiftRangeByMonths(
+
+                    fromDate,
+
+                    toDate,
+
+                    -1
+
+                ),
+
+            [
+                fromDate,
+                toDate
+            ]
+
+        );
+
+
+    const previousYearRange =
+        useMemo(
+
+            () =>
+                shiftRangeByYears(
+
+                    fromDate,
+
+                    toDate,
+
+                    -1
+
+                ),
+
+            [
+                fromDate,
+                toDate
+            ]
+
+        );
+
+
+    useEffect(
+
+        () => {
+
+            if (
+                selectedBranchId ===
+                "all"
+            ) {
+
+                setCurrent(
+                    null
+                );
+
+                setPreviousMonth(
+                    null
+                );
+
+                setPreviousYear(
+                    null
+                );
+
+                setLoading(
+                    false
+                );
+
+                return;
+
+            }
+
+
+            let cancelled = false;
+
+
+
+
+            const effectRunId =
+
+
+
+                ++SALES_PAGE_EFFECT_RUN_ID.value;
+
+
+
+
+            console.log(
+
+
+
+                "[SalesPage] EFFECT START",
+
+
+
+                effectRunId,
+
+
+
+                {
+
+
+
+                    selectedBranchId,
+
+
+
+                    fromDate,
+
+
+
+                    toDate,
+
+
+
+                    hasConnection:
+
+
+
+                        Boolean(selectedConnection)
+
+
+
+                }
+
+
+
+            );
+
+
+
+
+            async function load() {
+
+                try {
+
+                    setLoading(
+                        true
+                    );
+
+                    setError(
+                        ""
+                    );
+
+
+                    const base =
+                        selectedConnection || {};
+
+
+                    const [
+                        currentResult,
+                        currentDelivery
+                    ] =
+                        await Promise.all([
+
+                            window
+                                .pharmaBI
+                                .sales
+                                .summary({
+
+                                    ...base,
+
+                                    branchId:
+                                        Number(
+                                            selectedBranchId
+                                        ),
+
+                                    fromDate,
+
+                                    toDate
+
+                                }),
+
+                            window
+                                .pharmaBI
+                                .sales
+                                .deliverySummary({
+
+                                    ...base,
+
+                                    branchId:
+                                        Number(
+                                            selectedBranchId
+                                        ),
+
+                                    fromDate,
+
+                                    toDate
+
+                                })
+
+                        ]);
+
+
+                    if (
+                        cancelled
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    setCurrent(
+                        currentResult
+                    );
+
+                    setDeliveryCurrent(
+                        currentDelivery
+                    );
+
+                    setLoading(
+                        false
+                    );
+
+
+                    /*
+                     * Load comparison periods in the background.
+                     * The current-period KPIs are therefore visible
+                     * without waiting for three more heavy sales queries.
+                     */
+
+                    Promise.all([
+
+                        window
+                            .pharmaBI
+                            .sales
+                            .summary({
+
+                                ...base,
+
+                                branchId:
+                                    Number(
+                                        selectedBranchId
+                                    ),
+
+                                fromDate:
+                                    previousMonthRange
+                                        .fromDate,
+
+                                toDate:
+                                    previousMonthRange
+                                        .toDate
+
+                            }),
+
+                        window
+                            .pharmaBI
+                            .sales
+                            .summary({
+
+                                ...base,
+
+                                branchId:
+                                    Number(
+                                        selectedBranchId
+                                    ),
+
+                                fromDate:
+                                    previousYearRange
+                                        .fromDate,
+
+                                toDate:
+                                    previousYearRange
+                                        .toDate
+
+                            }),
+
+                        window
+                            .pharmaBI
+                            .sales
+                            .deliverySummary({
+
+                                ...base,
+
+                                branchId:
+                                    Number(
+                                        selectedBranchId
+                                    ),
+
+                                fromDate:
+                                    previousMonthRange
+                                        .fromDate,
+
+                                toDate:
+                                    previousMonthRange
+                                        .toDate
+
+                            }),
+
+                        window
+                            .pharmaBI
+                            .sales
+                            .deliverySummary({
+
+                                ...base,
+
+                                branchId:
+                                    Number(
+                                        selectedBranchId
+                                    ),
+
+                                fromDate:
+                                    previousYearRange
+                                        .fromDate,
+
+                                toDate:
+                                    previousYearRange
+                                        .toDate
+
+                            })
+
+                    ])
+                    .then(
+
+                        ([
+                            previousMonthResult,
+                            previousYearResult,
+                            previousMonthDelivery,
+                            previousYearDelivery
+                        ]) => {
+
+                            if (cancelled) {
+                                return;
+                            }
+
+                            setPreviousMonth(
+                                previousMonthResult
+                            );
+
+                            setPreviousYear(
+                                previousYearResult
+                            );
+
+                            setDeliveryPreviousMonth(
+                                previousMonthDelivery
+                            );
+
+                            setDeliveryPreviousYear(
+                                previousYearDelivery
+                            );
+
+                        }
+
+                    )
+                    .catch(
+
+                        comparisonError => {
+
+                            if (!cancelled) {
+
+                                console.error(
+                                    "[SalesPage] comparison load failed:",
+                                    comparisonError
+                                );
+
+                            }
+
+                        }
+
+                    );
+
+                }
+                catch (
+                    requestError
+                ) {
+
+                    if (
+                        cancelled
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    console.error(
+
+                        "[SalesOverviewPage] load failed:",
+
+                        requestError
+
+                    );
+
+
+                    setError(
+
+                        requestError?.message ||
+
+                        "تعذر تحميل تحليل المبيعات."
+
+                    );
+
+                }
+                finally {
+
+                    if (
+                        !cancelled
+                    ) {
+
+                        setLoading(
+                            false
+                        );
+
+                    }
+
+                }
+
+            }
+
+
+            load();
+
+
+            return () => {
+
+
+
+
+                cancelled = true;
+
+
+
+
+                console.log(
+
+
+
+                    "[SalesPage] EFFECT CLEANUP",
+
+
+
+                    effectRunId
+
+
+
+                );
+
+
+
+
+            };
+
+        },
+
+        [
+
+            selectedBranchId,
+
+            selectedConnection,
+
+            fromDate,
+
+            toDate,
+
+            previousMonthRange,
+
+            previousYearRange
+
+        ]
+
+    );
+
+
+    if (
+        selectedBranchId ===
+        "all"
+    ) {
+
+        return (
+
+            <section
+                className="page-card empty-state"
+            >
+
+                <div className="page-eyebrow">
+                    المبيعات
+                </div>
+
+
+                <h2>
+                    اختر فرعًا
+                </h2>
+
+
+                <p>
+                    نظرة المبيعات المختصرة تعمل على مستوى الفرع حاليًا.
+                </p>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (
+        loading
+    ) {
+
+        return (
+
+            <section
+                className="page-card loading-card"
+            >
+
+                <div className="loading-spinner" />
+
+
+                <h2>
+                    جاري تحليل المبيعات...
+                </h2>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (
+        error
+    ) {
+
+        return (
+
+            <section className="page-card">
+
+                <div className="status error">
+                    {error}
+                </div>
+
+            </section>
+
+        );
+
+    }
+
+
+    if (
+        !current
+    ) {
+
+        return null;
+
+    }
+
+
+    const days =
+        daysBetweenInclusive(
+            fromDate,
+            toDate
+        );
+
+
+    const previousMonthDays =
+        daysBetweenInclusive(
+
+            previousMonthRange
+                .fromDate,
+
+            previousMonthRange
+                .toDate
+
+        );
+
+
+    const previousYearDays =
+        daysBetweenInclusive(
+
+            previousYearRange
+                .fromDate,
+
+            previousYearRange
+                .toDate
+
+        );
+
+
+    const dailySales =
+        toNumber(
+            current.netSales
+        ) /
+        days;
+
+
+    const previousMonthDailySales =
+        toNumber(
+            previousMonth?.netSales
+        ) /
+        previousMonthDays;
+
+
+    const previousYearDailySales =
+        toNumber(
+            previousYear?.netSales
+        ) /
+        previousYearDays;
+
+
+    const dailyTickets =
+        toNumber(
+            current.saleTickets
+        ) /
+        days;
+
+
+    const previousMonthDailyTickets =
+        toNumber(
+            previousMonth?.saleTickets
+        ) /
+        previousMonthDays;
+
+
+    const previousYearDailyTickets =
+        toNumber(
+            previousYear?.saleTickets
+        ) /
+        previousYearDays;
+
+
+    const currentAverageTicket =
+        toNumber(
+            current.averageTicket
+        );
+
+
+    const previousMonthAverageTicket =
+        toNumber(
+            previousMonth?.averageTicket
+        );
+
+
+    const previousYearAverageTicket =
+        toNumber(
+            previousYear?.averageTicket
+        );
+
+
+    const currentMargin =
+        toNumber(
+            current.grossMargin
+        );
+
+
+    const previousMonthMargin =
+        toNumber(
+            previousMonth?.grossMargin
+        );
+
+
+    const previousYearMargin =
+        toNumber(
+            previousYear?.grossMargin
+        );
+
+
+    const salesMonthChange =
+        percentageChange(
+
+            dailySales,
+
+            previousMonthDailySales
+
+        );
+
+
+    const salesYearChange =
+        percentageChange(
+
+            dailySales,
+
+            previousYearDailySales
+
+        );
+
+
+    const ticketsMonthChange =
+        percentageChange(
+
+            dailyTickets,
+
+            previousMonthDailyTickets
+
+        );
+
+
+    const ticketsYearChange =
+        percentageChange(
+
+            dailyTickets,
+
+            previousYearDailyTickets
+
+        );
+
+
+    const averageTicketMonthChange =
+        percentageChange(
+
+            currentAverageTicket,
+
+            previousMonthAverageTicket
+
+        );
+
+
+    const averageTicketYearChange =
+        percentageChange(
+
+            currentAverageTicket,
+
+            previousYearAverageTicket
+
+        );
+
+
+    const marginMonthChange =
+        currentMargin -
+        previousMonthMargin;
+
+
+    const marginYearChange =
+        currentMargin -
+        previousYearMargin;
+
+
+    const reason =
+        buildReason({
+
+            salesChange:
+                salesMonthChange,
+
+            ticketsChange:
+                ticketsMonthChange,
+
+            averageTicketChange:
+                averageTicketMonthChange,
+
+            marginChange:
+                marginMonthChange
+
+        });
+
+
+    return (
+
+        <section className="page-card">
+
+            <div className="page-header">
+
+                <div>
+
+                    <div className="page-eyebrow">
+                        تحليل المبيعات
+                    </div>
+
+
+                    <h2>
+                        نظرة المبيعات
+                    </h2>
+
+
+                    <p>
+                        الصورة المختصرة للأداء خلال الفترة المحددة.
+                    </p>
+
+                </div>
+
+
+                <div className="period-chip">
+
+                    {fromDate}
+
+                    <span>
+                        →
+                    </span>
+
+                    {toDate}
+
+                </div>
+
+            </div>
+
+
+            <div className="kpi-grid">
+
+                <MetricCard
+
+                    title="متوسط المبيعات اليومية"
+
+                    value={
+                        dailySales
+                    }
+
+                    monthChange={
+                        salesMonthChange
+                    }
+
+                    yearChange={
+                        salesYearChange
+                    }
+
+                    formatter={
+                        formatMoney
+                    }
+
+                />
+
+
+                <MetricCard
+
+                    title="متوسط الفواتير اليومية"
+
+                    value={
+                        dailyTickets
+                    }
+
+                    monthChange={
+                        ticketsMonthChange
+                    }
+
+                    yearChange={
+                        ticketsYearChange
+                    }
+
+                    formatter={
+                        formatNumber
+                    }
+
+                />
+
+
+                <MetricCard
+
+                    title="متوسط قيمة الفاتورة"
+
+                    value={
+                        currentAverageTicket
+                    }
+
+                    monthChange={
+                        averageTicketMonthChange
+                    }
+
+                    yearChange={
+                        averageTicketYearChange
+                    }
+
+                    formatter={
+                        formatMoney
+                    }
+
+                />
+
+
+                <MetricCard
+
+                    title="هامش الربح"
+
+                    value={
+                        currentMargin
+                    }
+
+                    monthChange={
+                        marginMonthChange
+                    }
+
+                    yearChange={
+                        marginYearChange
+                    }
+
+                    formatter={
+                        formatPercent
+                    }
+
+                />
+
+                <div
+                    className="kpi-card"
+                >
+
+                    <span>
+                        مبيعات الدليفري
+                    </span>
+
+
+                    <strong>
+                        {
+                            formatMoney(
+                                toNumber(
+                                    deliveryCurrent?.deliverySales
+                                )
+                            )
+                        }
+                    </strong>
+
+
+                    <div
+                        style={{
+                            display:
+                                "grid",
+
+                            gap:
+                                "4px",
+
+                            marginTop:
+                                "10px",
+
+                            fontSize:
+                                "12px"
+                        }}
+                    >
+
+                        <span
+                            className={
+                                compareTone(
+                                    percentageChange(
+                                        deliveryCurrent?.deliverySales,
+                                        deliveryPreviousMonth?.deliverySales
+                                    )
+                                )
+                            }
+                        >
+
+                            القيمة — الشهر السابق:{" "}
+
+                            {
+                                compareText(
+                                    percentageChange(
+                                        deliveryCurrent?.deliverySales,
+                                        deliveryPreviousMonth?.deliverySales
+                                    )
+                                )
+                            }
+
+                        </span>
+
+
+                        <span
+                            className={
+                                compareTone(
+                                    percentageChange(
+                                        deliveryCurrent?.deliverySales,
+                                        deliveryPreviousYear?.deliverySales
+                                    )
+                                )
+                            }
+                        >
+
+                            القيمة — نفس الفترة العام الماضي:{" "}
+
+                            {
+                                compareText(
+                                    percentageChange(
+                                        deliveryCurrent?.deliverySales,
+                                        deliveryPreviousYear?.deliverySales
+                                    )
+                                )
+                            }
+
+                        </span>
+
+
+                        <span
+                            style={{
+                                marginTop:
+                                    "7px",
+
+                                color:
+                                    "#64748b",
+
+                                fontWeight:
+                                    800
+                            }}
+                        >
+
+                            عدد طلبات الدليفري:{" "}
+
+                            {
+                                formatNumber(
+                                    deliveryCurrent?.deliveryTickets
+                                )
+                            }
+
+                        </span>
+
+
+                        <span
+                            className={
+                                compareTone(
+                                    percentageChange(
+                                        deliveryCurrent?.deliveryTickets,
+                                        deliveryPreviousMonth?.deliveryTickets
+                                    )
+                                )
+                            }
+                        >
+
+                            العدد — الشهر السابق:{" "}
+
+                            {
+                                compareText(
+                                    percentageChange(
+                                        deliveryCurrent?.deliveryTickets,
+                                        deliveryPreviousMonth?.deliveryTickets
+                                    )
+                                )
+                            }
+
+                        </span>
+
+
+                        <span
+                            className={
+                                compareTone(
+                                    percentageChange(
+                                        deliveryCurrent?.deliveryTickets,
+                                        deliveryPreviousYear?.deliveryTickets
+                                    )
+                                )
+                            }
+                        >
+
+                            العدد — نفس الفترة العام الماضي:{" "}
+
+                            {
+                                compareText(
+                                    percentageChange(
+                                        deliveryCurrent?.deliveryTickets,
+                                        deliveryPreviousYear?.deliveryTickets
+                                    )
+                                )
+                            }
+
+                        </span>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div
+                className="table-card"
+                style={{
+                    marginTop:
+                        "18px"
+                }}
+            >
+
+                <div
+                    className="table-card-header"
+                >
+
+                    <div>
+
+                        <strong>
+                            لماذا تغير الأداء؟
+                        </strong>
+
+                        <span>
+                            تفسير عام مبني على مؤشرات المبيعات
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div
+                    style={{
+                        padding:
+                            "18px 20px",
+
+                        fontSize:
+                            "16px",
+
+                        fontWeight:
+                            700
+                    }}
+                >
+
+                    {reason}
+
+                </div>
+
+            </div>
+
+
+            <div
+                style={{
+                    marginTop:
+                        "12px",
+
+                    color:
+                        "#7b8799",
+
+                    fontSize:
+                        "12px"
+                }}
+            >
+
+                المقارنة الشهرية تعتمد على الفترة السابقة مباشرة،
+                والمقارنة السنوية تعتمد على نفس الفترة من العام السابق.
+
+            </div>
+
+        </section>
+
+    );
+
+}

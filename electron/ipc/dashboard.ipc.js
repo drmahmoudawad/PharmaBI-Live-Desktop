@@ -14,6 +14,18 @@ import {
 } from "../pharmfly/sellerPerformanceService.js";
 
 import {
+    getEmployeeShiftAssignments,
+    saveEmployeeShiftAssignment
+} from "../pharmfly/settings/employeeShiftStore.js";
+
+import {
+    getEmployeeDirectory
+} from "../pharmfly/employeeDirectoryService.js";
+import {
+    recalculateAllBranchShiftTrafficWeights
+} from "../pharmfly/employeeShiftWeightService.js";
+
+import {
     getSellerOverview
 } from "../pharmfly/sellerOverviewService.js";
 
@@ -64,6 +76,91 @@ export function registerDashboardIpc() {
         ) => {
 
             /*
+             * =====================================================
+             * EMPLOYEE SHIFT ASSIGNMENTS - GET
+             * =====================================================
+             */
+
+
+                          if (
+                  payload?.action ===
+                  "employee-shift-weights-recalculate-all"
+              ) {
+
+                  return recalculateAllBranchShiftTrafficWeights({
+                      evaluationFromDate:
+                          payload?.evaluationFromDate
+                  });
+
+              }
+
+if (
+                payload?.action ===
+                "employee-directory-get"
+            ) {
+
+                return getEmployeeDirectory({
+                    branchId:
+                        payload?.branchId,
+
+                    fromDate:
+                        payload?.fromDate,
+
+                    toDate:
+                        payload?.toDate,
+
+                    connection:
+                        payload?.connection ||
+                        null
+                });
+
+            }
+
+
+            if (
+                payload?.action ===
+                "employee-shift-get"
+            ) {
+
+                return getEmployeeShiftAssignments(
+                    payload?.branchId
+                );
+
+            }
+
+
+            /*
+             * =====================================================
+             * EMPLOYEE SHIFT ASSIGNMENTS - SAVE
+             * =====================================================
+             */
+
+            if (
+                payload?.action ===
+                "employee-shift-save"
+            ) {
+
+                return saveEmployeeShiftAssignment({
+
+                    branchId:
+                        payload?.branchId,
+
+                    employeeId:
+                        payload?.employeeId,
+
+                    shiftCode:
+                        payload?.shiftCode
+
+                });
+
+            }
+
+
+            /*
+             * =====================================================
+             * SELLER PERFORMANCE
+             * =====================================================
+             */            /*
              * =====================================================
              * SELLER PERFORMANCE
              * =====================================================

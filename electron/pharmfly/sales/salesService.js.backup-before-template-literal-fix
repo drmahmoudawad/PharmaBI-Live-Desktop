@@ -1,0 +1,5774 @@
+import {
+    getSalesRows as getLocalSalesRows
+} from "../../localdb/localSalesDb.js";
+import {
+    getBranchPool
+} from "../../connection/connectionManager.js";
+
+
+import {
+    getBranchConnection
+} from "../../settings/connectionStore.js";
+
+
+import {
+    getPersistentCache,
+    setPersistentCache,
+    clearPersistentCache,
+    getPersistentCacheStats
+} from "../../cache/persistentCacheService.js";
+
+
+import {
+    getMonthlySalesCache,
+    setMonthlySalesCache,
+    getMonthDateRange,
+    buildMonthList
+} from "../../cache/monthlySalesCacheService.js";
+
+
+const RECONCILIATION_TOLERANCE =
+    0.05;
+
+
+/*
+ * =========================================================
+ * CACHE CONFIGURATION
+ * =========================================================
+ */
+
+const SALES_CACHE_TTL_MS =
+    30 *
+    1000;
+
+
+const SALES_PERSISTENT_CACHE_TTL_MS =
+    24 *
+    60 *
+    60 *
+    1000;
+
+
+const SALES_CACHE_MAX_ENTRIES =
+    50;
+
+
+const SALES_CACHE_GROUP =
+    "sales";
+
+
+/*
+ * sales-v10
+ *
+ * Added customer_name to the normalized sales payload.
+ * This is required for the legacy/working delivery logic.
+ */
+
+const SALES_CACHE_VERSION = "sales-v12";
+
+
+const salesCache =
+    new Map();
+
+
+const salesInFlight =
+    new Map();
+
+
+const monthlyInFlight =
+    new Map();
+
+
+/*
+ * =========================================================
+ * BASIC HELPERS
+ * =========================================================
+ */
+
+function toNumber(
+    value
+) {
+
+    const number =
+        Number(
+            value
+        );
+
+
+    return Number.isFinite(
+        number
+    )
+        ? number
+        : 0;
+
+}
+
+
+function normalizeDate(
+    value
+) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
+        return null;
+
+    }
+
+
+    const date =
+        new Date(
+            value
+        );
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    return date.toISOString();
+
+}
+
+
+function getCurrentMonthKey() {
+
+    const now =
+        new Date();
+
+    return (
+        `${now.getFullYear()}-` +
+        `${String(
+            now.getMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        )}`
+    );
+
+}
+
+
+function rangeTouchesCurrentMonth(
+    fromDate,
+    toDate
+) {
+
+    const currentMonth =
+        getCurrentMonthKey();
+
+    const startMonth =
+        String(
+            fromDate
+        ).slice(
+            0,
+            7
+        );
+
+    const endMonth =
+        String(
+            toDate
+        ).slice(
+            0,
+            7
+        );
+
+    return (
+        startMonth <= currentMonth &&
+        currentMonth <= endMonth
+    );
+
+}
+
+function normalizeBranchId(
+    branchId
+) {
+
+    const id =
+        Number(
+            branchId
+        );
+
+
+    if (
+        !Number.isInteger(
+            id
+        ) ||
+        id <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    return id;
+
+}
+
+
+function normalizeConnection(
+    branchId
+) {
+
+    const connection =
+        getBranchConnection(
+            branchId
+        );
+
+
+    if (
+        !connection
+    ) {
+
+        throw new Error(
+            `No saved PharmaFly connection for branch ${branchId}`
+        );
+
+    }
+
+
+    return connection;
+
+}
+
+
+/*
+ * =========================================================
+ * DATE RANGE
+ * =========================================================
+ */
+
+function createDateRange(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        String(
+            fromDate ||
+            ""
+        ).trim();
+
+
+    const to =
+        String(
+            toDate ||
+            ""
+        ).trim();
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            from
+        )
+    ) {
+
+        throw new Error(
+            "Invalid fromDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            to
+        )
+    ) {
+
+        throw new Error(
+            "Invalid toDate. Expected YYYY-MM-DD"
+        );
+
+    }
+
+
+    const fromParts =
+        from
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const toParts =
+        to
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const fromCheck =
+        new Date(
+
+            Date.UTC(
+
+                fromParts[0],
+
+                fromParts[1] - 1,
+
+                fromParts[2]
+
+            )
+
+        );
+
+
+    const toCheck =
+        new Date(
+
+            Date.UTC(
+
+                toParts[0],
+
+                toParts[1] - 1,
+
+                toParts[2]
+
+            )
+
+        );
+
+
+    if (
+        fromCheck.getUTCFullYear() !==
+            fromParts[0] ||
+
+        fromCheck.getUTCMonth() !==
+            fromParts[1] - 1 ||
+
+        fromCheck.getUTCDate() !==
+            fromParts[2]
+    ) {
+
+        throw new Error(
+            "Invalid fromDate"
+        );
+
+    }
+
+
+    if (
+        toCheck.getUTCFullYear() !==
+            toParts[0] ||
+
+        toCheck.getUTCMonth() !==
+            toParts[1] - 1 ||
+
+        toCheck.getUTCDate() !==
+            toParts[2]
+    ) {
+
+        throw new Error(
+            "Invalid toDate"
+        );
+
+    }
+
+
+    if (
+        fromCheck >
+        toCheck
+    ) {
+
+        throw new Error(
+            "fromDate cannot be greater than toDate"
+        );
+
+    }
+
+
+    const nextDay =
+        new Date(
+
+            Date.UTC(
+
+                toParts[0],
+
+                toParts[1] - 1,
+
+                toParts[2] + 1
+
+            )
+
+        );
+
+
+    const nextDayString =
+        [
+
+            nextDay.getUTCFullYear(),
+
+            String(
+                nextDay.getUTCMonth() + 1
+            ).padStart(
+                2,
+                "0"
+            ),
+
+            String(
+                nextDay.getUTCDate()
+            ).padStart(
+                2,
+                "0"
+            )
+
+        ].join(
+            "-"
+        );
+
+
+    return {
+
+        fromDateSql:
+            `${from} 00:00:00`,
+
+        toDateExclusiveSql:
+            `${nextDayString} 00:00:00`,
+
+        fromDate:
+            from,
+
+        toDate:
+            to
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * DATE HELPERS
+ * =========================================================
+ */
+
+function parseIsoDate(
+    value
+) {
+
+    if (
+        !value
+    ) {
+
+        return null;
+
+    }
+
+
+    const date =
+        new Date(
+            value
+        );
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    return date;
+
+}
+
+
+function isFullCalendarMonth(
+    fromDate,
+    toDate
+) {
+
+    const from =
+        String(
+            fromDate
+        );
+
+
+    const to =
+        String(
+            toDate
+        );
+
+
+    const month =
+        from.slice(
+            0,
+            7
+        );
+
+
+    if (
+        to.slice(
+            0,
+            7
+        ) !==
+        month
+    ) {
+
+        return false;
+
+    }
+
+
+    const range =
+        getMonthDateRange(
+            month
+        );
+
+
+    return (
+
+        range.fromDate ===
+        from &&
+
+        range.toDate ===
+        to
+
+    );
+
+}
+
+
+function filterRowsByDate(
+    rows,
+    fromDate,
+    toDate
+) {
+
+    if (
+        !Array.isArray(
+            rows
+        )
+    ) {
+
+        return [];
+
+    }
+
+
+    const from =
+        new Date(
+            `${fromDate}T00:00:00.000Z`
+        );
+
+
+    const to =
+        new Date(
+            `${toDate}T23:59:59.999Z`
+        );
+
+
+    const fromTime =
+        from.getTime();
+
+
+    const toTime =
+        to.getTime();
+
+
+    return rows.filter(
+
+        row => {
+
+            const rowDate =
+                parseIsoDate(
+                    row?.date
+                );
+
+
+            if (
+                !rowDate
+            ) {
+
+                return false;
+
+            }
+
+
+            const time =
+                rowDate.getTime();
+
+
+            return (
+
+                time >=
+                fromTime &&
+
+                time <=
+                toTime
+
+            );
+
+        }
+
+    );
+
+}
+
+
+function sortSalesRows(
+    rows
+) {
+
+    return rows.sort(
+
+        (
+            a,
+            b
+        ) => {
+
+            const dateA =
+                parseIsoDate(
+                    a?.date
+                )?.getTime() ||
+                0;
+
+
+            const dateB =
+                parseIsoDate(
+                    b?.date
+                )?.getTime() ||
+                0;
+
+
+            if (
+                dateA !==
+                dateB
+            ) {
+
+                return dateA -
+                    dateB;
+
+            }
+
+
+            const ticketA =
+                String(
+                    a?.ticketId ||
+                    ""
+                );
+
+
+            const ticketB =
+                String(
+                    b?.ticketId ||
+                    ""
+                );
+
+
+            if (
+                ticketA <
+                ticketB
+            ) {
+
+                return -1;
+
+            }
+
+
+            if (
+                ticketA >
+                ticketB
+            ) {
+
+                return 1;
+
+            }
+
+
+            return String(
+                a?.lineId ||
+                ""
+            ).localeCompare(
+
+                String(
+                    b?.lineId ||
+                    ""
+                )
+
+            );
+
+        }
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * CACHE KEYS
+ * =========================================================
+ */
+
+function buildSalesCacheKey(
+    {
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    return [
+
+        SALES_CACHE_VERSION,
+
+        Number(
+            branchId
+        ),
+
+        String(
+            fromDate
+        ),
+
+        String(
+            toDate
+        )
+
+    ].join(
+        "|"
+    );
+
+}
+
+
+function buildMonthlyInFlightKey(
+    branchId,
+    month
+) {
+
+    return [
+
+        "monthly-v3",
+
+        normalizeBranchId(
+            branchId
+        ),
+
+        String(
+            month
+        )
+
+    ].join(
+        "|"
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * MEMORY CACHE
+ * =========================================================
+ */
+
+function getCachedSales(
+    key
+) {
+
+    const entry =
+        salesCache.get(
+            key
+        );
+
+
+    if (
+        !entry
+    ) {
+
+        return null;
+
+    }
+
+
+    if (
+        Date.now() -
+        entry.createdAt >
+        SALES_CACHE_TTL_MS
+    ) {
+
+        salesCache.delete(
+            key
+        );
+
+
+        return null;
+
+    }
+
+
+    salesCache.delete(
+        key
+    );
+
+
+    salesCache.set(
+        key,
+        entry
+    );
+
+
+    return entry.rows;
+
+}
+
+
+function setCachedSales(
+    key,
+    rows
+) {
+
+    salesCache.delete(
+        key
+    );
+
+
+    salesCache.set(
+
+        key,
+
+        {
+
+            rows,
+
+            createdAt:
+                Date.now()
+
+        }
+
+    );
+
+
+    while (
+        salesCache.size >
+        SALES_CACHE_MAX_ENTRIES
+    ) {
+
+        const oldestKey =
+            salesCache
+                .keys()
+                .next()
+                .value;
+
+
+        if (
+            oldestKey ===
+            undefined
+        ) {
+
+            break;
+
+        }
+
+
+        salesCache.delete(
+            oldestKey
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * CLEAR SALES CACHE
+ * =========================================================
+ */
+
+export function clearSalesCache(
+    {
+        branchId = null,
+        fromDate = null,
+        toDate = null
+    } = {}
+) {
+
+    if (
+        branchId === null &&
+        fromDate === null &&
+        toDate === null
+    ) {
+
+        salesCache.clear();
+
+        monthlyInFlight.clear();
+
+
+        clearPersistentCache({
+
+            cacheGroup:
+                SALES_CACHE_GROUP
+
+        });
+
+
+        return;
+
+    }
+
+
+    for (
+        const key
+        of Array.from(
+            salesCache.keys()
+        )
+    ) {
+
+        const parts =
+            key.split(
+                "|"
+            );
+
+
+        const keyBranchId =
+            Number(
+                parts[1]
+            );
+
+
+        const keyFromDate =
+            parts[2];
+
+
+        const keyToDate =
+            parts[3];
+
+
+        const matchesBranch =
+            branchId === null ||
+            keyBranchId ===
+                Number(
+                    branchId
+                );
+
+
+        const matchesFrom =
+            fromDate === null ||
+            keyFromDate ===
+                String(
+                    fromDate
+                );
+
+
+        const matchesTo =
+            toDate === null ||
+            keyToDate ===
+                String(
+                    toDate
+                );
+
+
+        if (
+            matchesBranch &&
+            matchesFrom &&
+            matchesTo
+        ) {
+
+            salesCache.delete(
+                key
+            );
+
+        }
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * CACHE STATS
+ * =========================================================
+ */
+
+export function getSalesCacheStats() {
+
+    let persistent =
+        null;
+
+
+    try {
+
+        persistent =
+            getPersistentCacheStats();
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            "[salesService] persistent cache stats failed:",
+
+            error
+
+        );
+
+    }
+
+
+    return {
+
+        memoryEntries:
+            salesCache.size,
+
+        inFlightEntries:
+            salesInFlight.size,
+
+        monthlyInFlightEntries:
+            monthlyInFlight.size,
+
+        memoryTtlMs:
+            SALES_CACHE_TTL_MS,
+
+        persistentTtlMs:
+            SALES_PERSISTENT_CACHE_TTL_MS,
+
+        persistentTtlHours:
+            SALES_PERSISTENT_CACHE_TTL_MS /
+            (
+                60 *
+                60 *
+                1000
+            ),
+
+        maxMemoryEntries:
+            SALES_CACHE_MAX_ENTRIES,
+
+        persistent
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * MONTHLY CACHE
+ * =========================================================
+ */
+
+function getCachedMonth(
+    branchId,
+    month
+) {
+
+    try {
+
+        const cached =
+            getMonthlySalesCache({
+
+                branchId,
+
+                month
+
+            });
+
+
+        if (
+            !cached ||
+            !Array.isArray(
+                cached.rows
+            )
+        ) {
+
+            return null;
+
+        }
+
+
+        return cached.rows;
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[salesService] monthly cache read failed branch=${branchId} month=${month}:`,
+
+            error
+
+        );
+
+
+        return null;
+
+    }
+
+}
+
+
+function calculateMonthDistanceInclusive(
+    startMonth,
+    endMonth
+) {
+
+    const [
+        startYear,
+        startMonthNumber
+    ] =
+        startMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const [
+        endYear,
+        endMonthNumber
+    ] =
+        endMonth
+            .split(
+                "-"
+            )
+            .map(
+                Number
+            );
+
+
+    const distance =
+        (
+            endYear -
+            startYear
+        ) *
+        12 +
+        (
+            endMonthNumber -
+            startMonthNumber
+        ) +
+        1;
+
+
+    if (
+        distance <= 0
+    ) {
+
+        throw new Error(
+            "Invalid month range"
+        );
+
+    }
+
+
+    return distance;
+
+}
+
+
+/*
+ * =========================================================
+ * COMBINE MONTHLY CACHE
+ * =========================================================
+ */
+
+function combineMonthlyCache(
+    {
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    const startMonth =
+        fromDate.slice(
+            0,
+            7
+        );
+
+
+    const endMonth =
+        toDate.slice(
+            0,
+            7
+        );
+
+
+    const monthCount =
+        calculateMonthDistanceInclusive(
+
+            startMonth,
+
+            endMonth
+
+        );
+
+
+    const months =
+        buildMonthList({
+
+            endMonth,
+
+            months:
+                monthCount
+
+        })
+        .reverse();
+
+
+    const collected =
+        [];
+
+
+    for (
+        const month
+        of months
+    ) {
+
+        const rows =
+            getCachedMonth(
+
+                branchId,
+
+                month
+
+            );
+
+
+        if (
+            !rows
+        ) {
+
+            return {
+
+                complete:
+                    false,
+
+                rows:
+                    []
+
+            };
+
+        }
+
+
+        collected.push(
+            ...rows
+        );
+
+    }
+
+
+    return {
+
+        complete:
+            true,
+
+        rows:
+            filterRowsByDate(
+
+                collected,
+
+                fromDate,
+
+                toDate
+
+            )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * LOAD ONE MONTH
+ * =========================================================
+ */
+
+async function loadMonthlySales(
+    {
+        branchId,
+        month,
+        connection
+    }
+) {
+
+    const cached =
+        getCachedMonth(
+
+            branchId,
+
+            month
+
+        );
+
+
+    if (
+        cached
+    ) {
+
+        console.log(
+
+            `[salesService] MONTHLY CACHE HIT branch=${branchId} month=${month} rows=${cached.length}`
+
+        );
+
+
+        return cached;
+
+    }
+
+
+    const monthlyKey =
+        buildMonthlyInFlightKey(
+
+            branchId,
+
+            month
+
+        );
+
+
+    const existingRequest =
+        monthlyInFlight.get(
+            monthlyKey
+        );
+
+
+    if (
+        existingRequest
+    ) {
+
+        console.log(
+
+            `[salesService] MONTHLY IN-FLIGHT JOIN ${monthlyKey}`
+
+        );
+
+
+        return existingRequest;
+
+    }
+
+
+    const request =
+        (async () => {
+
+            try {
+
+                console.log(
+
+                    `[salesService] MONTHLY CACHE MISS branch=${branchId} month=${month}`
+
+                );
+
+
+                const range =
+                    getMonthDateRange(
+                        month
+                    );
+
+
+                const rows =
+                    await queryPharmaFlySales({
+
+                        branchId,
+
+                        fromDate:
+                            range.fromDate,
+
+                        toDate:
+                            range.toDate,
+
+                        connection
+
+                    });
+
+
+                try {
+
+                    setMonthlySalesCache({
+
+                        branchId,
+
+                        month,
+
+                        rows
+
+                    });
+
+
+                    console.log(
+
+                        `[salesService] MONTHLY CACHE SAVED branch=${branchId} month=${month} rows=${rows.length}`
+
+                    );
+
+                }
+                catch (
+                    error
+                ) {
+
+                    console.error(
+
+                        `[salesService] monthly cache write failed branch=${branchId} month=${month}:`,
+
+                        error
+
+                    );
+
+                }
+
+
+                return rows;
+
+            }
+            finally {
+
+                if (
+                    monthlyInFlight.get(
+                        monthlyKey
+                    ) ===
+                    request
+                ) {
+
+                    monthlyInFlight.delete(
+                        monthlyKey
+                    );
+
+                }
+
+            }
+
+        })();
+
+
+    monthlyInFlight.set(
+
+        monthlyKey,
+
+        request
+
+    );
+
+
+    return request;
+
+}
+
+
+/*
+ * =========================================================
+ * MONTHLY STRATEGY
+ * =========================================================
+ */
+
+function addOneDayISO(
+    dateText
+) {
+
+    const date =
+        new Date(
+            `${dateText}T00:00:00Z`
+        );
+
+    date.setUTCDate(
+        date.getUTCDate() + 1
+    );
+
+    return date
+        .toISOString()
+        .slice(
+            0,
+            10
+        );
+
+}
+
+
+function rowDateOnly(
+    row
+) {
+
+    const value =
+        row?.date ??
+        row?.ticketDate ??
+        row?.ticket_ztime ??
+        null;
+
+    if (
+        !value
+    ) {
+
+        return "";
+
+    }
+
+    const parsed =
+        new Date(
+            value
+        );
+
+    if (
+        Number.isNaN(
+            parsed.getTime()
+        )
+    ) {
+
+        return String(
+            value
+        ).slice(
+            0,
+            10
+        );
+
+    }
+
+    return parsed
+        .toISOString()
+        .slice(
+            0,
+            10
+        );
+
+}
+
+
+async function loadCurrentMonthIncremental(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection
+    }
+) {
+
+    const month =
+        fromDate.slice(
+            0,
+            7
+        );
+
+
+    if (
+        month !==
+        toDate.slice(
+            0,
+            7
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    if (
+        !rangeTouchesCurrentMonth(
+            fromDate,
+            toDate
+        )
+    ) {
+
+        return null;
+
+    }
+
+
+    const cachedRows =
+        getCachedMonth(
+            branchId,
+            month
+        );
+
+
+    /*
+     * No local monthly cache:
+     * let the normal direct SQL path handle it.
+     */
+    if (
+        !Array.isArray(
+            cachedRows
+        ) ||
+        cachedRows.length === 0
+    ) {
+
+        console.log(
+
+            `[salesService] CURRENT MONTH CACHE EMPTY -> DIRECT RANGE ${branchId}|${fromDate}|${toDate}`
+
+        );
+
+        return null;
+
+    }
+
+
+    const cachedMaxDate =
+        cachedRows.reduce(
+
+            (
+                maxDate,
+                row
+            ) => {
+
+                const date =
+                    rowDateOnly(
+                        row
+                    );
+
+                if (
+                    !date
+                ) {
+
+                    return maxDate;
+
+                }
+
+                return date >
+                    maxDate
+                    ? date
+                    : maxDate;
+
+            },
+
+            ""
+
+        );
+
+
+    let refreshFromDate =
+        fromDate;
+
+
+    if (
+        cachedMaxDate &&
+        cachedMaxDate >
+            refreshFromDate
+    ) {
+
+        refreshFromDate =
+            cachedMaxDate;
+
+    }
+
+
+    /*
+     * The current day must always be refreshed because new
+     * tickets can continue to arrive during the day.
+     */
+    if (
+        cachedMaxDate >=
+        toDate
+    ) {
+
+        refreshFromDate =
+            toDate;
+
+    }
+
+
+    console.log(
+
+        `[salesService] CURRENT MONTH INCREMENTAL branch=${branchId} cacheMax=${cachedMaxDate || "none"} refresh=${refreshFromDate}|${toDate}`
+
+    );
+
+
+    const liveRows =
+        await queryPharmaFlySales({
+
+            branchId,
+
+            fromDate:
+                refreshFromDate,
+
+            toDate:
+                addOneDayISO(
+                    toDate
+                ),
+
+            connection
+
+        });
+
+
+    /*
+     * Keep cached history before refreshFromDate.
+     * Replace the overlapping/current period with fresh SQL rows.
+     */
+    const preservedRows =
+        cachedRows.filter(
+
+            row =>
+                rowDateOnly(
+                    row
+                ) <
+                refreshFromDate
+
+        );
+
+
+    const mergedRows = [
+
+        ...preservedRows,
+
+        ...liveRows
+
+    ];
+
+
+    const sortedRows =
+        sortSalesRows(
+            mergedRows
+        );
+
+
+    try {
+
+        setMonthlySalesCache({
+
+            branchId,
+
+            month,
+
+            rows:
+                sortedRows
+
+        });
+
+
+        console.log(
+
+            `[salesService] CURRENT MONTH CACHE UPDATED branch=${branchId} month=${month} rows=${sortedRows.length}`
+
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[salesService] current month cache update failed branch=${branchId} month=${month}:`,
+
+            error
+
+        );
+
+    }
+
+
+    return filterRowsByDate(
+
+        sortedRows,
+
+        fromDate,
+
+        toDate
+
+    );
+
+}
+
+async function getSalesFromMonthlyStrategy(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection,
+        forceRefresh
+    }
+) {
+
+    if (
+        forceRefresh
+    ) {
+
+        return null;
+
+    }
+
+
+    /*
+     * Current calendar month is mutable.
+     * Never trust monthly cache for it.
+     */
+    if (
+        rangeTouchesCurrentMonth(
+            fromDate,
+            toDate
+        )
+    ) {
+
+        const incrementalRows =
+            await loadCurrentMonthIncremental({
+
+                branchId,
+
+                fromDate,
+
+                toDate,
+
+                connection
+
+            });
+
+
+        if (
+            Array.isArray(
+                incrementalRows
+            )
+        ) {
+
+            console.log(
+
+                `[salesService] CURRENT MONTH INCREMENTAL RESULT ${branchId}|${fromDate}|${toDate} -> ${incrementalRows.length} rows`
+
+            );
+
+
+            return incrementalRows;
+
+        }
+
+
+        console.log(
+
+            `[salesService] CURRENT MONTH INCREMENTAL UNAVAILABLE -> DIRECT RANGE ${branchId}|${fromDate}|${toDate}`
+
+        );
+
+    }
+
+
+    const combined =
+        combineMonthlyCache({
+
+            branchId,
+
+            fromDate,
+
+            toDate
+
+        });
+
+
+    if (
+        combined.complete
+    ) {
+
+        const rows =
+            sortSalesRows(
+                combined.rows
+            );
+
+
+        console.log(
+
+            `[salesService] MONTHLY CACHE COMBINED ${branchId}|${fromDate}|${toDate} -> ${rows.length} rows`
+
+        );
+
+
+        return rows;
+
+    }
+
+
+    /*
+     * For a partial month request, do NOT load the entire month.
+     * The normal range query below will fetch only the requested
+     * date range.
+     */
+    if (
+        fromDate.slice(
+            0,
+            7
+        ) ===
+        toDate.slice(
+            0,
+            7
+        )
+    ) {
+
+        const month =
+            fromDate.slice(
+                0,
+                7
+            );
+
+        const monthRange =
+            getMonthDateRange(
+                month
+            );
+
+        const isFullMonth =
+            fromDate === monthRange.fromDate &&
+            toDate === monthRange.toDate;
+
+        if (
+            !isFullMonth
+        ) {
+
+            console.log(
+                `[salesService] PARTIAL MONTH -> RANGE QUERY ${branchId}|${fromDate}|${toDate}`
+            );
+
+            return null;
+
+        }
+
+
+        const rows =
+            await loadMonthlySales({
+
+                branchId,
+
+                month,
+
+                connection
+
+            });
+
+
+        return sortSalesRows(
+
+            filterRowsByDate(
+
+                rows,
+
+                fromDate,
+
+                toDate
+
+            )
+
+        );
+
+    }
+
+
+    const startMonth =
+        fromDate.slice(
+            0,
+            7
+        );
+
+
+    const endMonth =
+        toDate.slice(
+            0,
+            7
+        );
+
+
+    const monthCount =
+        calculateMonthDistanceInclusive(
+
+            startMonth,
+
+            endMonth
+
+        );
+
+
+    const months =
+        buildMonthList({
+
+            endMonth,
+
+            months:
+                monthCount
+
+        })
+        .reverse();
+
+
+    const collected =
+        [];
+
+
+    for (
+        const month
+        of months
+    ) {
+
+        const rows =
+            await loadMonthlySales({
+
+                branchId,
+
+                month,
+
+                connection
+
+            });
+
+
+        collected.push(
+            ...rows
+        );
+
+    }
+
+
+    return sortSalesRows(
+
+        filterRowsByDate(
+
+            collected,
+
+            fromDate,
+
+            toDate
+
+        )
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * NORMALIZE SALES ROW
+ * =========================================================
+ */
+
+function normalizeSaleRow(
+    row
+) {
+
+    const salesReturn =
+        toNumber(
+            row.sales_return
+        );
+
+
+    const isReturn =
+        salesReturn === 2;
+
+
+    const packs =
+        toNumber(
+            row.packs
+        );
+
+
+    const units =
+        toNumber(
+            row.units
+        );
+
+
+    const lineParts =
+        toNumber(
+            row.line_parts
+        );
+
+
+    const itemParts =
+        toNumber(
+            row.item_parts
+        );
+
+
+    const parts =
+        lineParts > 0
+
+            ? lineParts
+
+            : (
+
+                itemParts > 0
+
+                    ? itemParts
+
+                    : 1
+
+            );
+
+
+    const salesPrice =
+        toNumber(
+            row.line_sales_price
+        );
+
+
+    const unitPrice =
+        parts > 0
+
+            ? salesPrice /
+              parts
+
+            : salesPrice;
+
+
+    const baseUnits =
+        (
+            packs *
+            parts
+        ) +
+        units;
+
+
+    const grossLineValue =
+        baseUnits *
+        unitPrice;
+
+
+    const discount =
+        toNumber(
+            row.line_discount
+        );
+
+
+    const extraDiscount =
+        toNumber(
+            row.line_extra_discount
+        );
+
+
+    const netLineValue =
+        grossLineValue -
+        discount -
+        extraDiscount;
+
+
+    const lastPurchaseCost =
+        toNumber(
+            row.last_purchase_cost
+        );
+
+
+    const purchaseParts =
+        toNumber(
+            row.last_purchase_parts
+        ) > 0
+
+            ? toNumber(
+                row.last_purchase_parts
+            )
+
+            : (
+
+                parts > 0
+
+                    ? parts
+
+                    : 1
+
+            );
+
+
+    const purchaseUnitCost =
+        lastPurchaseCost > 0
+
+            ? (
+
+                purchaseParts > 0
+
+                    ? lastPurchaseCost /
+                      purchaseParts
+
+                    : lastPurchaseCost
+
+            )
+
+            : 0;
+
+
+    const lineCost =
+        baseUnits *
+        purchaseUnitCost;
+
+
+    return {
+
+        ticketId:
+            String(
+                row.ticket_id
+            ),
+
+
+        lineId:
+            String(
+                row.line_id
+            ),
+
+
+        itemId:
+            row.item_id === null ||
+            row.item_id === undefined
+
+                ? null
+
+                : String(
+                    row.item_id
+                ),
+
+
+        itemName:
+            row.item_name ||
+            null,
+
+
+        customerId:
+            row.customer_id === null ||
+            row.customer_id === undefined
+
+                ? null
+
+                : String(
+                    row.customer_id
+                ),
+
+
+        /*
+         * REQUIRED FOR DELIVERY ANALYTICS.
+         */
+
+        customerName:
+            row.customer_name ||
+            null,
+
+
+        date:
+            normalizeDate(
+                row.ticket_ztime
+            ),
+
+
+        salesReturn,
+
+
+        transactionType:
+            isReturn
+                ? "RETURN"
+                : "SALE",
+
+
+        ticketTotal:
+            toNumber(
+                row.ticket_total
+            ),
+
+
+        packs,
+
+
+        units,
+
+
+        parts,
+
+
+        baseUnits,
+
+
+        bonus:
+            toNumber(
+                row.bonus
+            ),
+
+
+        salesPrice,
+
+
+        unitPrice,
+
+
+        grossLineValue,
+
+
+        discount,
+
+
+        extraDiscount,
+
+
+        netLineValue,
+
+
+        costPrice:
+            lastPurchaseCost,
+
+
+        unitCost:
+            purchaseUnitCost,
+
+
+        lineCost,
+
+
+        purchaseCost:
+            lastPurchaseCost,
+
+
+        purchaseUnitCost,
+
+
+        purchaseDate:
+            normalizeDate(
+                row.last_purchase_date
+            ),
+
+
+        purchaseInvoiceId:
+            row.last_purchase_invoice_id === null ||
+            row.last_purchase_invoice_id === undefined
+
+                ? null
+
+                : String(
+                    row.last_purchase_invoice_id
+                ),
+
+
+        purchaseInvoiceCode:
+            row.last_purchase_invoice_code ||
+            null,
+
+
+        purchaseVendorId:
+            row.last_purchase_vendor_id === null ||
+            row.last_purchase_vendor_id === undefined
+
+                ? null
+
+                : String(
+                    row.last_purchase_vendor_id
+                ),
+
+
+        purchaseParts,
+
+
+        sourcePosItemCost:
+            toNumber(
+                row.line_cost
+            ),
+
+
+        isContent:
+            Boolean(
+                row.is_content
+            ),
+
+
+        storeId:
+            row.line_store_id === null ||
+            row.line_store_id === undefined
+
+                ? (
+
+                    row.ticket_store_id === null ||
+                    row.ticket_store_id === undefined
+
+                        ? null
+
+                        : String(
+                            row.ticket_store_id
+                        )
+
+                )
+
+                : String(
+                    row.line_store_id
+                ),
+
+
+        salesRepId:
+            row.sales_rep_id === null ||
+            row.sales_rep_id === undefined
+
+                ? null
+
+                : String(
+                    row.sales_rep_id
+                )
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SALES DIAGNOSTIC
+ * =========================================================
+ */
+
+const ENABLE_SALES_DIAGNOSTIC = false;
+
+
+const diagnosticAlreadyRun =
+    new Set();
+
+
+async function runSalesDiagnostic(
+    {
+        pool,
+        fromDateSql,
+        toDateExclusiveSql,
+        branchId,
+        fromDate,
+        toDate
+    }
+) {
+
+    if (
+        !ENABLE_SALES_DIAGNOSTIC
+    ) {
+
+        return;
+
+    }
+
+
+    const key =
+        `${branchId}|${fromDate}|${toDate}`;
+
+
+    if (
+        diagnosticAlreadyRun.has(
+            key
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    diagnosticAlreadyRun.add(
+        key
+    );
+
+
+    try {
+
+        console.log(
+            `[salesDiagnostic] START branch=${branchId} range=${fromDate}|${toDate}`
+        );
+
+
+        /*
+         * -----------------------------------------------------
+         * STAGE 1: SALES BASE
+         * -----------------------------------------------------
+         */
+
+        let started =
+            Date.now();
+
+        const salesBaseResult =
+            await pool
+                .request()
+                .input(
+                    "fromDate",
+                    fromDateSql
+                )
+                .input(
+                    "toDateExclusive",
+                    toDateExclusiveSql
+                )
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT COUNT_BIG(*) AS row_count
+                    FROM posTickets t
+                    INNER JOIN posItems pi
+                        ON pi.TicketID = t.ID
+                    WHERE
+                        t.ztime >= @fromDate
+                        AND t.ztime < @toDateExclusive;
+                `);
+
+        let elapsed =
+            Date.now() - started;
+
+        const salesRows =
+            Number(
+                salesBaseResult?.recordset?.[0]?.row_count
+            ) || 0;
+
+        console.log(
+            `[salesDiagnostic] STAGE1 SalesBase rows=${salesRows} ms=${elapsed}`
+        );
+
+
+        /*
+         * -----------------------------------------------------
+         * STAGE 2: NEEDED ITEMS
+         * -----------------------------------------------------
+         */
+
+        started =
+            Date.now();
+
+        const neededItemsResult =
+            await pool
+                .request()
+                .input(
+                    "fromDate",
+                    fromDateSql
+                )
+                .input(
+                    "toDateExclusive",
+                    toDateExclusiveSql
+                )
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT COUNT(DISTINCT pi.ItemID) AS item_count
+                    FROM posTickets t
+                    INNER JOIN posItems pi
+                        ON pi.TicketID = t.ID
+                    WHERE
+                        t.ztime >= @fromDate
+                        AND t.ztime < @toDateExclusive
+                        AND pi.ItemID IS NOT NULL;
+                `);
+
+        elapsed =
+            Date.now() - started;
+
+        const neededItems =
+            Number(
+                neededItemsResult?.recordset?.[0]?.item_count
+            ) || 0;
+
+        console.log(
+            `[salesDiagnostic] STAGE2 NeededItems count=${neededItems} ms=${elapsed}`
+        );
+
+
+        /*
+         * -----------------------------------------------------
+         * STAGE 3: PURCHASES INSIDE RANGE
+         * -----------------------------------------------------
+         */
+
+        started =
+            Date.now();
+
+        const purchasesResult =
+            await pool
+                .request()
+                .input(
+                    "fromDate",
+                    fromDateSql
+                )
+                .input(
+                    "toDateExclusive",
+                    toDateExclusiveSql
+                )
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT COUNT_BIG(*) AS purchase_rows
+                    FROM PurchaseItems pitem
+                    INNER JOIN PurchaseInvoices pinv
+                        ON pinv.ID = pitem.inv_id
+                    INNER JOIN (
+                        SELECT DISTINCT
+                            pi.ItemID AS item_id
+                        FROM posTickets t
+                        INNER JOIN posItems pi
+                            ON pi.TicketID = t.ID
+                        WHERE
+                            t.ztime >= @fromDate
+                            AND t.ztime < @toDateExclusive
+                            AND pi.ItemID IS NOT NULL
+                    ) needed
+                        ON needed.item_id = pitem.item_id
+                    WHERE
+                        COALESCE(
+                            pinv.ztime,
+                            pinv.inv_date
+                        ) >= @fromDate
+                        AND COALESCE(
+                            pinv.ztime,
+                            pinv.inv_date
+                        ) < @toDateExclusive;
+                `);
+
+        elapsed =
+            Date.now() - started;
+
+        const purchaseRows =
+            Number(
+                purchasesResult?.recordset?.[0]?.purchase_rows
+            ) || 0;
+
+        console.log(
+            `[salesDiagnostic] STAGE3 Purchases rows=${purchaseRows} ms=${elapsed}`
+        );
+
+
+        /*
+         * -----------------------------------------------------
+         * STAGE 4: PREVIOUS PURCHASE LOOKUP
+         * -----------------------------------------------------
+         */
+
+        started =
+            Date.now();
+
+        const previousPurchaseResult =
+            await pool
+                .request()
+                .input(
+                    "fromDate",
+                    fromDateSql
+                )
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT COUNT_BIG(*) AS resolved_items
+                    FROM (
+                        SELECT DISTINCT
+                            pi.ItemID AS item_id
+                        FROM posTickets t
+                        INNER JOIN posItems pi
+                            ON pi.TicketID = t.ID
+                        WHERE
+                            t.ztime >= @fromDate
+                            AND t.ztime < DATEADD(
+                                DAY,
+                                31,
+                                @fromDate
+                            )
+                            AND pi.ItemID IS NOT NULL
+                    ) needed
+                    OUTER APPLY (
+                        SELECT TOP 1
+                            pitem.ID
+                        FROM PurchaseItems pitem
+                        INNER JOIN PurchaseInvoices pinv
+                            ON pinv.ID = pitem.inv_id
+                        WHERE
+                            pitem.item_id = needed.item_id
+                            AND COALESCE(
+                                pinv.ztime,
+                                pinv.inv_date
+                            ) < @fromDate
+                        ORDER BY
+                            COALESCE(
+                                pinv.ztime,
+                                pinv.inv_date
+                            ) DESC,
+                            pinv.ID DESC,
+                            pitem.ID DESC
+                    ) previousPurchase;
+                `);
+
+        elapsed =
+            Date.now() - started;
+
+        const previousResolved =
+            Number(
+                previousPurchaseResult?.recordset?.[0]?.resolved_items
+            ) || 0;
+
+        console.log(
+            `[salesDiagnostic] STAGE4 PreviousPurchase resolved=${previousResolved} ms=${elapsed}`
+        );
+
+
+        console.log(
+            `[salesDiagnostic] COMPLETE branch=${branchId}`
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+            "[salesDiagnostic] FAILED:",
+            error
+        );
+
+    }
+
+}
+
+/*
+ * =========================================================
+ * OPTIMIZED SALES QUERY
+ * =========================================================
+ *
+ * IMPORTANT:
+ *
+ * 1. Cards is joined ONLY to obtain customer_name.
+ * 2. Purchase lookup is limited to the requested period
+ *    plus one previous-purchase fallback per item.
+ * 3. No full purchase-history join.
+ * 4. No delivery logic is pushed into SQL.
+ * 5. Delivery classification is done in getSalesSummary().
+ *
+ */
+
+function buildOptimizedSalesQuery() {
+
+    return `
+
+        SET NOCOUNT ON;
+
+
+        IF OBJECT_ID(
+            'tempdb..#SalesBase'
+        ) IS NOT NULL
+
+            DROP TABLE #SalesBase;
+
+
+        IF OBJECT_ID(
+            'tempdb..#NeededItems'
+        ) IS NOT NULL
+
+            DROP TABLE #NeededItems;
+
+
+        IF OBJECT_ID(
+            'tempdb..#Purchases'
+        ) IS NOT NULL
+
+            DROP TABLE #Purchases;
+
+
+        IF OBJECT_ID(
+            'tempdb..#PreviousPurchases'
+        ) IS NOT NULL
+
+            DROP TABLE #PreviousPurchases;
+
+
+        /*
+         * =====================================================
+         * SALES WINDOW
+         * =====================================================
+         */
+
+        SELECT
+
+            t.ID
+                AS ticket_id,
+
+            t.ztime
+                AS ticket_ztime,
+
+            t.SalesReturn
+                AS sales_return,
+
+            t.CustomerID
+                AS customer_id,
+
+
+            t.Total
+                AS ticket_total,
+
+            t.StoreID
+                AS ticket_store_id,
+
+            t.SalesRepID
+                AS sales_rep_id,
+
+
+            pi.ID
+                AS line_id,
+
+            pi.ItemID
+                AS item_id,
+
+            i.name
+                AS item_name,
+
+            i.Parts
+                AS item_parts,
+
+            pi.Packs
+                AS packs,
+
+            pi.Units
+                AS units,
+
+            pi.iParts
+                AS line_parts,
+
+            pi.Bonus
+                AS bonus,
+
+            pi.SalesPrice
+                AS line_sales_price,
+
+            pi.Cost
+                AS line_cost,
+
+            pi.Discount
+                AS line_discount,
+
+            pi.ExtraDiscount
+                AS line_extra_discount,
+
+            pi.IsContent
+                AS is_content,
+
+            pi.StoreID
+                AS line_store_id
+
+
+        INTO #SalesBase
+
+
+        FROM posTickets t
+
+
+        INNER JOIN posItems pi
+
+            ON pi.TicketID =
+               t.ID
+
+
+LEFT JOIN Items i
+
+            ON i.ID =
+               pi.ItemID
+
+
+        WHERE
+
+            t.ztime >= @fromDate
+
+        AND
+
+            t.ztime < @toDateExclusive;
+
+
+        CREATE NONCLUSTERED INDEX
+
+            IX_SalesBase_Item_Date_Line
+
+        ON #SalesBase (
+
+            item_id,
+
+            ticket_ztime,
+
+            line_id
+
+        );
+
+
+        /*
+         * =====================================================
+         * NEEDED ITEMS
+         * =====================================================
+         */
+
+        SELECT DISTINCT
+
+            item_id
+
+        INTO #NeededItems
+
+
+        FROM #SalesBase
+
+
+        WHERE
+
+            item_id IS NOT NULL;
+
+
+        CREATE UNIQUE CLUSTERED INDEX
+
+            IX_NeededItems_Item
+
+        ON #NeededItems (
+
+            item_id
+
+        );
+
+
+        /*
+         * =====================================================
+         * PURCHASES INSIDE REQUESTED WINDOW
+         * =====================================================
+         */
+
+        SELECT
+
+            pitem.item_id
+                AS item_id,
+
+            pitem.CostPrice
+                AS purchase_cost,
+
+            COALESCE(
+                pinv.ztime,
+                pinv.inv_date
+            )
+                AS purchase_date,
+
+            pinv.ID
+                AS purchase_invoice_id,
+
+            pinv.inv_code
+                AS purchase_invoice_code,
+
+            pinv.vendor_id
+                AS purchase_vendor_id,
+
+            pitem.ID
+                AS purchase_item_id
+
+
+        INTO #Purchases
+
+
+        FROM PurchaseItems pitem
+
+
+        INNER JOIN PurchaseInvoices pinv
+
+            ON pinv.ID =
+               pitem.inv_id
+
+
+        INNER JOIN #NeededItems needed
+
+            ON needed.item_id =
+               pitem.item_id
+
+
+        WHERE
+
+            COALESCE(
+                pinv.ztime,
+                pinv.inv_date
+            ) >= @fromDate
+
+        AND
+
+            COALESCE(
+                pinv.ztime,
+                pinv.inv_date
+            ) < @toDateExclusive;
+
+
+        CREATE CLUSTERED INDEX
+
+            IX_Purchases_Item_Date
+
+        ON #Purchases (
+
+            item_id,
+
+            purchase_date,
+
+            purchase_invoice_id,
+
+            purchase_item_id
+
+        );
+
+
+        /*
+         * =====================================================
+         * PREVIOUS PURCHASE FALLBACK
+         * =====================================================
+         *
+         * Get only the latest historical purchase for each
+         * needed item. This avoids ranking the complete purchase
+         * history with ROW_NUMBER().
+         */
+
+        SELECT
+
+            needed.item_id,
+
+            previousPurchase.purchase_cost,
+
+            previousPurchase.purchase_date,
+
+            previousPurchase.purchase_invoice_id,
+
+            previousPurchase.purchase_invoice_code,
+
+            previousPurchase.purchase_vendor_id,
+
+            previousPurchase.purchase_item_id
+
+        INTO #PreviousPurchases
+
+        FROM #NeededItems needed
+
+        OUTER APPLY (
+
+            SELECT TOP 1
+
+                pitem.CostPrice
+                    AS purchase_cost,
+
+                COALESCE(
+                    pinv.ztime,
+                    pinv.inv_date
+                )
+                    AS purchase_date,
+
+                pinv.ID
+                    AS purchase_invoice_id,
+
+                pinv.inv_code
+                    AS purchase_invoice_code,
+
+                pinv.vendor_id
+                    AS purchase_vendor_id,
+
+                pitem.ID
+                    AS purchase_item_id
+
+            FROM PurchaseItems pitem
+
+            INNER JOIN PurchaseInvoices pinv
+
+                ON pinv.ID =
+                   pitem.inv_id
+
+            WHERE
+
+                pitem.item_id =
+                    needed.item_id
+
+            AND
+
+                COALESCE(
+                    pinv.ztime,
+                    pinv.inv_date
+                ) < @fromDate
+
+            ORDER BY
+
+                COALESCE(
+                    pinv.ztime,
+                    pinv.inv_date
+                ) DESC,
+
+                pinv.ID DESC,
+
+                pitem.ID DESC
+
+        ) previousPurchase;
+
+
+        CREATE UNIQUE CLUSTERED INDEX
+
+            IX_PreviousPurchases_Item
+
+        ON #PreviousPurchases (
+
+            item_id
+
+        );
+
+
+        /*
+         * =====================================================
+         * FINAL RESULT
+         * =====================================================
+         */
+
+        SELECT
+
+            s.ticket_id,
+
+            s.ticket_ztime,
+
+            s.sales_return,
+
+            s.customer_id,
+
+
+            s.ticket_total,
+
+            s.ticket_store_id,
+
+            s.sales_rep_id,
+
+            s.line_id,
+
+            s.item_id,
+
+            s.item_name,
+
+            s.item_parts,
+
+            s.packs,
+
+            s.units,
+
+            s.line_parts,
+
+            s.bonus,
+
+            s.line_sales_price,
+
+            s.line_cost,
+
+            s.line_discount,
+
+            s.line_extra_discount,
+
+            s.is_content,
+
+            s.line_store_id,
+
+
+            latestPurchase.purchase_cost
+                AS last_purchase_cost,
+
+            latestPurchase.purchase_date
+                AS last_purchase_date,
+
+            latestPurchase.purchase_invoice_id
+                AS last_purchase_invoice_id,
+
+            latestPurchase.purchase_invoice_code
+                AS last_purchase_invoice_code,
+
+            latestPurchase.purchase_vendor_id
+                AS last_purchase_vendor_id,
+
+
+            s.item_parts
+                AS last_purchase_parts
+
+
+        FROM #SalesBase s
+
+
+        OUTER APPLY (
+
+            SELECT TOP 1
+
+                p.purchase_cost,
+
+                p.purchase_date,
+
+                p.purchase_invoice_id,
+
+                p.purchase_invoice_code,
+
+                p.purchase_vendor_id,
+
+                p.purchase_item_id
+
+
+            FROM (
+
+                SELECT
+
+                    purchase_cost,
+
+                    purchase_date,
+
+                    purchase_invoice_id,
+
+                    purchase_invoice_code,
+
+                    purchase_vendor_id,
+
+                    purchase_item_id
+
+                FROM #Purchases
+
+                WHERE
+
+                    item_id =
+                        s.item_id
+
+                AND
+
+                    purchase_date <=
+                        s.ticket_ztime
+
+
+                UNION ALL
+
+
+                SELECT
+
+                    purchase_cost,
+
+                    purchase_date,
+
+                    purchase_invoice_id,
+
+                    purchase_invoice_code,
+
+                    purchase_vendor_id,
+
+                    purchase_item_id
+
+                FROM #PreviousPurchases
+
+                WHERE
+
+                    item_id =
+                        s.item_id
+
+                AND
+
+                    NOT EXISTS (
+
+                        SELECT 1
+
+                        FROM #Purchases currentPurchase
+
+                        WHERE
+
+                            currentPurchase.item_id =
+                                s.item_id
+
+                        AND
+
+                            currentPurchase.purchase_date <=
+                                s.ticket_ztime
+
+                    )
+
+            ) p
+
+
+            ORDER BY
+
+                p.purchase_date DESC,
+
+                p.purchase_invoice_id DESC,
+
+                p.purchase_item_id DESC
+
+        ) latestPurchase;
+
+
+    `;
+
+}
+
+
+/*
+ * =========================================================
+ * SQL EXECUTION
+ * =========================================================
+ */
+
+const CUSTOMER_NAME_CACHE_TTL_MS =
+    5 * 60 * 1000;
+
+const customerNameCache =
+    new Map();
+
+
+function buildCustomerCacheFingerprint(
+    connection
+) {
+
+    return [
+        connection?.server ?? "",
+        connection?.port ?? "",
+        connection?.database ?? "",
+        connection?.user ?? ""
+    ].join("|");
+
+}
+
+
+async function loadCustomerNameMap(
+    {
+        branchId,
+        pool,
+        connection
+    }
+) {
+
+    const fingerprint =
+        buildCustomerCacheFingerprint(
+            connection
+        );
+
+    const existing =
+        customerNameCache.get(
+            Number(branchId)
+        );
+
+
+    if (
+        existing &&
+        existing.fingerprint === fingerprint &&
+        Date.now() -
+            existing.loadedAt <
+            CUSTOMER_NAME_CACHE_TTL_MS
+    ) {
+
+        return existing.map;
+
+    }
+
+
+    try {
+
+        const result =
+            await pool
+                .request()
+                .query(`
+                    SET NOCOUNT ON;
+
+                    SELECT
+                        Id,
+                        Name
+                    FROM dbo.Cards
+                    WHERE Id IS NOT NULL;
+                `);
+
+
+        const map =
+            new Map();
+
+
+        for (
+            const row
+            of result?.recordset || []
+        ) {
+
+            map.set(
+                String(row.Id),
+                row.Name ?? null
+            );
+
+        }
+
+
+        customerNameCache.set(
+            Number(branchId),
+            {
+                fingerprint,
+                loadedAt:
+                    Date.now(),
+                map
+            }
+        );
+
+
+        console.log(
+            "[salesService] Customer name map loaded",
+            `branch=${branchId}`,
+            `rows=${map.size}`
+        );
+
+
+        return map;
+
+    }
+    catch (error) {
+
+        console.error(
+            `[salesService] Customer name map failed branch=${branchId}:`,
+            error
+        );
+
+        return new Map();
+
+    }
+
+}
+
+async function queryPharmaFlySales(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null
+    }
+) {
+
+    const numericBranchId =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const savedConnection =
+        connection ||
+        normalizeConnection(
+            numericBranchId
+        );
+
+
+    const pool =
+        await getBranchPool(
+
+            numericBranchId,
+
+            savedConnection
+
+        );
+
+
+    const {
+        fromDateSql,
+        toDateExclusiveSql
+    } =
+        createDateRange(
+
+            fromDate,
+
+            toDate
+
+        );
+
+
+    await runSalesDiagnostic({
+
+        pool,
+
+        fromDateSql,
+
+        toDateExclusiveSql,
+
+        branchId:
+            numericBranchId,
+
+        fromDate,
+
+        toDate
+
+    });
+
+
+    const sqlStartedAt =
+        Date.now();
+
+
+    console.log(
+
+        `[salesService] SQL START ${numericBranchId}|${fromDate}|${toDate}`
+
+    );
+
+
+    const result =
+        await pool
+            .request()
+            .input(
+                "fromDate",
+                fromDateSql
+            )
+            .input(
+                "toDateExclusive",
+                toDateExclusiveSql
+            )
+            .query(
+                buildOptimizedSalesQuery()
+            );
+
+
+    const sqlElapsed =
+        Date.now() -
+        sqlStartedAt;
+
+
+    const rawRows =
+        Array.isArray(
+            result.recordset
+        )
+
+            ? result.recordset
+
+            : [];
+
+
+    const customerNameById =
+        await loadCustomerNameMap({
+            branchId:
+                numericBranchId,
+            pool,
+            connection:
+                savedConnection
+        });
+
+
+    for (
+        const row
+        of rawRows
+    ) {
+
+        const customerId =
+            row?.customer_id;
+
+
+        row.customer_name =
+            customerId === null ||
+            customerId === undefined
+
+                ? null
+
+                : (
+                    customerNameById.get(
+                        String(customerId)
+                    ) ?? null
+                );
+
+    }
+
+    const rows =
+        sortSalesRows(
+
+            rawRows.map(
+                normalizeSaleRow
+            )
+
+        );
+
+
+    console.log(
+
+        `[salesService] SQL ${numericBranchId}|${fromDate}|${toDate} -> ${rows.length} rows in ${sqlElapsed} ms`
+
+    );
+
+
+    return rows;
+
+}
+
+
+/*
+ * =========================================================
+ * PERSISTENT EXACT RANGE
+ * =========================================================
+ */
+
+function savePersistentSalesRange(
+    {
+        key,
+        rows
+    }
+) {
+
+    try {
+
+        setPersistentCache({
+
+            cacheKey:
+                key,
+
+            cacheGroup:
+                SALES_CACHE_GROUP,
+
+            data:
+                rows,
+
+            rowCount:
+                rows.length,
+
+            ttlMs:
+                SALES_PERSISTENT_CACHE_TTL_MS
+
+        });
+
+
+        console.log(
+
+            `[salesService] PERSISTENT CACHE SAVED ${key} -> ${rows.length} rows`
+
+        );
+
+    }
+    catch (
+        error
+    ) {
+
+        console.error(
+
+            `[salesService] persistent cache write failed ${key}:`,
+
+            error
+
+        );
+
+    }
+
+}
+
+
+/*
+ * =========================================================
+ * GET SALES
+ * =========================================================
+ */
+
+/* LOCAL-FIRST SALES STRATEGY */
+
+function getTodayUtcDate() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function getPreviousDate(dateString) {
+    const date = new Date(`${dateString}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - 1);
+    return date.toISOString().slice(0, 10);
+}
+
+function maxSalesDate(a, b) {
+    return a > b ? a : b;
+}
+
+function minSalesDate(a, b) {
+    return a < b ? a : b;
+}
+
+function normalizeLocalSaleRow(
+    row
+) {
+
+    const normalized =
+        normalizeSaleRow({
+
+            ticket_id:
+                row.ticket_id,
+
+            line_id:
+                row.line_id,
+
+            item_id:
+                row.item_id,
+
+            item_name:
+                row.item_name,
+
+            customer_id:
+                row.customer_id,
+
+            customer_name:
+                row.customer_name,
+
+            ticket_ztime:
+                row.date,
+
+            sales_return:
+                row.sales_return,
+
+            transaction_type:
+                row.transaction_type,
+
+            ticket_total:
+                row.ticket_total,
+
+            packs:
+                row.packs,
+
+            units:
+                row.units,
+
+            line_parts:
+                row.parts,
+
+            item_parts:
+                row.parts,
+
+            bonus:
+                row.bonus,
+
+            line_sales_price:
+                row.sales_price,
+
+            line_discount:
+                row.discount,
+
+            line_extra_discount:
+                row.extra_discount,
+
+            last_purchase_cost:
+                row.purchase_cost,
+
+            last_purchase_date:
+                row.purchase_date,
+
+            last_purchase_invoice_id:
+                row.purchase_invoice_id,
+
+            last_purchase_invoice_code:
+                row.purchase_invoice_code,
+
+            last_purchase_vendor_id:
+                row.purchase_vendor_id,
+
+            last_purchase_parts:
+                row.purchase_parts,
+
+            line_cost:
+                row.source_pos_item_cost,
+
+            line_store_id:
+                row.store_id,
+
+            ticket_store_id:
+                row.store_id,
+
+            sales_rep_id:
+                row.sales_rep_id,
+
+            is_content:
+                row.is_content
+        });
+
+
+    normalized.pinNumber =
+        row.pin_number === null ||
+        row.pin_number === undefined
+
+            ? null
+
+            : String(
+                row.pin_number
+            );
+
+    return normalized;
+
+}
+
+async function getSalesFromLocalFirstStrategy({
+    branchId,
+    fromDate,
+    toDate,
+    connection,
+    forceRefresh = false
+}) {
+    if (forceRefresh) {
+        return null;
+    }
+
+    const today = getTodayUtcDate();
+
+    const completedToDate =
+        minSalesDate(
+            toDate,
+            today
+        );
+
+    const currentFromDate =
+        maxSalesDate(
+            fromDate,
+            today
+        );
+
+    let covered = false;
+
+    let localRows = [];
+
+    let currentDayRows = [];
+
+    /*
+     * COMPLETED DAYS
+     * Read directly from local SQLite.
+     */
+    if (fromDate < completedToDate) {
+        covered = true;
+
+        const startedAt =
+            Date.now();
+
+        const rows =
+            await getLocalSalesRows({
+                branchId,
+                fromDate,
+                toDate: completedToDate
+            });
+
+        localRows =
+            Array.isArray(rows)
+                ? rows.map(normalizeLocalSaleRow)
+                : [];
+
+        console.log(
+            `[salesService] LOCAL SQLITE HIT branch=${branchId} ${fromDate} -> ${completedToDate} rows=${localRows.length} in ${Date.now() - startedAt} ms`
+        );
+    }
+
+    /*
+     * CURRENT UTC DAY
+     * Keep SQL Server for live/fresh data.
+     */
+
+    /*
+     * =====================================================
+     * LOCAL CUSTOMER NAME ENRICHMENT
+     * =====================================================
+     *
+     * Historical sales come from SQLite for speed.
+     * Resolve only missing customer names from Cards.
+     */
+
+    const customerIdsNeedingNames = [
+
+        ...new Set(
+
+            localRows
+
+                .filter(
+
+                    row =>
+
+                        row &&
+
+                        row.customerId != null &&
+
+                        String(
+                            row.customerName || ""
+                        ).trim() === ""
+
+                )
+
+                .map(
+
+                    row =>
+                        String(
+                            row.customerId
+                        ).trim()
+
+                )
+
+                .filter(
+
+                    id =>
+                        id !== "" &&
+                        id !== "0"
+
+                )
+
+        )
+
+    ];
+
+
+    if (
+        customerIdsNeedingNames.length > 0
+    ) {
+
+        try {
+
+            const customerPool =
+                await getBranchPool(
+                    Number(branchId),
+                    connection
+                );
+
+
+            const customerNameById =
+                new Map();
+
+
+            /*
+             * SQL Server accepts a limited number of parameters.
+             * Query in safe chunks.
+             */
+
+            const chunkSize = 500;
+
+
+            for (
+                let start = 0;
+                start < customerIdsNeedingNames.length;
+                start += chunkSize
+            ) {
+
+                const chunk =
+                    customerIdsNeedingNames.slice(
+                        start,
+                        start + chunkSize
+                    );
+
+
+                const request =
+                    customerPool.request();
+
+
+                const placeholders =
+                    chunk.map(
+                        (id, index) => {
+
+                            const parameter =
+                                "localCustomerId" +
+                                index;
+
+                            request.input(
+                                parameter,
+                                Number(id)
+                            );
+
+                            return "@" + parameter;
+
+                        }
+                    );
+
+
+                const result =
+                    await request.query(\
+
+                        SET NOCOUNT ON;
+
+                        SELECT
+                            ID,
+                            Name
+                        FROM dbo.Cards
+                        WHERE ID IN (
+                            \
+                        );
+
+                    \);
+
+
+                for (
+                    const card
+                    of result?.recordset || []
+                ) {
+
+                    if (
+                        card?.ID === null ||
+                        card?.ID === undefined
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    const id =
+                        String(
+                            card.ID
+                        ).trim();
+
+
+                    const name =
+                        String(
+                            card.Name || ""
+                        ).trim();
+
+
+                    if (
+                        id &&
+                        name
+                    ) {
+
+                        customerNameById.set(
+                            id,
+                            name
+                        );
+
+                    }
+
+                }
+
+            }
+
+
+            let enrichedRows = 0;
+
+
+            for (
+                const row
+                of localRows
+            ) {
+
+                const customerId =
+                    row?.customerId == null
+                        ? ""
+                        : String(
+                            row.customerId
+                        ).trim();
+
+
+                if (
+                    !customerId ||
+                    customerId === "0"
+                ) {
+
+                    continue;
+
+                }
+
+
+                if (
+                    String(
+                        row.customerName || ""
+                    ).trim() !== ""
+                ) {
+
+                    continue;
+
+                }
+
+
+                const customerName =
+                    customerNameById.get(
+                        customerId
+                    ) || null;
+
+
+                if (
+                    customerName
+                ) {
+
+                    row.customerName =
+                        customerName;
+
+                    enrichedRows += 1;
+
+                }
+
+            }
+
+
+            console.log(
+
+                \[salesService] LOCAL CUSTOMER NAME ENRICH branch=\ ids=\ rows=\\
+
+            );
+
+        }
+        catch (
+            error
+        ) {
+
+            console.warn(
+
+                \[salesService] local customer name enrichment failed branch=\:\,
+
+                error?.message ||
+                error
+
+            );
+
+        }
+
+    }
+
+    if (currentFromDate < toDate) {
+        covered = true;
+
+        const startedAt =
+            Date.now();
+
+        currentDayRows =
+            await queryPharmaFlySales({
+                branchId,
+                fromDate: currentFromDate,
+                toDate,
+                connection
+            });
+
+        console.log(
+            `[salesService] CURRENT DAY SQL branch=${branchId} ${currentFromDate} -> ${toDate} rows=${currentDayRows.length} in ${Date.now() - startedAt} ms`
+        );
+    }
+
+    if (!covered) {
+        return null;
+    }
+
+    const combinedRows = [
+        ...localRows,
+        ...currentDayRows
+    ];
+
+    combinedRows.sort(
+        (a, b) => {
+            const dateCompare =
+                String(a.date || "").localeCompare(
+                    String(b.date || "")
+                );
+
+            if (dateCompare !== 0) {
+                return dateCompare;
+            }
+
+            const ticketCompare =
+                Number(a.ticketId || 0) -
+                Number(b.ticketId || 0);
+
+            if (ticketCompare !== 0) {
+                return ticketCompare;
+            }
+
+            return (
+                Number(a.lineId || 0) -
+                Number(b.lineId || 0)
+            );
+        }
+    );
+
+    return combinedRows;
+}
+
+export async function getSales(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null,
+        forceRefresh = false
+    }
+) {
+
+    const numericBranchId =
+        normalizeBranchId(
+            branchId
+        );
+
+
+    const dateRange =
+        createDateRange(
+
+            fromDate,
+
+            toDate
+
+        );
+
+
+    const normalizedFromDate =
+        dateRange.fromDate;
+
+
+    const normalizedToDate =
+        dateRange.toDate;
+
+
+    const key =
+        buildSalesCacheKey({
+
+            branchId:
+                numericBranchId,
+
+            fromDate:
+                normalizedFromDate,
+
+            toDate:
+                normalizedToDate
+
+        });
+
+
+    /*
+     * =====================================================
+     * MEMORY CACHE
+     * =====================================================
+     */
+
+    if (
+        !forceRefresh &&
+        !rangeTouchesCurrentMonth(
+            normalizedFromDate,
+            normalizedToDate
+        )
+    ) {
+
+        const cachedRows =
+            getCachedSales(
+                key
+            );
+
+
+        if (
+            cachedRows
+        ) {
+
+            console.log(
+
+                `[salesService] MEMORY CACHE HIT ${key} -> ${cachedRows.length} rows`
+
+            );
+
+
+            return cachedRows;
+
+        }
+
+    }
+
+
+    /*
+     * =====================================================
+     * PERSISTENT EXACT RANGE
+     * =====================================================
+     */
+
+    if (
+        !forceRefresh &&
+        !rangeTouchesCurrentMonth(
+            normalizedFromDate,
+            normalizedToDate
+        )
+    ) {
+
+        try {
+
+            const persistent =
+                getPersistentCache({
+
+                    cacheKey:
+                        key
+
+                });
+
+
+            if (
+                persistent &&
+                Array.isArray(
+                    persistent.data
+                )
+            ) {
+
+                const rows =
+                    persistent.data;
+
+
+                setCachedSales(
+
+                    key,
+
+                    rows
+
+                );
+
+
+                console.log(
+
+                    `[salesService] PERSISTENT CACHE HIT ${key} -> ${rows.length} rows`
+
+                );
+
+
+                return rows;
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                `[salesService] persistent cache read failed ${key}:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+
+        /*
+     * =====================================================
+     * LOCAL-FIRST GET
+     * =====================================================
+     *
+     * Completed dates:
+     *     LOCAL SQLITE
+     *
+     * Current UTC date:
+     *     SQL SERVER
+     *
+     * This block runs before MONTHLY STRATEGY so that
+     * local SQLite is the primary source for history.
+     */
+
+    if (
+        !forceRefresh
+    ) {
+
+        try {
+
+            const localFirstRows =
+                await getSalesFromLocalFirstStrategy({
+
+                    branchId:
+                        numericBranchId,
+
+                    fromDate:
+                        normalizedFromDate,
+
+                    toDate:
+                        normalizedToDate,
+
+                    connection,
+
+                    forceRefresh:
+                        false
+
+                });
+
+
+            if (
+                Array.isArray(
+                    localFirstRows
+                )
+            ) {
+
+                setCachedSales(
+
+                    key,
+
+                    localFirstRows
+
+                );
+
+
+                if (
+                    !isFullCalendarMonth(
+
+                        normalizedFromDate,
+
+                        normalizedToDate
+
+                    )
+                ) {
+
+                    savePersistentSalesRange({
+
+                        key,
+
+                        rows:
+                            localFirstRows
+
+                    });
+
+                }
+
+
+                console.log(
+
+                    `[salesService] LOCAL-FIRST RESULT ${key} -> ${localFirstRows.length} rows`
+
+                );
+
+
+                return localFirstRows;
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                `[salesService] local-first strategy failed ${key}:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+/*
+     * =====================================================
+     * MONTHLY STRATEGY
+     * =====================================================
+     */
+
+    if (
+        !forceRefresh
+    ) {
+
+        try {
+
+            const monthlyRows =
+                await getSalesFromMonthlyStrategy({
+
+                    branchId:
+                        numericBranchId,
+
+                    fromDate:
+                        normalizedFromDate,
+
+                    toDate:
+                        normalizedToDate,
+
+                    connection,
+
+                    forceRefresh:
+                        false
+
+                });
+
+
+            if (
+                Array.isArray(
+                    monthlyRows
+                )
+            ) {
+
+                setCachedSales(
+
+                    key,
+
+                    monthlyRows
+
+                );
+
+
+                if (
+                    !isFullCalendarMonth(
+                        normalizedFromDate,
+                        normalizedToDate
+                    ) &&
+                    !rangeTouchesCurrentMonth(
+                        normalizedFromDate,
+                        normalizedToDate
+                    )
+                ) {
+
+                    savePersistentSalesRange({
+
+                        key,
+
+                        rows:
+                            monthlyRows
+
+                    });
+
+                }
+
+
+                console.log(
+
+                    `[salesService] MONTHLY STRATEGY HIT ${key} -> ${monthlyRows.length} rows`
+
+                );
+
+
+                return monthlyRows;
+
+            }
+
+        }
+        catch (
+            error
+        ) {
+
+            console.error(
+
+                `[salesService] monthly strategy failed ${key}:`,
+
+                error
+
+            );
+
+        }
+
+    }
+
+
+    /*
+     * =====================================================
+     * RANGE IN-FLIGHT
+     * =====================================================
+     */
+
+    const existingRequest =
+        salesInFlight.get(
+            key
+        );
+
+
+    if (
+        existingRequest &&
+        !forceRefresh
+    ) {
+
+        console.log(
+
+            `[salesService] IN-FLIGHT JOIN ${key}`
+
+        );
+
+
+        return existingRequest;
+
+    }
+
+
+    /*
+     * =====================================================
+     * DIRECT SQL
+     * =====================================================
+     */
+
+    const request =
+        (async () => {
+
+            const startedAt =
+                Date.now();
+
+
+            try {
+
+                const rows =
+                    await queryPharmaFlySales({
+
+                        branchId:
+                            numericBranchId,
+
+                        fromDate:
+                            normalizedFromDate,
+
+                        toDate:
+                            normalizedToDate,
+
+                        connection
+
+                    });
+
+
+                setCachedSales(
+
+                    key,
+
+                    rows
+
+                );
+
+
+                if (
+                    !isFullCalendarMonth(
+                        normalizedFromDate,
+                        normalizedToDate
+                    ) &&
+                    !rangeTouchesCurrentMonth(
+                        normalizedFromDate,
+                        normalizedToDate
+                    )
+                ) {
+
+                    savePersistentSalesRange({
+
+                        key,
+
+                        rows
+
+                    });
+
+                }
+
+
+                if (
+                    isFullCalendarMonth(
+
+                        normalizedFromDate,
+
+                        normalizedToDate
+
+                    )
+                ) {
+
+                    const month =
+                        normalizedFromDate.slice(
+                            0,
+                            7
+                        );
+
+
+                    try {
+
+                        setMonthlySalesCache({
+
+                            branchId:
+                                numericBranchId,
+
+                            month,
+
+                            rows
+
+                        });
+
+
+                        console.log(
+
+                            `[salesService] MONTHLY CACHE AUTO-SAVED branch=${numericBranchId} month=${month} rows=${rows.length}`
+
+                        );
+
+                    }
+                    catch (
+                        error
+                    ) {
+
+                        console.error(
+
+                            `[salesService] monthly cache auto-save failed branch=${numericBranchId} month=${month}:`,
+
+                            error
+
+                        );
+
+                    }
+
+                }
+
+
+                const totalElapsed =
+                    Date.now() -
+                    startedAt;
+
+
+                console.log(
+
+                    `[salesService] TOTAL ${key} -> ${rows.length} rows in ${totalElapsed} ms`
+
+                );
+
+
+                return rows;
+
+            }
+            finally {
+
+                if (
+                    salesInFlight.get(
+                        key
+                    ) ===
+                    request
+                ) {
+
+                    salesInFlight.delete(
+                        key
+                    );
+
+                }
+
+            }
+
+        })();
+
+
+    if (
+        !forceRefresh
+    ) {
+
+        salesInFlight.set(
+
+            key,
+
+            request
+
+        );
+
+    }
+
+
+    return request;
+
+}
+
+
+/*
+ * =========================================================
+ * SALES PREVIEW
+ * =========================================================
+ */
+
+export async function getSalesPreview(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null,
+        limit = 100
+    }
+) {
+
+    const rows =
+        await getSales({
+
+            branchId,
+
+            fromDate,
+
+            toDate,
+
+            connection
+
+        });
+
+
+    const requestedLimit =
+        Number(
+            limit
+        );
+
+
+    const normalizedLimit =
+        Number.isFinite(
+            requestedLimit
+        ) &&
+        requestedLimit > 0
+
+            ? Math.min(
+
+                Math.floor(
+                    requestedLimit
+                ),
+
+                500
+
+            )
+
+            : 100;
+
+
+    return {
+
+        success:
+            true,
+
+        branchId:
+            Number(
+                branchId
+            ),
+
+        fromDate,
+
+        toDate,
+
+        rows:
+            rows.slice(
+
+                0,
+
+                normalizedLimit
+
+            ),
+
+        totalRows:
+            rows.length
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * TICKET RECONCILIATION
+ * =========================================================
+ */
+
+export async function getTicketReconciliation(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null
+    }
+) {
+
+    const rows =
+        await getSales({
+
+            branchId,
+
+            fromDate,
+
+            toDate,
+
+            connection
+
+        });
+
+
+    const tickets =
+        new Map();
+
+
+    for (
+        const row
+        of rows
+    ) {
+
+        if (
+            !tickets.has(
+                row.ticketId
+            )
+        ) {
+
+            tickets.set(
+
+                row.ticketId,
+
+                {
+
+                    ticketId:
+                        row.ticketId,
+
+                    date:
+                        row.date,
+
+                    transactionType:
+                        row.transactionType,
+
+                    ticketTotal:
+                        row.ticketTotal,
+
+                    lineGross:
+                        0,
+
+                    lineDiscount:
+                        0,
+
+                    lineExtraDiscount:
+                        0,
+
+                    lineNet:
+                        0,
+
+                    lineCost:
+                        0,
+
+                    units:
+                        0,
+
+                    lineCount:
+                        0
+
+                }
+
+            );
+
+        }
+
+
+        const ticket =
+            tickets.get(
+                row.ticketId
+            );
+
+
+        ticket.lineGross +=
+            row.grossLineValue;
+
+
+        ticket.lineDiscount +=
+            row.discount;
+
+
+        ticket.lineExtraDiscount +=
+            row.extraDiscount;
+
+
+        ticket.lineNet +=
+            row.netLineValue;
+
+
+        ticket.lineCost +=
+            row.lineCost;
+
+
+        ticket.units +=
+            row.baseUnits;
+
+
+        ticket.lineCount +=
+            1;
+
+    }
+
+
+    return Array.from(
+        tickets.values()
+    )
+    .map(
+        ticket => {
+
+            const difference =
+                ticket.ticketTotal -
+                ticket.lineNet;
+
+
+            return {
+
+                ...ticket,
+
+                reconciliationDifference:
+                    difference,
+
+                absDifference:
+                    Math.abs(
+                        difference
+                    ),
+
+                isReconciled:
+                    Math.abs(
+                        difference
+                    ) <=
+                    RECONCILIATION_TOLERANCE
+
+            };
+
+        }
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * SALES SUMMARY
+ * =========================================================
+ */
+
+export async function getSalesSummary(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null,
+        includeReconciliation = true
+    }
+) {
+
+    const rows =
+        await getSales({
+
+            branchId,
+
+            fromDate,
+
+            toDate,
+
+            connection
+
+        });
+
+
+    let grossSales =
+        0;
+
+
+    let returns =
+        0;
+
+
+    let grossCost =
+        0;
+
+
+    let returnCost =
+        0;
+
+
+    let grossUnits =
+        0;
+
+
+    let returnedUnits =
+        0;
+
+
+    let deliverySales =
+        0;
+
+
+    let deliveryReturns =
+        0;
+
+
+    const saleTickets =
+        new Set();
+
+
+    const returnTickets =
+        new Set();
+
+
+    const deliveryTickets =
+        new Set();
+
+
+    for (
+        const row
+        of rows
+    ) {
+
+        /*
+         * =====================================================
+         * DELIVERY CLASSIFICATION
+         * =====================================================
+         *
+         * This follows the existing PharmaFly dashboard logic:
+         *
+         * a customer-linked ticket with a non-empty Cards.Name
+         * is treated as a delivery/customer order.
+         *
+         * DeliveryBoyId is intentionally NOT used because our
+         * database tests showed it is NULL/0 on the target branch.
+         *
+         */
+
+        const isDelivery =
+            String(
+                row?.customerName ||
+                ""
+            ).trim() !== "";
+
+
+        if (
+            row.transactionType ===
+            "RETURN"
+        ) {
+
+            const returnValue =
+                Math.abs(
+                    row.netLineValue
+                );
+
+
+            returns +=
+                returnValue;
+
+
+            returnCost +=
+                Math.abs(
+                    row.lineCost
+                );
+
+
+            returnedUnits +=
+                Math.abs(
+                    row.baseUnits
+                );
+
+
+            returnTickets.add(
+                row.ticketId
+            );
+
+
+            if (
+                isDelivery
+            ) {
+
+                deliveryReturns +=
+                    returnValue;
+
+            }
+
+        }
+        else {
+
+            grossSales +=
+                row.netLineValue;
+
+
+            grossCost +=
+                row.lineCost;
+
+
+            grossUnits +=
+                row.baseUnits;
+
+
+            saleTickets.add(
+                row.ticketId
+            );
+
+
+            if (
+                isDelivery
+            ) {
+
+                deliverySales +=
+                    row.netLineValue;
+
+
+                deliveryTickets.add(
+                    row.ticketId
+                );
+
+            }
+
+        }
+
+    }
+
+
+    const netSales =
+        grossSales -
+        returns;
+
+
+    const netCost =
+        grossCost -
+        returnCost;
+
+
+    const netUnits =
+        grossUnits -
+        returnedUnits;
+
+
+    const netDeliverySales =
+        deliverySales -
+        deliveryReturns;
+
+
+    let reconciliation = [];
+    let absoluteDifference = 0;
+    let ticketsWithDifference = 0;
+
+    if (
+        includeReconciliation
+    ) {
+
+        reconciliation =
+            await getTicketReconciliation({
+
+                branchId,
+
+                fromDate,
+
+                toDate,
+
+                connection
+
+            });
+
+
+        absoluteDifference =
+            reconciliation.reduce(
+
+                (
+                    total,
+                    ticket
+                ) =>
+
+                    total +
+                    Math.abs(
+                        ticket.reconciliationDifference
+                    ),
+
+                0
+
+            );
+
+
+        ticketsWithDifference =
+            reconciliation.filter(
+
+                ticket =>
+                    !ticket.isReconciled
+
+            ).length;
+
+    }
+
+
+    return {
+
+        branchId:
+            Number(
+                branchId
+            ),
+
+        fromDate,
+
+        toDate,
+
+        rows:
+            rows.length,
+
+        saleLines:
+            rows.filter(
+
+                row =>
+                    row.transactionType ===
+                    "SALE"
+
+            ).length,
+
+        returnLines:
+            rows.filter(
+
+                row =>
+                    row.transactionType ===
+                    "RETURN"
+
+            ).length,
+
+        saleTickets:
+            saleTickets.size,
+
+        returnTickets:
+            returnTickets.size,
+
+        grossSales,
+
+        returns,
+
+        netSales,
+
+
+        /*
+         * =====================================================
+         * DELIVERY RESULTS
+         * =====================================================
+         */
+
+        deliverySales:
+            netDeliverySales,
+
+        deliveryTickets:
+            deliveryTickets.size,
+
+        deliveryShare:
+
+            netSales !== 0
+
+                ? (
+
+                    netDeliverySales /
+                    netSales
+
+                ) *
+                100
+
+                : 0,
+
+
+        grossCost,
+
+        returnCost,
+
+        netCost,
+
+        grossProfit:
+            grossSales -
+            grossCost,
+
+        netProfit:
+            netSales -
+            netCost,
+
+        grossMargin:
+
+            netSales !== 0
+
+                ? (
+
+                    (
+                        netSales -
+                        netCost
+                    ) /
+                    netSales
+
+                ) *
+                100
+
+                : 0,
+
+        grossUnits,
+
+        returnedUnits,
+
+        netUnits,
+
+        averageTicket:
+
+            saleTickets.size > 0
+
+                ? grossSales /
+                  saleTickets.size
+
+                : 0,
+
+        returnRate:
+
+            grossSales > 0
+
+                ? (
+
+                    returns /
+                    grossSales
+
+                ) *
+                100
+
+                : 0,
+
+        reconciliation: {
+
+            ticketCount:
+                reconciliation.length,
+
+            ticketsWithDifference,
+
+            absoluteDifference,
+
+            tolerance:
+                RECONCILIATION_TOLERANCE
+
+        }
+
+    };
+
+}
+
+
+/*
+ * =========================================================
+ * SALES BY DAY
+ * =========================================================
+ */
+
+export async function getSalesByDay(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null
+    }
+) {
+
+    const rows =
+        await getSales({
+
+            branchId,
+
+            fromDate,
+
+            toDate,
+
+            connection
+
+        });
+
+
+    const days =
+        new Map();
+
+
+    for (
+        const row
+        of rows
+    ) {
+
+        if (
+            !row.date
+        ) {
+
+            continue;
+
+        }
+
+
+        const day =
+            row.date.slice(
+                0,
+                10
+            );
+
+
+        if (
+            !days.has(
+                day
+            )
+        ) {
+
+            days.set(
+
+                day,
+
+                {
+
+                    date:
+                        day,
+
+                    sales:
+                        0,
+
+                    returns:
+                        0,
+
+                    netSales:
+                        0,
+
+                    cost:
+                        0,
+
+                    profit:
+                        0,
+
+                    units:
+                        0,
+
+                    tickets:
+                        new Set()
+
+                }
+
+            );
+
+        }
+
+
+        const bucket =
+            days.get(
+                day
+            );
+
+
+        if (
+            row.transactionType ===
+            "RETURN"
+        ) {
+
+            bucket.returns +=
+                Math.abs(
+                    row.netLineValue
+                );
+
+
+            bucket.cost +=
+                Math.abs(
+                    row.lineCost
+                );
+
+        }
+        else {
+
+            bucket.sales +=
+                row.netLineValue;
+
+
+            bucket.cost +=
+                row.lineCost;
+
+        }
+
+
+        bucket.netSales =
+            bucket.sales -
+            bucket.returns;
+
+
+        bucket.profit =
+            bucket.netSales -
+            bucket.cost;
+
+
+        bucket.units +=
+            row.baseUnits;
+
+
+        bucket.tickets.add(
+            row.ticketId
+        );
+
+    }
+
+
+    return Array.from(
+        days.values()
+    )
+    .map(
+        bucket => ({
+
+            date:
+                bucket.date,
+
+            sales:
+                bucket.sales,
+
+            returns:
+                bucket.returns,
+
+            netSales:
+                bucket.netSales,
+
+            cost:
+                bucket.cost,
+
+            profit:
+                bucket.profit,
+
+            units:
+                bucket.units,
+
+            tickets:
+                bucket.tickets.size
+
+        })
+    )
+    .sort(
+
+        (
+            a,
+            b
+        ) =>
+            a.date.localeCompare(
+                b.date
+            )
+
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * SALES BY HOUR
+ * =========================================================
+ */
+
+export async function getSalesByHour(
+    {
+        branchId,
+        fromDate,
+        toDate,
+        connection = null
+    }
+) {
+
+    const rows =
+        await getSales({
+
+            branchId,
+
+            fromDate,
+
+            toDate,
+
+            connection
+
+        });
+
+
+    const hours =
+        Array.from(
+
+            {
+                length:
+                    24
+
+            },
+
+            (
+                _,
+                hour
+            ) => ({
+
+                hour,
+
+                sales:
+                    0,
+
+                returns:
+                    0,
+
+                netSales:
+                    0,
+
+                cost:
+                    0,
+
+                profit:
+                    0,
+
+                units:
+                    0,
+
+                tickets:
+                    new Set()
+
+            })
+
+        );
+
+
+    for (
+        const row
+        of rows
+    ) {
+
+        if (
+            !row.date
+        ) {
+
+            continue;
+
+        }
+
+
+        const hour =
+            Number(
+                String(
+                    row.date
+                ).slice(11, 13)
+            );
+
+
+        const bucket =
+            hours[
+                hour
+            ];
+
+
+        if (
+            row.transactionType ===
+            "RETURN"
+        ) {
+
+            bucket.returns +=
+                Math.abs(
+                    row.netLineValue
+                );
+
+
+            bucket.cost +=
+                Math.abs(
+                    row.lineCost
+                );
+
+        }
+        else {
+
+            bucket.sales +=
+                row.netLineValue;
+
+
+            bucket.cost +=
+                row.lineCost;
+
+        }
+
+
+        bucket.netSales =
+            bucket.sales -
+            bucket.returns;
+
+
+        bucket.profit =
+            bucket.netSales -
+            bucket.cost;
+
+
+        bucket.units +=
+            row.baseUnits;
+
+
+        bucket.tickets.add(
+            row.ticketId
+        );
+
+    }
+
+
+    return hours.map(
+        bucket => ({
+
+            hour:
+                bucket.hour,
+
+            sales:
+                bucket.sales,
+
+            returns:
+                bucket.returns,
+
+            netSales:
+                bucket.netSales,
+
+            cost:
+                bucket.cost,
+
+            profit:
+                bucket.profit,
+
+            units:
+                bucket.units,
+
+            tickets:
+                bucket.tickets.size
+
+        })
+    );
+
+}
+
+
+/*
+ * =========================================================
+ * EXPORTS
+ * =========================================================
+ */
+
+export const reconciliationTolerance =
+    RECONCILIATION_TOLERANCE;
+
+
+export const salesPersistentCacheTtlMs =
+    SALES_PERSISTENT_CACHE_TTL_MS;
+
+
+export default {
+
+    getSales,
+
+    getSalesPreview,
+
+    getSalesSummary,
+
+    getTicketReconciliation,
+
+    getSalesByDay,
+
+    getSalesByHour,
+
+    clearSalesCache,
+
+    getSalesCacheStats
+
+};
+
+

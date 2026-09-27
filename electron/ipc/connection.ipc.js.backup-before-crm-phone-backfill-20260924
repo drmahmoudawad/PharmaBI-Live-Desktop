@@ -1,0 +1,1075 @@
+﻿import {
+    ipcMain
+} from "electron";
+
+
+import {
+    testBranchConnection,
+    closeBranchConnection,
+    getActiveBranchConnections,
+    getBranchPool
+} from "../connection/connectionManager.js";
+
+
+import {
+    saveBranchConnection,
+    renameBranch,
+    getBranchConnection,
+    getAllSavedConnections,
+    deleteBranchConnection
+} from "../settings/connectionStore.js";
+
+
+let registered =
+    false;
+
+
+function normalizeBranchId(
+    value
+) {
+
+    const branchId =
+        Number(
+            value
+        );
+
+
+    if (
+        !Number.isInteger(
+            branchId
+        ) ||
+        branchId <= 0
+    ) {
+
+        throw new Error(
+            "Invalid branchId"
+        );
+
+    }
+
+
+    return branchId;
+
+}
+
+
+function normalizeBranchName(
+    value,
+    branchId
+) {
+
+    const name =
+        String(
+            value ||
+            ""
+        ).trim();
+
+
+    return name ||
+        `Branch ${branchId}`;
+
+}
+
+
+function normalizeConnection(
+    connection
+) {
+
+    if (
+        !connection ||
+        typeof connection !==
+            "object"
+    ) {
+
+        throw new Error(
+
+            "Connection configuration is required"
+
+        );
+
+    }
+
+
+    const server =
+        String(
+            connection.server ||
+            ""
+        ).trim();
+
+
+    const port =
+        Number(
+            connection.port ||
+            1433
+        );
+
+
+    const database =
+        String(
+            connection.database ||
+            ""
+        ).trim();
+
+
+    const user =
+        String(
+            connection.user ||
+            ""
+        ).trim();
+
+
+    const password =
+        String(
+            connection.password ||
+            ""
+        );
+
+
+    if (
+        !server
+    ) {
+
+        throw new Error(
+            "SQL Server is required"
+        );
+
+    }
+
+
+    if (
+        !Number.isInteger(
+            port
+        ) ||
+        port <= 0
+    ) {
+
+        throw new Error(
+            "Invalid SQL Server port"
+        );
+
+    }
+
+
+    if (
+        !database
+    ) {
+
+        throw new Error(
+            "Database is required"
+        );
+
+    }
+
+
+    if (
+        !user
+    ) {
+
+        throw new Error(
+            "SQL User is required"
+        );
+
+    }
+
+
+    return {
+
+        server,
+
+        port,
+
+        database,
+
+        user,
+
+        password
+
+    };
+
+}
+
+
+export function registerConnectionIpc() {
+
+    if (
+        registered
+    ) {
+
+        return;
+
+    }
+
+
+    registered =
+        true;
+
+
+    /*
+     * =========================================================
+     * TEST
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:test",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            const connection =
+                normalizeConnection(
+                    payload?.connection
+                );
+
+
+            const result =
+                await testBranchConnection(
+
+                    branchId,
+
+                    connection
+
+                );
+
+
+            const existing =
+                getBranchConnection(
+                    branchId
+                );
+
+
+            const branchName =
+                normalizeBranchName(
+
+                    payload?.branchName ||
+                    existing?.branchName,
+
+                    branchId
+
+                );
+
+
+            saveBranchConnection({
+
+                branchId,
+
+                branchName,
+
+                connection
+
+            });
+
+
+            return {
+
+                ...result,
+
+                branchId,
+
+                branchName,
+
+                settingsSaved:
+                    true
+
+            };
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * SAVE
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:save",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            const connection =
+                normalizeConnection(
+                    payload?.connection
+                );
+
+
+            const existing =
+                getBranchConnection(
+                    branchId
+                );
+
+
+            const branchName =
+                normalizeBranchName(
+
+                    payload?.branchName ||
+                    existing?.branchName,
+
+                    branchId
+
+                );
+
+
+            return saveBranchConnection({
+
+                branchId,
+
+                branchName,
+
+                connection
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * RENAME
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:rename",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            const branchName =
+                normalizeBranchName(
+
+                    payload?.branchName,
+
+                    branchId
+
+                );
+
+
+            return renameBranch({
+
+                branchId,
+
+                branchName
+
+            });
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * GET SAVED
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:get-saved",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            return getBranchConnection(
+                branchId
+            );
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * GET ALL
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:get-all-saved",
+
+        async () => {
+
+            return getAllSavedConnections();
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * DELETE
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:delete-saved",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            try {
+
+                await closeBranchConnection(
+                    branchId
+                );
+
+            }
+            catch (
+                error
+            ) {
+
+                console.error(
+
+                    `[connection] Failed to close branch ${branchId} before deletion:`,
+
+                    error
+
+                );
+
+            }
+
+
+            return deleteBranchConnection(
+                branchId
+            );
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CLOSE
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:close",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            await closeBranchConnection(
+                branchId
+            );
+
+
+            return {
+
+                success:
+                    true,
+
+                branchId
+
+            };
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * ACTIVE
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:active",
+
+        async () => {
+
+            return getActiveBranchConnections();
+
+        }
+
+    );
+
+
+    /*
+     * =========================================================
+     * CONNECT SAVED
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:connect-saved",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            const saved =
+                getBranchConnection(
+                    branchId
+                );
+
+
+            if (
+                !saved
+            ) {
+
+                throw new Error(
+
+                    `No saved connection for branch ${branchId}.`
+
+                );
+
+            }
+
+
+            await getBranchPool(
+
+                branchId,
+
+                saved
+
+            );
+
+
+            return {
+
+                success:
+                    true,
+
+                branchId,
+
+                branchName:
+                    saved.branchName
+
+            };
+
+        }
+
+    );
+    /*
+     * =========================================================
+     * TEMP DELIVERY DIAGNOSTIC
+     * =========================================================
+     */
+
+    ipcMain.handle(
+
+        "connection:inspect-delivery",
+
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId
+                );
+
+
+            const saved =
+                getBranchConnection(
+                    branchId
+                );
+
+
+            if (
+                !saved
+            ) {
+
+                throw new Error(
+                    `No saved connection for branch ${branchId}.`
+                );
+
+            }
+
+
+            const pool =
+                await getBranchPool(
+
+                    branchId,
+
+                    saved
+
+                );
+
+
+            const result =
+                await pool
+                    .request()
+                    .query(`
+
+                        SELECT
+
+                            COUNT(*) AS total_delivery_lines,
+
+                            COUNT(
+                                DISTINCT
+                                CASE
+                                    WHEN ISNULL(
+                                        t.DeliveryBoyId,
+                                        0
+                                    ) > 0
+                                    THEN t.ID
+                                END
+                            ) AS delivery_tickets,
+
+                            SUM(
+                                CASE
+                                    WHEN
+                                        ISNULL(
+                                            t.DeliveryBoyId,
+                                            0
+                                        ) > 0
+                                    AND
+                                        ISNULL(
+                                            t.SalesReturn,
+                                            0
+                                        ) <> 2
+                                    THEN
+                                        ISNULL(
+                                            t.Total,
+                                            0
+                                        )
+                                    ELSE 0
+                                END
+                            ) AS delivery_sales
+
+                        FROM posTickets t
+
+                        WHERE
+
+                            t.ztime >=
+                            '2026-08-01'
+
+                        AND
+
+                            t.ztime <
+                            '2026-09-01'
+
+                    `);
+
+
+            const row =
+                result?.recordset?.[0] ||
+                {};
+
+
+            console.log(
+
+                `[Delivery Diagnostic] Branch ${branchId}:`,
+
+                row
+
+            );
+
+
+            return {
+
+                success:
+                    true,
+
+                branchId,
+
+                ...row
+
+            };
+
+        }
+
+    );
+
+    /*
+     * =========================================================
+     * TEMP CUSTOMER PHONE DIAGNOSTIC
+     * =========================================================
+     */
+
+    ipcMain.handle(
+        "connection:inspect-customer-phone",
+        async (
+            _event,
+            payload
+        ) => {
+
+            const branchId =
+                normalizeBranchId(
+                    payload?.branchId || 1
+                );
+
+            const customerId =
+                String(
+                    payload?.customerId || 6498
+                ).trim();
+
+            const saved =
+                getBranchConnection(
+                    branchId
+                );
+
+            if (!saved) {
+                throw new Error(
+                    `No saved connection for branch ${branchId}.`
+                );
+            }
+
+            const pool =
+                await getBranchPool(
+                    branchId,
+                    saved
+                );
+
+            async function query(sqlText) {
+                const result =
+                    await pool
+                        .request()
+                        .query(sqlText);
+
+                return result.recordset || [];
+            }
+
+            const result = {
+                branchId,
+                customerId,
+                savedConnection: {
+                    branchName: saved?.branchName,
+                    server: saved?.server,
+                    port: saved?.port,
+                    database: saved?.database,
+                    user: saved?.user
+                },
+                cards: [],
+                tableSchemas: {},
+                phoneColumns: [],
+                customerLinkColumns: [],
+                matchingRows: {},
+                deliveryCount: [],
+                deliveryTickets: []
+            };
+
+            /*
+             * -------------------------------------------------
+             * CARDS
+             * -------------------------------------------------
+             */
+
+            result.cards =
+                await query(`
+                    SELECT TOP 1 *
+                    FROM dbo.Cards
+                    WHERE Id = '${customerId}';
+                `);
+
+            /*
+             * -------------------------------------------------
+             * SCHEMAS
+             * -------------------------------------------------
+             */
+
+            const tables = [
+                "Telephones",
+                "SubCustomers",
+                "yTels",
+                "yPersons",
+                "yTelTypes"
+            ];
+
+            for (const tableName of tables) {
+
+                result.tableSchemas[tableName] =
+                    await query(`
+                        SELECT
+                            COLUMN_NAME,
+                            DATA_TYPE,
+                            ORDINAL_POSITION
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = 'dbo'
+                          AND TABLE_NAME = '${tableName}'
+                        ORDER BY ORDINAL_POSITION;
+                    `);
+            }
+
+            /*
+             * -------------------------------------------------
+             * POSSIBLE PHONE COLUMNS
+             * -------------------------------------------------
+             */
+
+            result.phoneColumns =
+                await query(`
+                    SELECT
+                        TABLE_NAME,
+                        COLUMN_NAME,
+                        DATA_TYPE,
+                        ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = 'dbo'
+                      AND TABLE_NAME IN
+                          (
+                              'Cards',
+                              'Telephones',
+                              'SubCustomers',
+                              'yTels',
+                              'yPersons',
+                              'yTelTypes'
+                          )
+                      AND
+                          (
+                              COLUMN_NAME LIKE '%phone%'
+                              OR COLUMN_NAME LIKE '%mobile%'
+                              OR COLUMN_NAME LIKE '%tel%'
+                              OR COLUMN_NAME LIKE '%number%'
+                              OR COLUMN_NAME LIKE '%telephone%'
+                          )
+                    ORDER BY
+                        TABLE_NAME,
+                        ORDINAL_POSITION;
+                `);
+
+            /*
+             * -------------------------------------------------
+             * POSSIBLE CUSTOMER LINK COLUMNS
+             * -------------------------------------------------
+             */
+
+            result.customerLinkColumns =
+                await query(`
+                    SELECT
+                        TABLE_NAME,
+                        COLUMN_NAME,
+                        DATA_TYPE,
+                        ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = 'dbo'
+                      AND TABLE_NAME IN
+                          (
+                              'Telephones',
+                              'SubCustomers',
+                              'yTels',
+                              'yPersons',
+                              'yTelTypes'
+                          )
+                      AND
+                          (
+                              COLUMN_NAME LIKE '%Card%'
+                              OR COLUMN_NAME LIKE '%Customer%'
+                              OR COLUMN_NAME LIKE '%Person%'
+                              OR COLUMN_NAME LIKE '%SubCustomer%'
+                          )
+                    ORDER BY
+                        TABLE_NAME,
+                        ORDINAL_POSITION;
+                `);
+
+            /*
+             * -------------------------------------------------
+             * FIND ROWS LINKED TO CUSTOMER 6498
+             * -------------------------------------------------
+             */
+
+            for (const tableName of tables) {
+
+                const schema =
+                    result.tableSchemas[tableName] || [];
+
+                const columns =
+                    schema.map(
+                        row =>
+                            String(
+                                row.COLUMN_NAME
+                            )
+                    );
+
+                const linkColumns =
+                    columns.filter(
+                        column =>
+                            /card|customer|person|subcustomer/i
+                                .test(column)
+                    );
+
+                const phoneCols =
+                    columns.filter(
+                        column =>
+                            /phone|mobile|tel|number|telephone/i
+                                .test(column)
+                    );
+
+                result.matchingRows[tableName] = {
+                    linkColumns,
+                    phoneColumns: phoneCols,
+                    rows: []
+                };
+
+                for (const column of linkColumns) {
+
+                    const safeColumn =
+                        "[" +
+                        column.replace(
+                            /]/g,
+                            "]]"
+                        ) +
+                        "]";
+
+                    try {
+
+                        const rows =
+                            await query(`
+                                SELECT TOP 100 *
+                                FROM dbo.${tableName}
+                                WHERE
+                                    CONVERT(
+                                        nvarchar(200),
+                                        ${safeColumn}
+                                    ) = '${customerId}';
+                            `);
+
+                        if (rows.length > 0) {
+
+                            result.matchingRows[tableName]
+                                .rows.push({
+                                    matchedColumn: column,
+                                    rows
+                                });
+                        }
+
+                    } catch (error) {
+
+                        result.matchingRows[tableName]
+                            .rows.push({
+                                matchedColumn: column,
+                                error: error.message
+                            });
+                    }
+                }
+            }
+
+            /*
+             * -------------------------------------------------
+             * DELIVERY STATUS
+             * -------------------------------------------------
+             */
+
+            result.deliveryCount =
+                await query(`
+                    SELECT
+                        COUNT(*) AS total_tickets,
+                        SUM(
+                            CASE
+                                WHEN ISNULL(
+                                    DeliveryBoyId,
+                                    0
+                                ) > 0
+                                THEN 1
+                                ELSE 0
+                            END
+                        ) AS delivery_tickets
+                    FROM dbo.posTickets
+                    WHERE CustomerID =
+                        CONVERT(
+                            bigint,
+                            '${customerId}'
+                        );
+                `);
+
+            result.deliveryTickets =
+                await query(`
+                    SELECT TOP 50
+                        t.ID AS ticket_id,
+                        t.CustomerID AS customer_id,
+                        t.DeliveryBoyId AS delivery_boy_id,
+                        t.SalesReturn AS sales_return,
+                        t.Total AS ticket_total,
+                        t.ztime
+                    FROM dbo.posTickets t
+                    WHERE t.CustomerID =
+                        CONVERT(
+                            bigint,
+                            '${customerId}'
+                        )
+                    ORDER BY
+                        t.ztime DESC;
+                `);
+
+            console.log(
+                "[Customer Phone Diagnostic]",
+                JSON.stringify(
+                    result,
+                    null,
+                    2
+                )
+            );
+
+            return result;
+        }
+    );
+
+}
+

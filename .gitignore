@@ -4,3 +4,9 @@ release/
 *.log
 .env
 .env.*
+.wwebjs_cache/
+build/
+**/*.backup*
+**/*.bak*
+tools/ui-arabic-backup-*/
+tools/rfm-v2-test-app/
